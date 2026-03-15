@@ -22,3 +22,6 @@ data/
 
 # macOS
 .DS_Store
+
+# Claude Code
+.claude/settings.local.json

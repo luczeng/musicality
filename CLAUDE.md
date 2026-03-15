@@ -9,20 +9,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Install with test dependencies
-pip install -e ".[test]"
+# Install dependencies and set up venv
+uv sync
+uv pip install -e .
 
 # Run tests
-pytest tests/
+uv run pytest tests/
 
 # Run a single test
-pytest tests/test_get_beat.py
+uv run pytest tests/test_get_beat.py
 
 # Format code
-black musicality/
+uv run black musicality/
 
 # Display a song's HDF5 contents
-python musicality/display_song.py <path-to-.h5-file>
+uv run python musicality/display_song.py <path-to-.h5-file>
+
+# Add a dependency
+uv add <package>
 ```
 
 ## Architecture
