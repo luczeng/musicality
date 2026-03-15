@@ -1,9 +1,11 @@
 [project]
 name = "musicality"
 version = "1.0"
+requires-python = ">=3.14"
 
 dependencies = [
     "numpy",
+    "pytest>=9.0.2",
     "tables",
 ]
 [project.optional-dependencies]
