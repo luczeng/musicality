@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Data files
+*.h5
+*.mat
+*.tar.gz
+data/
+
+# Pytest
+.pytest_cache/
+
+# macOS
+.DS_Store

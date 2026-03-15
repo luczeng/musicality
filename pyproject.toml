@@ -1,0 +1,18 @@
+[project]
+name = "musicality"
+version = "1.0"
+
+dependencies = [
+    "numpy",
+    "tables",
+]
+[project.optional-dependencies]
+test = [
+    "black",
+    "pytest"
+]
+
+# Python modules and packages that are included in the
+# distribution package (and therefore become importable)
+[tool.setuptools.packages.find]
+exclude = ["data"]
