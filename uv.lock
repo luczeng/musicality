@@ -815,6 +815,7 @@ name = "musicality"
 version = "1.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "click" },
     { name = "mirdata" },
     { name = "numpy" },
     { name = "pytest" },
@@ -832,6 +833,7 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "black", marker = "extra == 'test'" },
+    { name = "click", specifier = ">=8.3.1" },
     { name = "mirdata", specifier = ">=1.0.0" },
     { name = "numpy" },
     { name = "pytest", specifier = ">=9.0.2" },

@@ -4,6 +4,7 @@ version = "1.0"
 requires-python = ">=3.14"
 
 dependencies = [
+    "click>=8.3.1",
     "mirdata>=1.0.0",
     "numpy",
     "pytest>=9.0.2",
