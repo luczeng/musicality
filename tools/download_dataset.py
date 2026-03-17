@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Download an audio dataset using mirdata."""
 
+import glob
 import os
+
 import click
 import mirdata
 
@@ -10,7 +12,9 @@ DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 
 @click.command()
 @click.argument("dataset", required=False)
-@click.option("--list", "list_datasets", is_flag=True, help="List available datasets.")
+@click.option(
+    "--list", "list_datasets", is_flag=True, help="List available datasets."
+)
 @click.option(
     "--data-home",
     default=DATA_DIR,
@@ -29,7 +33,10 @@ def main(dataset, list_datasets, data_home):
         return
 
     if not dataset:
-        click.echo("Provide a dataset name or use --list to see available datasets.", err=True)
+        click.echo(
+            "Provide a dataset name or use --list to see available datasets.",
+            err=True,
+        )
         raise SystemExit(1)
 
     if dataset not in mirdata.list_datasets():
@@ -37,9 +44,16 @@ def main(dataset, list_datasets, data_home):
         click.echo("Run with --list to see available datasets.", err=True)
         raise SystemExit(1)
 
-    click.echo(f"Downloading '{dataset}' to {data_home} ...")
-    ds = mirdata.initialize(dataset, data_home=data_home)
+    dataset_dir = os.path.join(data_home, dataset)
+    click.echo(f"Downloading '{dataset}' to {dataset_dir} ...")
+    ds = mirdata.initialize(dataset, data_home=dataset_dir)
     ds.download()
+
+    for archive in glob.glob(os.path.join(dataset_dir, "**", "*.tar.gz"), recursive=True) + \
+                   glob.glob(os.path.join(dataset_dir, "**", "*.zip"), recursive=True):
+        os.remove(archive)
+        click.echo(f"Removed {archive}")
+
     click.echo("Done.")
 
 
