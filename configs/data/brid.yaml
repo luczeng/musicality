@@ -1,0 +1,7 @@
+data_home: data/brid
+sample_rate: 22050
+n_mels: 128
+duration: 10.0
+batch_size: 32
+val_split: 0.2
+num_workers: 4
