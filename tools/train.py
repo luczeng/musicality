@@ -73,6 +73,7 @@ def main(cfg: DictConfig) -> None:
         accelerator=cfg.trainer.accelerator,
         devices=cfg.trainer.devices,
         log_every_n_steps=cfg.trainer.log_every_n_steps,
+        check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
         callbacks=callbacks,
         logger=CSVLogger("logs", name="tempo"),
         enable_progress_bar=True,
