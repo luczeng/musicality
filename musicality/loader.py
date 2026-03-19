@@ -37,21 +37,21 @@ class BRIDDataset(Dataset):
         self.log_transform = T.AmplitudeToDB()
 
         ds = mirdata.initialize("brid", data_home=data_home)
-        # Keep only tracks with a valid tempo annotation and existing audio
-        self.tracks = [
-            ds.track(tid)
+        # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing
+        self.samples = [
+            (ds.track(tid).audio_path, ds.track(tid).tempo)
             for tid in ds.track_ids
             if ds.track(tid).tempo is not None
             and os.path.exists(ds.track(tid).audio_path)
         ]
 
     def __len__(self) -> int:
-        return len(self.tracks)
+        return len(self.samples)
 
     def __getitem__(self, idx: int):
-        track = self.tracks[idx]
+        audio_path, tempo = self.samples[idx]
 
-        wav, sr = torchaudio.load(track.audio_path)  # (C, N)
+        wav, sr = torchaudio.load(audio_path)  # (C, N)
 
         # Mix down to mono
         if wav.shape[0] > 1:
@@ -71,7 +71,7 @@ class BRIDDataset(Dataset):
 
         mel = self.log_transform(self.mel_transform(wav))  # (1, n_mels, T)
 
-        label = torch.tensor(track.tempo, dtype=torch.float32)
+        label = torch.tensor(tempo, dtype=torch.float32)
         return mel, label
 
 
