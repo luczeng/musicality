@@ -5,8 +5,14 @@ defaults:
   - _self_
 
 # Top-level training hyperparameters
-lr: 1e-4
+lr: 1e-2
 weight_decay: 1e-4
 
 # Checkpointing
 checkpoint_dir: checkpoints/
+
+# Weights & Biases
+wandb:
+  project: musicality
+  run_name: null   # auto-generated if null
+  tags: []

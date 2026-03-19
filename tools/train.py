@@ -11,7 +11,7 @@ import hydra
 from omegaconf import DictConfig
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from lightning.pytorch.loggers import CSVLogger
+from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader, random_split
 
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
@@ -75,7 +75,12 @@ def main(cfg: DictConfig) -> None:
         log_every_n_steps=cfg.trainer.log_every_n_steps,
         check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
         callbacks=callbacks,
-        logger=CSVLogger("logs", name="tempo"),
+        logger=WandbLogger(
+            project=cfg.wandb.project,
+            name=cfg.wandb.run_name,
+            tags=cfg.wandb.tags,
+            config=dict(cfg),
+        ),
         enable_progress_bar=True,
     )
 
