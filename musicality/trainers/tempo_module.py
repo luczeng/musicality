@@ -29,8 +29,8 @@ class TempoModule(L.LightningModule):
         pred = self(mel)
         loss = F.mse_loss(pred, tempo)
         mae = (pred - tempo).abs().mean()
-        self.log(f"{stage}/loss", loss, prog_bar=True)
-        self.log(f"{stage}/mae_bpm", mae, prog_bar=True)
+        self.log(f"{stage}/loss", loss, prog_bar=True, on_step=False, on_epoch=True)
+        self.log(f"{stage}/mae_bpm", mae, prog_bar=True, on_step=False, on_epoch=True)
         return loss
 
     def training_step(self, batch, batch_idx):
