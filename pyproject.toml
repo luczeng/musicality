@@ -23,3 +23,8 @@ test = [
 # distribution package (and therefore become importable)
 [tool.setuptools.packages.find]
 exclude = ["data"]
+
+[dependency-groups]
+dev = [
+    "ipython>=9.11.0",
+]
