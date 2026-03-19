@@ -21,6 +21,12 @@ data/
 # Pytest
 .pytest_cache/
 
+# Training outputs
+checkpoints/
+logs/
+outputs/
+wandb/
+
 # macOS
 .DS_Store
 
