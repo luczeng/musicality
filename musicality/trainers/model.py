@@ -28,11 +28,11 @@ class TempoNet(nn.Module):
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.AdaptiveAvgPool2d((4, 4)),
+            nn.AdaptiveAvgPool2d((1, 1)),
         )
         self.head = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(64 * 4 * 4, 128),
+            nn.Linear(64, 128),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(128, 1),
