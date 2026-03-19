@@ -1,0 +1,3 @@
+_target_: musicality.trainers.model.TempoNet
+n_mels: 128
+dropout: 0.3

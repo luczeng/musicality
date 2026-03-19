@@ -1,0 +1,12 @@
+defaults:
+  - model: cnn
+  - data: brid
+  - trainer: default
+  - _self_
+
+# Top-level training hyperparameters
+lr: 1e-3
+weight_decay: 1e-4
+
+# Checkpointing
+checkpoint_dir: checkpoints/
