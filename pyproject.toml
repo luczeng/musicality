@@ -9,9 +9,11 @@ dependencies = [
     "mirdata>=1.0.0",
     "numpy",
     "pytest>=9.0.2",
+    "soundfile>=0.13.1",
     "tables",
     "torch>=2.10.0",
     "torchaudio>=2.10.0",
+    "torchcodec>=0.10.0",
 ]
 [project.optional-dependencies]
 test = [
