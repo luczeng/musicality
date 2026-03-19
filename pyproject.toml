@@ -6,6 +6,8 @@ requires-python = ">=3.14"
 dependencies = [
     "chardet<6",
     "click>=8.3.1",
+    "hydra-core>=1.3.2",
+    "lightning>=2.6.1",
     "mirdata>=1.0.0",
     "numpy",
     "pytest>=9.0.2",
@@ -25,6 +27,11 @@ test = [
 # distribution package (and therefore become importable)
 [tool.setuptools.packages.find]
 exclude = ["data"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:You are trying to `self.log\\(\\)` but the `self.trainer` reference is not registered",
+]
 
 [dependency-groups]
 dev = [
