@@ -1,4 +1,4 @@
-data_home: data/brid
+data_home: ${hydra:runtime.cwd}/data/brid
 sample_rate: 22050
 n_mels: 256
 duration: 20.0
