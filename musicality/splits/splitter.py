@@ -34,13 +34,18 @@ class Splitter:
 
         if existing is not None:
             train_indices, val_indices = existing
+            print(f"[Splitter] Loaded existing split '{self.key}' ({len(train_indices)} train, {len(val_indices)} val)")
             return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
+
+        print(f"[Splitter] No split found for '{self.key}', creating a new one...")
 
         n_val = int(len(self.dataset) * self.val_split)
         n_train = len(self.dataset) - n_val
         train_ds, val_ds = random_split(self.dataset, [n_train, n_val])
 
         self._save(list(train_ds.indices), list(val_ds.indices))
+
+        print(f"[Splitter] Split saved to {self.splits_dir} ({n_train} train, {n_val} val)")
 
         return train_ds, val_ds
 
