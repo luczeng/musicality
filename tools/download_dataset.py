@@ -49,7 +49,7 @@ def main(dataset, list_datasets, data_home):
     dataset_dir = Path(data_home) / dataset
     click.echo(f"Downloading '{dataset}' to {dataset_dir} ...")
 
-    ds = mirdata.initialize(dataset, data_home=dataset_dir)
+    ds = mirdata.initialize(dataset, data_home=str(dataset_dir))
     ds.download()
 
     for archive in list(dataset_dir.rglob("*.tar.gz")) + list(dataset_dir.rglob("*.zip")):

@@ -39,7 +39,7 @@ class BRIDDataset(Dataset):
         )
         self.log_transform = T.AmplitudeToDB()
 
-        ds = mirdata.initialize(_fmt.brid_dir, data_home=data_home)
+        ds = mirdata.initialize(_fmt.brid_dir, data_home=str(data_home))
 
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing
         self.samples = [
