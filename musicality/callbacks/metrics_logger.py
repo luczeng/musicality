@@ -11,7 +11,7 @@ class BestMetricsPrinter(L.Callback):
 
     def on_validation_epoch_end(self, trainer, pl_module):
         metrics = trainer.callback_metrics
-        for key in ("val/loss", "val/mae_bpm"):
+        for key in ("val/loss", "val/mse"):
             val = metrics.get(key)
             if val is None:
                 continue
@@ -22,7 +22,7 @@ class BestMetricsPrinter(L.Callback):
         metrics = trainer.callback_metrics
         epoch = trainer.current_epoch
         parts = [f"epoch {epoch:>3}"]
-        for key in ("train/loss", "train/mae_bpm", "val/loss", "val/mae_bpm"):
+        for key in ("train/loss", "train/mse", "val/loss", "val/mse"):
             val = metrics.get(key)
             if val is not None:
                 parts.append(f"{key}: {val:.4f}")

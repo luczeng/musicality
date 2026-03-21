@@ -102,7 +102,7 @@ Output (B,)
 `trainers/tempo_module.py` wraps `TempoNet`:
 
 - Loss: MSE
-- Metric: MAE (logged as `train/mae_bpm` and `val/mae_bpm`)
+- Metric: MSE (logged as `train/mse` and `val/mse`)
 - Optimizer: Adam with `ReduceLROnPlateau` scheduler
 
 ### Configuration
