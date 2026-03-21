@@ -1,8 +1,8 @@
-name: brid
-data_home: ${hydra:runtime.cwd}/data/brid
+name: ballroom
+data_home: ${hydra:runtime.cwd}/data/ballroom
 sample_rate: 22050
 n_mels: 256
-duration: 20.0
+duration: 30.0
 batch_size: 32
 val_split: 0.2
 num_workers: 4
