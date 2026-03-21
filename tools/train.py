@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Launch tempo estimation training with Hydra config."""
 
-import os
 import sys
+from pathlib import Path
 
 # Allow imports from repo root
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import hydra
 from omegaconf import DictConfig

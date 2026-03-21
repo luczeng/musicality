@@ -1,6 +1,6 @@
 """PyTorch DataLoader for the BRID dataset with tempo labels."""
 
-import os
+from pathlib import Path
 
 import mirdata
 import torch
@@ -8,7 +8,7 @@ import torchaudio
 import torchaudio.transforms as T
 from torch.utils.data import DataLoader, Dataset
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 
 class BRIDDataset(Dataset):
@@ -24,7 +24,7 @@ class BRIDDataset(Dataset):
 
     def __init__(
         self,
-        data_home: str = os.path.join(DATA_DIR, "brid"),
+        data_home: Path = DATA_DIR / "brid",
         sample_rate: int = 22050,
         n_mels: int = 128,
         duration: float = 10.0,
@@ -42,7 +42,7 @@ class BRIDDataset(Dataset):
             (ds.track(tid).audio_path, ds.track(tid).tempo)
             for tid in ds.track_ids
             if ds.track(tid).tempo is not None
-            and os.path.exists(ds.track(tid).audio_path)
+            and Path(ds.track(tid).audio_path).exists()
         ]
 
     def __len__(self) -> int:
@@ -76,7 +76,7 @@ class BRIDDataset(Dataset):
 
 
 def get_loader(
-    data_home: str = os.path.join(DATA_DIR, "brid"),
+    data_home: Path = DATA_DIR / "brid",
     batch_size: int = 32,
     shuffle: bool = True,
     num_workers: int = 0,

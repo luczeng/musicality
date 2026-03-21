@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Download an audio dataset using mirdata."""
 
-import glob
-import os
+from pathlib import Path
 
 import click
 import mirdata
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 
 @click.command()
@@ -44,14 +43,13 @@ def main(dataset, list_datasets, data_home):
         click.echo("Run with --list to see available datasets.", err=True)
         raise SystemExit(1)
 
-    dataset_dir = os.path.join(data_home, dataset)
+    dataset_dir = Path(data_home) / dataset
     click.echo(f"Downloading '{dataset}' to {dataset_dir} ...")
     ds = mirdata.initialize(dataset, data_home=dataset_dir)
     ds.download()
 
-    for archive in glob.glob(os.path.join(dataset_dir, "**", "*.tar.gz"), recursive=True) + \
-                   glob.glob(os.path.join(dataset_dir, "**", "*.zip"), recursive=True):
-        os.remove(archive)
+    for archive in list(dataset_dir.rglob("*.tar.gz")) + list(dataset_dir.rglob("*.zip")):
+        archive.unlink()
         click.echo(f"Removed {archive}")
 
     click.echo("Done.")

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """List datasets present in the data/ directory with their mirdata annotation types."""
 
-import os
+from pathlib import Path
+
 import mirdata
 
-DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+DATA_DIR = Path(__file__).parent.parent / "data"
 
 EXCLUDED = {"audio", "get_path"}
 
@@ -23,17 +24,17 @@ def count_songs(name, path):
         except Exception:
             pass
     # fallback: count files recursively
-    total = sum(len(files) for _, _, files in os.walk(path))
+    total = sum(1 for f in Path(path).rglob("*") if f.is_file())
     return total
 
 
 def main():
     available = mirdata.list_datasets()
-    entries = sorted(e for e in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, e)))
+    entries = sorted(e.name for e in DATA_DIR.iterdir() if e.is_dir())
 
     rows = []
     for name in entries:
-        path = os.path.join(DATA_DIR, name)
+        path = DATA_DIR / name
         if name in available:
             annotations = ", ".join(get_annotations(name))
         else:
