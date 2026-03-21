@@ -10,11 +10,10 @@ class Splitter:
     `splits_dir` as `<key>_train.txt` and `<key>_val.txt`. On subsequent runs
     with the same key, the saved indices are reloaded so the split is identical.
 
-    Args:
-        dataset: The dataset to split.
-        splits_dir: Directory where split files are stored.
-        key: Unique identifier for this split (e.g. dataset name + size + ratio).
-        val_split: Fraction of the dataset to use for validation.
+    :param dataset: The dataset to split.
+    :param splits_dir: Directory where split files are stored.
+    :param key: Unique identifier for this split (e.g. dataset name + size + ratio).
+    :param val_split: Fraction of the dataset to use for validation.
     """
 
     def __init__(self, dataset: Dataset, splits_dir: Path, key: str, val_split: float):
@@ -25,7 +24,11 @@ class Splitter:
         self.val_split = val_split
 
     def run(self) -> tuple[Subset, Subset]:
-        """Return (train_ds, val_ds), loading from disk or creating a new split."""
+        """Return (train_ds, val_ds), loading from disk or creating a new split.
+
+        :returns: Tuple of (train_ds, val_ds).
+        :rtype: tuple[Subset, Subset]
+        """
 
         existing = self._load()
 
@@ -42,7 +45,11 @@ class Splitter:
         return train_ds, val_ds
 
     def _load(self) -> tuple[list, list] | None:
-        """Return (train_indices, val_indices) from disk, or None if not found."""
+        """Return (train_indices, val_indices) from disk, or None if not found.
+
+        :returns: Tuple of index lists, or None if no split file exists.
+        :rtype: tuple[list, list] or None
+        """
 
         train_file = self.splits_dir / f"{self.key}_train.txt"
         val_file = self.splits_dir / f"{self.key}_val.txt"
@@ -55,7 +62,11 @@ class Splitter:
         return None
 
     def _save(self, train_indices: list, val_indices: list) -> None:
-        """Persist train and val indices to disk as plain text files."""
+        """Persist train and val indices to disk as plain text files.
+
+        :param train_indices: List of training sample indices.
+        :param val_indices: List of validation sample indices.
+        """
 
         self.splits_dir.mkdir(exist_ok=True)
 

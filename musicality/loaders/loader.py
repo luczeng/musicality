@@ -14,12 +14,11 @@ DATA_DIR = Path(__file__).parent.parent / "data"
 class BRIDDataset(Dataset):
     """BRID dataset returning mel spectrograms and tempo labels.
 
-    Args:
-        data_home: Path to the BRID data directory.
-        sample_rate: Target sample rate. Audio is resampled if needed.
-        n_mels: Number of mel filterbanks.
-        duration: Clip duration in seconds. Longer clips are truncated,
-                  shorter clips are zero-padded.
+    :param data_home: Path to the BRID data directory.
+    :param sample_rate: Target sample rate. Audio is resampled if needed.
+    :param n_mels: Number of mel filterbanks.
+    :param duration: Clip duration in seconds. Longer clips are truncated,
+        shorter clips are zero-padded.
     """
 
     def __init__(
@@ -89,15 +88,17 @@ def get_loader(
     """Return a DataLoader for the BRID dataset.
 
     Each batch is a tuple of:
-        mel  — (B, 1, n_mels, T)  log-mel spectrogram
-        tempo — (B,)               BPM label
 
-    Args:
-        data_home: Path to the BRID data directory.
-        batch_size: Number of samples per batch.
-        shuffle: Whether to shuffle the data each epoch.
-        num_workers: Number of worker processes for loading.
-        **dataset_kwargs: Forwarded to BRIDDataset (sample_rate, n_mels, duration).
+    - ``mel``   — ``(B, 1, n_mels, T)``  log-mel spectrogram
+    - ``tempo`` — ``(B,)``               BPM label
+
+    :param data_home: Path to the BRID data directory.
+    :param batch_size: Number of samples per batch.
+    :param shuffle: Whether to shuffle the data each epoch.
+    :param num_workers: Number of worker processes for loading.
+    :param dataset_kwargs: Forwarded to BRIDDataset (sample_rate, n_mels, duration).
+    :returns: Configured DataLoader.
+    :rtype: DataLoader
     """
 
     dataset = BRIDDataset(data_home=data_home, **dataset_kwargs)
