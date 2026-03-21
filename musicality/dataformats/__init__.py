@@ -8,6 +8,8 @@ import yaml
 
 _YAML_PATH = Path(__file__).parent / "dataformat.yaml"
 
+ROOT = Path(__file__).parent.parent.parent
+
 
 @dataclass
 class DataFormat:

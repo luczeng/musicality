@@ -6,21 +6,21 @@ from torch.utils.data import Dataset, Subset, random_split
 class Splitter:
     """Manages persistent train/val splits for a dataset.
 
-    On the first run, randomly splits the dataset and saves the indices to
-    `splits_dir` as `<key>_train.txt` and `<key>_val.txt`. On subsequent runs
-    with the same key, the saved indices are reloaded so the split is identical.
+    Splits are stored under ``splits_dir/<name>/train.txt`` and ``val.txt``.
+    On the first run the split is created and saved; on subsequent runs it is
+    reloaded from disk so the split is identical.
 
     :param dataset: The dataset to split.
-    :param splits_dir: Directory where split files are stored.
-    :param key: Unique identifier for this split (e.g. dataset name + size + ratio).
+    :param splits_dir: Root directory where split subfolders are stored.
+    :param name: Dataset name, used as the subfolder under ``splits_dir``.
     :param val_split: Fraction of the dataset to use for validation.
     """
 
-    def __init__(self, dataset: Dataset, splits_dir: Path, key: str, val_split: float):
+    def __init__(self, dataset: Dataset, splits_dir: Path, name: str, val_split: float):
 
         self.dataset = dataset
         self.splits_dir = splits_dir
-        self.key = key
+        self.name = name
         self.val_split = val_split
 
     def run(self) -> tuple[Subset, Subset]:
@@ -34,10 +34,10 @@ class Splitter:
 
         if existing is not None:
             train_indices, val_indices = existing
-            print(f"[Splitter] Loaded existing split '{self.key}' ({len(train_indices)} train, {len(val_indices)} val)")
+            print(f"[Splitter] Loaded existing split '{self.name}' ({len(train_indices)} train, {len(val_indices)} val)")
             return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
 
-        print(f"[Splitter] No split found for '{self.key}', creating a new one...")
+        print(f"[Splitter] No split found for '{self.name}', creating a new one...")
 
         n_val = int(len(self.dataset) * self.val_split)
         n_train = len(self.dataset) - n_val
@@ -45,7 +45,7 @@ class Splitter:
 
         self._save(list(train_ds.indices), list(val_ds.indices))
 
-        print(f"[Splitter] Split saved to {self.splits_dir} ({n_train} train, {n_val} val)")
+        print(f"[Splitter] Split saved to {self.splits_dir / self.name} ({n_train} train, {n_val} val)")
 
         return train_ds, val_ds
 
@@ -56,8 +56,10 @@ class Splitter:
         :rtype: tuple[list, list] or None
         """
 
-        train_file = self.splits_dir / f"{self.key}_train.txt"
-        val_file = self.splits_dir / f"{self.key}_val.txt"
+        split_dir = self.splits_dir / self.name
+
+        train_file = split_dir / "train.txt"
+        val_file = split_dir / "val.txt"
 
         if train_file.exists() and val_file.exists():
             train_indices = list(map(int, train_file.read_text().splitlines()))
@@ -73,7 +75,8 @@ class Splitter:
         :param val_indices: List of validation sample indices.
         """
 
-        self.splits_dir.mkdir(exist_ok=True)
+        split_dir = self.splits_dir / self.name
+        split_dir.mkdir(parents=True, exist_ok=True)
 
-        (self.splits_dir / f"{self.key}_train.txt").write_text("\n".join(map(str, train_indices)))
-        (self.splits_dir / f"{self.key}_val.txt").write_text("\n".join(map(str, val_indices)))
+        (split_dir / "train.txt").write_text("\n".join(map(str, train_indices)))
+        (split_dir / "val.txt").write_text("\n".join(map(str, val_indices)))
