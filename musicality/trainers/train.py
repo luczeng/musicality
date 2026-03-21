@@ -40,17 +40,21 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
     key = f"{Path(cfg.data.data_home).name}_{len(dataset)}_{cfg.data.val_split}"
     train_ds, val_ds = Splitter(dataset, splits_dir, key, cfg.data.val_split).run()
 
+    persistent_workers = cfg.data.num_workers > 0
+
     train_loader = DataLoader(
         train_ds,
         batch_size=cfg.data.batch_size,
         shuffle=True,
         num_workers=cfg.data.num_workers,
+        persistent_workers=persistent_workers,
     )
     val_loader = DataLoader(
         val_ds,
         batch_size=cfg.data.batch_size,
         shuffle=False,
         num_workers=cfg.data.num_workers,
+        persistent_workers=persistent_workers,
     )
 
     return train_loader, val_loader
@@ -94,6 +98,7 @@ def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:
             name=cfg.wandb.run_name,
             tags=cfg.wandb.tags,
             config=dict(cfg),
+            anonymous=None,
         ),
         enable_progress_bar=True,
     )
