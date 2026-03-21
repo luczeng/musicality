@@ -8,7 +8,10 @@ import torchaudio
 import torchaudio.transforms as T
 from torch.utils.data import DataLoader, Dataset
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+import musicality.dataformats as dataformats
+
+_fmt = dataformats.load()
+DATA_DIR = Path(__file__).parent.parent / _fmt.data_dir
 
 
 class BRIDDataset(Dataset):
@@ -23,7 +26,7 @@ class BRIDDataset(Dataset):
 
     def __init__(
         self,
-        data_home: Path = DATA_DIR / "brid",
+        data_home: Path = DATA_DIR / _fmt.brid_dir,
         sample_rate: int = 22050,
         n_mels: int = 128,
         duration: float = 10.0,
@@ -36,7 +39,7 @@ class BRIDDataset(Dataset):
         )
         self.log_transform = T.AmplitudeToDB()
 
-        ds = mirdata.initialize("brid", data_home=data_home)
+        ds = mirdata.initialize(_fmt.brid_dir, data_home=data_home)
 
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing
         self.samples = [
@@ -79,7 +82,7 @@ class BRIDDataset(Dataset):
 
 
 def get_loader(
-    data_home: Path = DATA_DIR / "brid",
+    data_home: Path = DATA_DIR / _fmt.brid_dir,
     batch_size: int = 32,
     shuffle: bool = True,
     num_workers: int = 0,

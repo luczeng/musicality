@@ -1,0 +1,3 @@
+data_dir: data
+brid_dir: brid
+splits_dir: splits

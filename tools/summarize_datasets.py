@@ -5,7 +5,9 @@ from pathlib import Path
 
 import mirdata
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+import musicality.dataformats as dataformats
+
+DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 
 EXCLUDED = {"audio", "get_path"}
 

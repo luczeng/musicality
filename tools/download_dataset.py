@@ -6,7 +6,9 @@ from pathlib import Path
 import click
 import mirdata
 
-DATA_DIR = Path(__file__).parent.parent / "data"
+import musicality.dataformats as dataformats
+
+DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 
 
 @click.command()

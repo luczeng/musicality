@@ -8,6 +8,7 @@ from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
 
+import musicality.dataformats as dataformats
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.loaders.loader import BRIDDataset
 from musicality.splits.splitter import Splitter
@@ -36,7 +37,7 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
         duration=cfg.data.duration,
     )
 
-    splits_dir = Path(cfg.data.data_home) / "splits"
+    splits_dir = Path(cfg.data.data_home) / dataformats.load().splits_dir
     key = f"{Path(cfg.data.data_home).name}_{len(dataset)}_{cfg.data.val_split}"
     train_ds, val_ds = Splitter(dataset, splits_dir, key, cfg.data.val_split).run()
 
