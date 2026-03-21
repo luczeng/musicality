@@ -23,10 +23,12 @@ def train(cfg: DictConfig) -> None:
     module = build_module(cfg)
     callbacks = build_callbacks(cfg)
     trainer = build_trainer(cfg, callbacks)
+
     trainer.fit(module, train_loader, val_loader)
 
 
 def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
+
     dataset = BRIDDataset(
         data_home=cfg.data.data_home,
         sample_rate=cfg.data.sample_rate,
@@ -50,10 +52,12 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
         shuffle=False,
         num_workers=cfg.data.num_workers,
     )
+
     return train_loader, val_loader
 
 
 def build_module(cfg: DictConfig) -> TempoModule:
+
     return TempoModule(
         model=cfg.model,
         lr=cfg.lr,
@@ -62,6 +66,7 @@ def build_module(cfg: DictConfig) -> TempoModule:
 
 
 def build_callbacks(cfg: DictConfig) -> list:
+
     return [
         ModelCheckpoint(
             dirpath=cfg.checkpoint_dir,
@@ -76,6 +81,7 @@ def build_callbacks(cfg: DictConfig) -> list:
 
 
 def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:
+
     return L.Trainer(
         max_epochs=cfg.trainer.max_epochs,
         accelerator=cfg.trainer.accelerator,

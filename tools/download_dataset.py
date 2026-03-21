@@ -25,6 +25,7 @@ def main(dataset, list_datasets, data_home):
 
     Example: python tools/download_dataset.py gtzan_genre
     """
+
     if list_datasets:
         click.echo("Available datasets:")
         for name in sorted(mirdata.list_datasets()):
@@ -45,6 +46,7 @@ def main(dataset, list_datasets, data_home):
 
     dataset_dir = Path(data_home) / dataset
     click.echo(f"Downloading '{dataset}' to {dataset_dir} ...")
+
     ds = mirdata.initialize(dataset, data_home=dataset_dir)
     ds.download()
 

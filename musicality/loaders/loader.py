@@ -31,12 +31,14 @@ class BRIDDataset(Dataset):
     ):
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
+
         self.mel_transform = T.MelSpectrogram(
             sample_rate=sample_rate, n_mels=n_mels, n_fft=2048
         )
         self.log_transform = T.AmplitudeToDB()
 
         ds = mirdata.initialize("brid", data_home=data_home)
+
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing
         self.samples = [
             (ds.track(tid).audio_path, ds.track(tid).tempo)
@@ -49,6 +51,7 @@ class BRIDDataset(Dataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
+
         audio_path, tempo = self.samples[idx]
 
         wav, sr = torchaudio.load(audio_path)  # (C, N)
@@ -72,6 +75,7 @@ class BRIDDataset(Dataset):
         mel = self.log_transform(self.mel_transform(wav))  # (1, n_mels, T)
 
         label = torch.tensor(tempo, dtype=torch.float32)
+
         return mel, label
 
 
@@ -95,7 +99,9 @@ def get_loader(
         num_workers: Number of worker processes for loading.
         **dataset_kwargs: Forwarded to BRIDDataset (sample_rate, n_mels, duration).
     """
+
     dataset = BRIDDataset(data_home=data_home, **dataset_kwargs)
+
     return DataLoader(
         dataset,
         batch_size=batch_size,

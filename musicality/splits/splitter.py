@@ -18,6 +18,7 @@ class Splitter:
     """
 
     def __init__(self, dataset: Dataset, splits_dir: Path, key: str, val_split: float):
+
         self.dataset = dataset
         self.splits_dir = splits_dir
         self.key = key
@@ -25,7 +26,9 @@ class Splitter:
 
     def run(self) -> tuple[Subset, Subset]:
         """Return (train_ds, val_ds), loading from disk or creating a new split."""
+
         existing = self._load()
+
         if existing is not None:
             train_indices, val_indices = existing
             return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
@@ -33,21 +36,28 @@ class Splitter:
         n_val = int(len(self.dataset) * self.val_split)
         n_train = len(self.dataset) - n_val
         train_ds, val_ds = random_split(self.dataset, [n_train, n_val])
+
         self._save(list(train_ds.indices), list(val_ds.indices))
+
         return train_ds, val_ds
 
     def _load(self) -> tuple[list, list] | None:
         """Return (train_indices, val_indices) from disk, or None if not found."""
+
         train_file = self.splits_dir / f"{self.key}_train.txt"
         val_file = self.splits_dir / f"{self.key}_val.txt"
+
         if train_file.exists() and val_file.exists():
             train_indices = list(map(int, train_file.read_text().splitlines()))
             val_indices = list(map(int, val_file.read_text().splitlines()))
             return train_indices, val_indices
+
         return None
 
     def _save(self, train_indices: list, val_indices: list) -> None:
         """Persist train and val indices to disk as plain text files."""
+
         self.splits_dir.mkdir(exist_ok=True)
+
         (self.splits_dir / f"{self.key}_train.txt").write_text("\n".join(map(str, train_indices)))
         (self.splits_dir / f"{self.key}_val.txt").write_text("\n".join(map(str, val_indices)))
