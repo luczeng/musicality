@@ -16,12 +16,10 @@ class DataFormat:
     """Hardcoded directory names loaded from dataformat.yaml.
 
     :param data_dir: Root data directory name.
-    :param brid_dir: BRID dataset subdirectory name.
     :param splits_dir: Splits subdirectory name.
     """
 
     data_dir: str
-    brid_dir: str
     splits_dir: str
 
 
