@@ -15,7 +15,7 @@ from lightning.pytorch.loggers import WandbLogger
 from torch.utils.data import DataLoader, random_split
 
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
-from musicality.loader import BRIDDataset
+from musicality.loaders.loader import BRIDDataset
 from musicality.trainers.tempo_module import TempoModule
 
 
