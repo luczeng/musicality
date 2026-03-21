@@ -6,7 +6,7 @@ import mirdata
 import torch
 import torchaudio
 import torchaudio.transforms as T
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 
@@ -78,47 +78,10 @@ class TempoDataset(Dataset):
         if wav.shape[1] >= self.n_samples:
             wav = wav[:, : self.n_samples]
         else:
-            wav = torch.nn.functional.pad(
-                wav, (0, self.n_samples - wav.shape[1])
-            )
+            wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
 
         mel = self.log_transform(self.mel_transform(wav))  # (1, n_mels, T)
 
         label = torch.tensor(tempo, dtype=torch.float32)
 
         return mel, label
-
-
-def get_loader(
-    name: str,
-    data_home: Path | None = None,
-    batch_size: int = 32,
-    shuffle: bool = True,
-    num_workers: int = 0,
-    **dataset_kwargs,
-) -> DataLoader:
-    """Return a DataLoader for a mirdata tempo dataset.
-
-    Each batch is a tuple of:
-
-    - ``mel``   — ``(B, 1, n_mels, T)``  log-mel spectrogram
-    - ``tempo`` — ``(B,)``               BPM label
-
-    :param name: mirdata dataset name.
-    :param data_home: Path to the dataset directory. Defaults to ``data/<name>``.
-    :param batch_size: Number of samples per batch.
-    :param shuffle: Whether to shuffle the data each epoch.
-    :param num_workers: Number of worker processes for loading.
-    :param dataset_kwargs: Forwarded to TempoDataset (sample_rate, n_mels, duration).
-    :returns: Configured DataLoader.
-    :rtype: DataLoader
-    """
-
-    dataset = TempoDataset(name=name, data_home=data_home, **dataset_kwargs)
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-    )
