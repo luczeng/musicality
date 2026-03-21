@@ -1,4 +1,4 @@
-"""PyTorch DataLoader for the BRID dataset with tempo labels."""
+"""PyTorch Dataset and DataLoader for mirdata tempo datasets."""
 
 from pathlib import Path
 
@@ -14,10 +14,14 @@ _fmt = dataformats.load()
 DATA_DIR = Path(__file__).parent.parent / _fmt.data_dir
 
 
-class BRIDDataset(Dataset):
-    """BRID dataset returning mel spectrograms and tempo labels.
+class TempoDataset(Dataset):
+    """Generic mirdata dataset returning mel spectrograms and tempo labels.
 
-    :param data_home: Path to the BRID data directory.
+    Loads any mirdata dataset that exposes a ``tempo`` attribute per track.
+    Tracks without a tempo annotation or missing audio are silently skipped.
+
+    :param name: mirdata dataset name (e.g. ``"brid"``, ``"ballroom"``).
+    :param data_home: Path to the dataset directory. Defaults to ``data/<name>``.
     :param sample_rate: Target sample rate. Audio is resampled if needed.
     :param n_mels: Number of mel filterbanks.
     :param duration: Clip duration in seconds. Longer clips are truncated,
@@ -26,11 +30,15 @@ class BRIDDataset(Dataset):
 
     def __init__(
         self,
-        data_home: Path = DATA_DIR / _fmt.brid_dir,
+        name: str,
+        data_home: Path | None = None,
         sample_rate: int = 22050,
         n_mels: int = 128,
         duration: float = 10.0,
     ):
+        if data_home is None:
+            data_home = DATA_DIR / name
+
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
 
@@ -39,7 +47,7 @@ class BRIDDataset(Dataset):
         )
         self.log_transform = T.AmplitudeToDB()
 
-        ds = mirdata.initialize(_fmt.brid_dir, data_home=str(data_home))
+        ds = mirdata.initialize(name, data_home=str(data_home))
 
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing
         self.samples = [
@@ -82,29 +90,31 @@ class BRIDDataset(Dataset):
 
 
 def get_loader(
-    data_home: Path = DATA_DIR / _fmt.brid_dir,
+    name: str,
+    data_home: Path | None = None,
     batch_size: int = 32,
     shuffle: bool = True,
     num_workers: int = 0,
     **dataset_kwargs,
 ) -> DataLoader:
-    """Return a DataLoader for the BRID dataset.
+    """Return a DataLoader for a mirdata tempo dataset.
 
     Each batch is a tuple of:
 
     - ``mel``   — ``(B, 1, n_mels, T)``  log-mel spectrogram
     - ``tempo`` — ``(B,)``               BPM label
 
-    :param data_home: Path to the BRID data directory.
+    :param name: mirdata dataset name.
+    :param data_home: Path to the dataset directory. Defaults to ``data/<name>``.
     :param batch_size: Number of samples per batch.
     :param shuffle: Whether to shuffle the data each epoch.
     :param num_workers: Number of worker processes for loading.
-    :param dataset_kwargs: Forwarded to BRIDDataset (sample_rate, n_mels, duration).
+    :param dataset_kwargs: Forwarded to TempoDataset (sample_rate, n_mels, duration).
     :returns: Configured DataLoader.
     :rtype: DataLoader
     """
 
-    dataset = BRIDDataset(data_home=data_home, **dataset_kwargs)
+    dataset = TempoDataset(name=name, data_home=data_home, **dataset_kwargs)
 
     return DataLoader(
         dataset,

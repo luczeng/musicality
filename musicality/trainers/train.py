@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 
 import musicality.dataformats as dataformats
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
-from musicality.loaders.loader import BRIDDataset
+from musicality.loaders.loader import TempoDataset
 from musicality.splits.splitter import Splitter
 from musicality.trainers.tempo_module import TempoModule
 
@@ -30,7 +30,8 @@ def train(cfg: DictConfig) -> None:
 
 def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
 
-    dataset = BRIDDataset(
+    dataset = TempoDataset(
+        name=cfg.data.name,
         data_home=cfg.data.data_home,
         sample_rate=cfg.data.sample_rate,
         n_mels=cfg.data.n_mels,
@@ -39,7 +40,7 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
 
     _fmt = dataformats.load()
     splits_dir = dataformats.ROOT / _fmt.splits_dir
-    dataset_name = Path(cfg.data.data_home).name
+    dataset_name = cfg.data.name
 
     train_ds, val_ds = Splitter(dataset, splits_dir, dataset_name, cfg.data.val_split).run()
 

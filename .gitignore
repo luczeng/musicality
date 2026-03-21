@@ -16,6 +16,7 @@ env/
 *.mat
 *.tar.gz
 data/
+splits/
 !configs/data/
 
 # Pytest
