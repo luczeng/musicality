@@ -1,3 +1,4 @@
 _target_: musicality.trainers.model.TempoNet
 n_mels: 128
+sample_rate: 22050
 dropout: 0.3
