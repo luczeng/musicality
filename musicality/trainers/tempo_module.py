@@ -21,13 +21,13 @@ class TempoModule(L.LightningModule):
         self.save_hyperparameters()
         self.model = instantiate(model)
 
-    def forward(self, mel: torch.Tensor) -> torch.Tensor:
-        return self.model(mel)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)
 
     def _step(self, batch, stage: str):
 
-        mel, tempo = batch
-        pred = self(mel)
+        x, tempo = batch
+        pred = self(x)
         loss = F.mse_loss(pred, tempo)
 
         mae = (pred - tempo).abs().mean()
