@@ -1,0 +1,6 @@
+_target_: musicality.trainers.model.TCNTempoNet
+n_mels: ${n_mels}
+sample_rate: 22050
+channels: 64
+n_layers: 10
+dropout: 0.3

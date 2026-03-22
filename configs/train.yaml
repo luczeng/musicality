@@ -1,18 +1,13 @@
 defaults:
-  - model: wav2vec2
+  - model: TCN
   - data: ballroom
   - trainer: default
   - _self_
-
-# Top-level training hyperparameters
-lr: 1e-2
+lr: 1e-3
 weight_decay: 1e-4
-batch_size: 16
-
-# Checkpointing
+batch_size: 32
+n_mels: 128
 checkpoint_dir: checkpoints/
-
-# Weights & Biases
 wandb:
   project: musicality
   run_name: null   # auto-generated if null
