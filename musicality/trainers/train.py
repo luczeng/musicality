@@ -47,14 +47,14 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
 
     train_loader = DataLoader(
         train_ds,
-        batch_size=cfg.data.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=True,
         num_workers=cfg.data.num_workers,
         persistent_workers=persistent_workers,
     )
     val_loader = DataLoader(
         val_ds,
-        batch_size=cfg.data.batch_size,
+        batch_size=cfg.batch_size,
         shuffle=False,
         num_workers=cfg.data.num_workers,
         persistent_workers=persistent_workers,
