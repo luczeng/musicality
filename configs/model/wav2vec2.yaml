@@ -1,4 +1,4 @@
-_target_: musicality.trainers.model.Wav2Vec2TempoNet
+_target_: musicality.trainers.model.WaveformTempoNet
 model_name: facebook/wav2vec2-base
 dropout: 0.1
 freeze_backbone: true
