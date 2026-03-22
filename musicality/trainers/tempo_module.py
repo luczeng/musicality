@@ -7,13 +7,39 @@ from omegaconf import DictConfig
 from hydra.utils import instantiate
 
 
+def relative_tempo_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    factors: tuple = (0.5, 1.0, 2.0),
+) -> torch.Tensor:
+    """MAE loss that is invariant to metrical octave errors.
+
+    For each sample, computes the absolute error between the prediction and
+    each factor × target, then takes the minimum. This means predicting double
+    or half the annotated tempo incurs zero penalty — both are musically valid
+    metrical interpretations of the same groove.
+
+    :param pred: Predicted BPM values, shape ``(B,)``.
+    :param target: Ground-truth BPM values, shape ``(B,)``.
+    :param factors: Metrical multiples to consider (default: 0.5×, 1×, 2×).
+    :returns: Scalar mean relative tempo loss.
+    :rtype: torch.Tensor
+    """
+
+    errors = torch.stack(
+        [(pred - f * target).abs() for f in factors],
+        dim=1,
+    )  # (B, n_factors)
+
+    return errors.min(dim=1).values.mean()
+
+
 class TempoModule(L.LightningModule):
     """LightningModule wrapping a tempo regression model.
 
-    Args:
-        model: DictConfig for instantiating the backbone (via hydra.utils.instantiate).
-        lr: Learning rate.
-        weight_decay: L2 regularisation.
+    :param model: DictConfig for instantiating the backbone (via hydra.utils.instantiate).
+    :param lr: Learning rate.
+    :param weight_decay: L2 regularisation.
     """
 
     def __init__(self, model: DictConfig, lr: float = 1e-3, weight_decay: float = 1e-4):
@@ -28,12 +54,12 @@ class TempoModule(L.LightningModule):
 
         x, tempo = batch
         pred = self(x)
-        loss = F.mse_loss(pred, tempo)
 
+        loss = relative_tempo_loss(pred, tempo)
         mae = (pred - tempo).abs().mean()
 
         self.log(f"{stage}/loss", loss, prog_bar=True, on_step=False, on_epoch=True)
-        self.log(f"{stage}/mse", mae, prog_bar=True, on_step=False, on_epoch=True)
+        self.log(f"{stage}/mae", mae, prog_bar=True, on_step=False, on_epoch=True)
 
         return loss
 
