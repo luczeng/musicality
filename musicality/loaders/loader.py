@@ -15,15 +15,15 @@ DATA_DIR = Path(__file__).parent.parent / _fmt.data_dir
 
 
 class TempoDataset(Dataset):
-    """Generic mirdata dataset returning mel spectrograms and tempo labels.
+    """Generic mirdata dataset returning raw waveforms and tempo labels.
 
     Loads any mirdata dataset that exposes a ``tempo`` attribute per track.
     Tracks without a tempo annotation or missing audio are silently skipped.
+    Preprocessing (e.g. mel transform) is left to the model.
 
     :param name: mirdata dataset name (e.g. ``"brid"``, ``"ballroom"``).
     :param data_home: Path to the dataset directory. Defaults to ``data/<name>``.
     :param sample_rate: Target sample rate. Audio is resampled if needed.
-    :param n_mels: Number of mel filterbanks.
     :param duration: Clip duration in seconds. Longer clips are truncated,
         shorter clips are zero-padded.
     """
@@ -33,7 +33,6 @@ class TempoDataset(Dataset):
         name: str,
         data_home: Path | None = None,
         sample_rate: int = 22050,
-        n_mels: int = 128,
         duration: float = 10.0,
     ):
         if data_home is None:
@@ -41,11 +40,6 @@ class TempoDataset(Dataset):
 
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
-
-        self.mel_transform = T.MelSpectrogram(
-            sample_rate=sample_rate, n_mels=n_mels, n_fft=2048
-        )
-        self.log_transform = T.AmplitudeToDB()
 
         ds = mirdata.initialize(name, data_home=str(data_home))
 
@@ -80,8 +74,6 @@ class TempoDataset(Dataset):
         else:
             wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
 
-        mel = self.log_transform(self.mel_transform(wav))  # (1, n_mels, T)
-
         label = torch.tensor(tempo, dtype=torch.float32)
 
-        return mel, label
+        return wav, label  # (1, T), scalar

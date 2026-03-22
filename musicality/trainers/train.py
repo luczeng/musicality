@@ -34,7 +34,6 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
         name=cfg.data.name,
         data_home=cfg.data.data_home,
         sample_rate=cfg.data.sample_rate,
-        n_mels=cfg.data.n_mels,
         duration=cfg.data.duration,
     )
 
