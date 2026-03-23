@@ -3,7 +3,7 @@ defaults:
   - data: ballroom
   - trainer: default
   - _self_
-lr: 1e-3
+lr: 5e-4
 weight_decay: 1e-4
 batch_size: 32
 n_mels: 256

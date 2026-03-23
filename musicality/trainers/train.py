@@ -1,7 +1,5 @@
 """Core training routine for tempo estimation."""
 
-from pathlib import Path
-
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import WandbLogger
@@ -41,7 +39,9 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
     splits_dir = dataformats.ROOT / _fmt.splits_dir
     dataset_name = cfg.data.name
 
-    train_ds, val_ds = Splitter(dataset, splits_dir, dataset_name, cfg.data.val_split).run()
+    train_ds, val_ds = Splitter(
+        dataset, splits_dir, dataset_name, cfg.data.val_split
+    ).run()
 
     persistent_workers = cfg.data.num_workers > 0
 
@@ -81,6 +81,7 @@ def build_callbacks(cfg: DictConfig) -> list:
             mode="min",
             save_top_k=3,
             filename="tempo-{epoch:02d}-{val/loss:.4f}",
+            save_weights_only=True,
         ),
         EarlyStopping(monitor="val/loss", patience=10, mode="min"),
         BestMetricsPrinter(),
