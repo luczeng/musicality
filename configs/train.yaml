@@ -6,7 +6,8 @@ defaults:
 lr: 1e-3
 weight_decay: 1e-4
 batch_size: 32
-n_mels: 128
+n_mels: 256
+hop_length: 512
 checkpoint_dir: checkpoints/
 wandb:
   project: musicality

@@ -17,15 +17,16 @@ class TempoNet(nn.Module):
 
     :param n_mels: Number of mel filterbanks.
     :param sample_rate: Audio sample rate, used to build the mel transform.
+    :param hop_length: Hop length for the mel transform.
     :param dropout: Dropout probability in the regression head.
     """
 
-    def __init__(self, n_mels: int = 128, sample_rate: int = 22050, dropout: float = 0.3):
+    def __init__(self, n_mels: int = 128, sample_rate: int = 22050, hop_length: int = 512, dropout: float = 0.3):
 
         super().__init__()
 
         self.mel = nn.Sequential(
-            T.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels, n_fft=2048),
+            T.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels, n_fft=2048, hop_length=hop_length),
             T.AmplitudeToDB(),
         )
 
@@ -76,8 +77,11 @@ class TCNTempoNet(nn.Module):
 
     :param n_mels: Number of mel filterbanks.
     :param sample_rate: Audio sample rate used to build the mel transform.
+    :param hop_length: Hop length for the mel transform. Controls temporal resolution
+        (smaller = more frames per second). Defaults to 512 (≈43 fps at 22050 Hz).
     :param channels: Channel width for the TCN.
-    :param n_layers: Number of dilated layers.
+    :param n_layers: Number of dilated layers. Keep receptive field
+        (3 × (2^n_layers − 1) frames) within the input sequence length.
     :param dropout: Dropout probability in the regression head.
     """
 
@@ -85,6 +89,7 @@ class TCNTempoNet(nn.Module):
         self,
         n_mels: int = 128,
         sample_rate: int = 22050,
+        hop_length: int = 512,
         channels: int = 32,
         n_layers: int = 8,
         dropout: float = 0.3,
@@ -92,7 +97,7 @@ class TCNTempoNet(nn.Module):
         super().__init__()
 
         self.mel = nn.Sequential(
-            T.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels, n_fft=2048),
+            T.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels, n_fft=2048, hop_length=hop_length),
             T.AmplitudeToDB(),
         )
 
