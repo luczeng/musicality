@@ -1,10 +1,12 @@
 """Core training routine for tempo estimation."""
 
+import random
+
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
@@ -42,6 +44,12 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
     train_ds, val_ds = Splitter(
         dataset, splits_dir, dataset_name, cfg.data.val_split
     ).run()
+
+    subsample = cfg.get("train_subsample", None)
+    if subsample is not None:
+        n = max(1, int(len(train_ds) * subsample))
+        indices = random.sample(range(len(train_ds)), n)
+        train_ds = Subset(train_ds, indices)
 
     persistent_workers = cfg.data.num_workers > 0
 
@@ -83,7 +91,7 @@ def build_callbacks(cfg: DictConfig) -> list:
             filename="tempo-{epoch:02d}-{val/loss:.4f}",
             save_weights_only=True,
         ),
-        EarlyStopping(monitor="val/loss", patience=10, mode="min"),
+        # EarlyStopping(monitor="val/loss", patience=10, mode="min"),
         BestMetricsPrinter(),
     ]
 

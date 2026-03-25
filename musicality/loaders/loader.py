@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 
+
 _fmt = dataformats.load()
 DATA_DIR = Path(__file__).parent.parent / _fmt.data_dir
 
