@@ -1,6 +1,0 @@
-name: brid
-data_home: ${hydra:runtime.cwd}/data/brid
-sample_rate: 22050
-duration: 20.0
-val_split: 0.2
-num_workers: 4

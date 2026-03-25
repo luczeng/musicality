@@ -1,15 +1,27 @@
 defaults:
   - model: TCN
-  - data: ballroom
-  - trainer: default
   - _self_
-lr: 5e-4
-weight_decay: 1e-4
+lr: 2e-3
+weight_decay: 0.0
 batch_size: 32
 n_mels: 256
 hop_length: 512
+train_subsample: null
 checkpoint_dir: checkpoints/
+trainer:
+  max_epochs: 100
+  accelerator: mps
+  devices: 1
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+data:
+  name: ballroom
+  data_home: ${hydra:runtime.cwd}/data/ballroom
+  sample_rate: 22050
+  duration: 15.0
+  val_split: 0.2
+  num_workers: 4
 wandb:
   project: musicality
-  run_name: null   # auto-generated if null
+  run_name: null
   tags: []
