@@ -95,6 +95,7 @@ class TempoModule(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
 
+        self.log("lr", self.optimizers().param_groups[0]["lr"], prog_bar=True, on_step=False, on_epoch=True)
         return self._step(batch, "train")
 
     def validation_step(self, batch, batch_idx):

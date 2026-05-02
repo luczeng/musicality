@@ -1,9 +1,9 @@
 defaults:
   - model: TCN
   - _self_
-lr: 2e-3
+lr: 0.9e-3
 weight_decay: 0.0
-batch_size: 32
+batch_size: 16
 n_mels: 256
 hop_length: 512
 train_subsample: null

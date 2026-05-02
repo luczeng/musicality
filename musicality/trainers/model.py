@@ -21,12 +21,23 @@ class TempoNet(nn.Module):
     :param dropout: Dropout probability in the regression head.
     """
 
-    def __init__(self, n_mels: int = 128, sample_rate: int = 22050, hop_length: int = 512, dropout: float = 0.3):
+    def __init__(
+        self,
+        n_mels: int = 128,
+        sample_rate: int = 22050,
+        hop_length: int = 512,
+        dropout: float = 0.3,
+    ):
 
         super().__init__()
 
         self.mel = nn.Sequential(
-            T.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels, n_fft=2048, hop_length=hop_length),
+            T.MelSpectrogram(
+                sample_rate=sample_rate,
+                n_mels=n_mels,
+                n_fft=2048,
+                hop_length=hop_length,
+            ),
             T.AmplitudeToDB(),
         )
 
@@ -102,21 +113,29 @@ class TCNTempoNet(nn.Module):
         super().__init__()
 
         self.mel = nn.Sequential(
-            T.MelSpectrogram(sample_rate=sample_rate, n_mels=n_mels, n_fft=2048, hop_length=hop_length),
+            T.MelSpectrogram(
+                sample_rate=sample_rate,
+                n_mels=n_mels,
+                n_fft=2048,
+                hop_length=hop_length,
+            ),
             T.AmplitudeToDB(),
         )
 
         self.input_proj = nn.Conv1d(n_mels, channels, kernel_size=1)
 
-        self.layers = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv1d(channels, channels, kernel_size=3,
-                          padding=2 ** i, dilation=2 ** i),
-                nn.BatchNorm1d(channels),
-                nn.GELU(),
-            )
-            for i in range(n_layers)
-        ])
+        self.layers = nn.ModuleList(
+            [
+                nn.Sequential(
+                    nn.Conv1d(
+                        channels, channels, kernel_size=3, padding=2**i, dilation=2**i
+                    ),
+                    nn.BatchNorm1d(channels),
+                    nn.GELU(),
+                )
+                for i in range(n_layers)
+            ]
+        )
 
         self.head = nn.Sequential(
             nn.Linear(channels, 128),
@@ -134,12 +153,12 @@ class TCNTempoNet(nn.Module):
         std = x.std(dim=(1, 2), keepdim=True)
         x = (x - mean) / (std + 1e-6)
 
-        x = self.input_proj(x)        # (B, channels, T)
+        x = self.input_proj(x)  # (B, channels, T)
 
         for layer in self.layers:
-            x = x + layer(x)       # dilated residual
+            x = x + layer(x)  # dilated residual
 
-        x = x.mean(dim=-1)         # (B, channels) — global average pool over time
+        x = x.mean(dim=-1)  # (B, channels) — global average pool over time
 
         return self.head(x).squeeze(1)
 
