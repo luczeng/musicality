@@ -26,8 +26,8 @@ def train(cfg: DictConfig) -> None:
     trainer = build_trainer(cfg, callbacks)
 
     trainer.logger.experiment.config.update({
-        "data/n_train": n_train,
-        "data/n_val": n_val,
+        "n_train": n_train,
+        "n_val": n_val,
         "model/arch": cfg.model.get("arch"),
     })
 
