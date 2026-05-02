@@ -4,11 +4,11 @@ import torch
 import pytest
 from omegaconf import OmegaConf
 
-from musicality.trainers.model import TempoNet
+from musicality.models.tempo_net import TempoNet
 from musicality.trainers.tempo_module import TempoModule
 
 MODEL_CFG = OmegaConf.create(
-    {"_target_": "musicality.trainers.model.TempoNet", "n_mels": 16, "dropout": 0.0}
+    {"_target_": "musicality.models.tempo_net.TempoNet", "n_mels": 16, "dropout": 0.0}
 )
 BATCH = (torch.randn(4, 1, 16, 32), torch.tensor([80.0, 100.0, 120.0, 140.0]))
 

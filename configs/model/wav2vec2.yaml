@@ -1,4 +1,4 @@
-_target_: musicality.trainers.model.TorchAudioTempoNet
+_target_: musicality.models.torch_audio.TorchAudioTempoNet
 pipeline: WAV2VEC2_BASE
 dropout: 0.1
 freeze_backbone: true

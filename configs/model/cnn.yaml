@@ -1,4 +1,4 @@
-_target_: musicality.trainers.model.TempoNet
+_target_: musicality.models.tempo_net.TempoNet
 n_mels: ${n_mels}
 sample_rate: 22050
 hop_length: ${hop_length}

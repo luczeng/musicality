@@ -1,4 +1,4 @@
-_target_: musicality.trainers.model.TCNTempoNet
+_target_: musicality.models.tcn.TCNTempoNet
 n_mels: ${n_mels}
 sample_rate: 22050
 channels: 256
