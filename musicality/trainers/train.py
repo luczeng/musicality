@@ -5,7 +5,7 @@ import random
 import lightning as L
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
@@ -109,7 +109,7 @@ def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:
             project=cfg.wandb.project,
             name=cfg.wandb.run_name,
             tags=cfg.wandb.tags,
-            config=dict(cfg),
+            config=OmegaConf.to_container(cfg, resolve=True),
             anonymous=None,
         ),
         enable_progress_bar=True,

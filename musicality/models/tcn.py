@@ -70,18 +70,18 @@ class TCNTempoNet(nn.Module):
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
 
-        x = self.mel(wav).squeeze(1)  # (B, 1, n_mels, T) → (B, n_mels, T)
+        x = self.mel(wav).squeeze(1)  # (B, 1, n_mels, T) → (B, n_mels, T')
 
         # Per-sample normalisation — stabilises inputs across varying loudness
         mean = x.mean(dim=(1, 2), keepdim=True)
         std = x.std(dim=(1, 2), keepdim=True)
         x = (x - mean) / (std + 1e-6)
 
-        x = self.input_proj(x)  # (B, channels, T)
+        x = self.input_proj(x)  # (B, channels, T')
 
         for layer in self.layers:
             x = x + layer(x)  # dilated residual
 
         x = x.mean(dim=-1)  # (B, channels) — global average pool over time
 
-        return self.head(x).squeeze(1)
+        return self.head(x).squeeze(1)  # regression head (B,)
