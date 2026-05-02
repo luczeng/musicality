@@ -19,16 +19,18 @@ def train(cfg: DictConfig) -> None:
 
     L.seed_everything(42)
 
-    train_loader, val_loader = build_dataloaders(cfg)
+    train_loader, val_loader, n_train, n_val = build_dataloaders(cfg)
 
     module = build_module(cfg)
     callbacks = build_callbacks(cfg)
     trainer = build_trainer(cfg, callbacks)
 
+    trainer.logger.experiment.config.update({"data/n_train": n_train, "data/n_val": n_val})
+
     trainer.fit(module, train_loader, val_loader)
 
 
-def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
+def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
 
     dataset = TempoDataset(
         name=cfg.data.name,
@@ -47,9 +49,13 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
 
     subsample = cfg.get("train_subsample", None)
     if subsample is not None:
-        n = max(1, int(len(train_ds) * subsample))
-        indices = random.sample(range(len(train_ds)), n)
+        n_before = len(train_ds)
+        n = max(1, int(n_before * subsample))
+        indices = random.sample(range(n_before), n)
         train_ds = Subset(train_ds, indices)
+        print(f"[train] Subsampled train set: {n}/{n_before} ({subsample:.0%})")
+
+    n_train, n_val = len(train_ds), len(val_ds)
 
     persistent_workers = cfg.data.num_workers > 0
 
@@ -68,7 +74,7 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader]:
         persistent_workers=persistent_workers,
     )
 
-    return train_loader, val_loader
+    return train_loader, val_loader, n_train, n_val
 
 
 def build_module(cfg: DictConfig) -> TempoModule:
