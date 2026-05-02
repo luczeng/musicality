@@ -1,4 +1,5 @@
 _target_: musicality.models.tempo_net.TempoNet
+name: CNN
 n_mels: ${n_mels}
 sample_rate: 22050
 hop_length: ${hop_length}

@@ -1,4 +1,5 @@
 _target_: musicality.models.torch_audio.TorchAudioTempoNet
+name: wav2vec2
 pipeline: WAV2VEC2_BASE
 dropout: 0.1
 freeze_backbone: true

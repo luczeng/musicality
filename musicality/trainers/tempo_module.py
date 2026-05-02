@@ -2,7 +2,7 @@
 
 import torch
 import lightning as L
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
 
@@ -73,7 +73,9 @@ class TempoModule(L.LightningModule):
     def __init__(self, model: DictConfig, lr: float = 1e-3, weight_decay: float = 1e-4):
         super().__init__()
         self.save_hyperparameters()
-        self.model = instantiate(model)
+        model_cfg = OmegaConf.to_container(model, resolve=True)
+        model_cfg.pop("name", None)
+        self.model = instantiate(model_cfg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)

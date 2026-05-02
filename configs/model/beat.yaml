@@ -1,4 +1,5 @@
 _target_: musicality.models.huggingface.WaveformTempoNet
+name: BEaT
 model_name: microsoft/BEaT-iter3-AS2M
 dropout: 0.1
 freeze_backbone: true

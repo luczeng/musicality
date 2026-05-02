@@ -7,10 +7,12 @@ from omegaconf import OmegaConf
 from musicality.models.tempo_net import TempoNet
 from musicality.trainers.tempo_module import TempoModule
 
+N_SAMPLES = 4096  # short but > n_fft (2048) so STFT doesn't error
+
 MODEL_CFG = OmegaConf.create(
     {"_target_": "musicality.models.tempo_net.TempoNet", "n_mels": 16, "dropout": 0.0}
 )
-BATCH = (torch.randn(4, 1, 16, 32), torch.tensor([80.0, 100.0, 120.0, 140.0]))
+BATCH = (torch.randn(4, 1, N_SAMPLES), torch.tensor([80.0, 100.0, 120.0, 140.0]))
 
 
 # ---------------------------------------------------------------------------
@@ -20,17 +22,17 @@ BATCH = (torch.randn(4, 1, 16, 32), torch.tensor([80.0, 100.0, 120.0, 140.0]))
 class TestTempoNet:
     def test_output_shape(self):
         model = TempoNet(n_mels=16)
-        out = model(torch.randn(4, 1, 16, 32))
+        out = model(torch.randn(4, 1, N_SAMPLES))
         assert out.shape == (4,)
 
     def test_single_sample(self):
         model = TempoNet(n_mels=16)
-        out = model(torch.randn(1, 1, 16, 32))
+        out = model(torch.randn(1, 1, N_SAMPLES))
         assert out.shape == (1,)
 
     def test_output_is_finite(self):
         model = TempoNet(n_mels=16)
-        out = model(torch.randn(4, 1, 16, 32))
+        out = model(torch.randn(4, 1, N_SAMPLES))
         assert torch.isfinite(out).all()
 
 
@@ -44,12 +46,12 @@ class TestTempoModule:
         return TempoModule(model=MODEL_CFG, lr=1e-3, weight_decay=0.0)
 
     def test_forward(self, module):
-        mel, _ = BATCH
-        out = module(mel)
+        wav, _ = BATCH
+        out = module(wav)
         assert out.shape == (4,)
 
     def test_training_step(self, module):
-        loss = module.training_step(BATCH, 0)
+        loss = module._step(BATCH, "train")
         assert loss.shape == ()
         assert loss.item() > 0
 
@@ -66,7 +68,7 @@ class TestTempoModule:
         assert module.hparams.lr == 1e-3
 
     def test_backward(self, module):
-        loss = module.training_step(BATCH, 0)
+        loss = module._step(BATCH, "train")
         loss.backward()
         for p in module.parameters():
             if p.grad is not None:
