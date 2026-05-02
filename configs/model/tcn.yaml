@@ -1,5 +1,5 @@
 _target_: musicality.models.tcn.TCNTempoNet
-name: TCN
+arch: TCN
 n_mels: ${n_mels}
 sample_rate: 22050
 channels: 256

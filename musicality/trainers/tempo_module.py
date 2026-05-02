@@ -74,7 +74,7 @@ class TempoModule(L.LightningModule):
         super().__init__()
         self.save_hyperparameters()
         model_cfg = OmegaConf.to_container(model, resolve=True)
-        model_cfg.pop("name", None)
+        model_cfg.pop("arch", None)
         self.model = instantiate(model_cfg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
