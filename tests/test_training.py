@@ -51,9 +51,10 @@ class TestTempoModule:
         assert out.shape == (4,)
 
     def test_training_step(self, module):
-        loss = module._step(BATCH, "train")
+        loss, pred = module._step(BATCH, "train")
         assert loss.shape == ()
         assert loss.item() > 0
+        assert pred.shape == (4,)
 
     def test_validation_step(self, module):
         # should not raise
@@ -68,7 +69,7 @@ class TestTempoModule:
         assert module.hparams.lr == 1e-3
 
     def test_backward(self, module):
-        loss = module._step(BATCH, "train")
+        loss, _ = module._step(BATCH, "train")
         loss.backward()
         for p in module.parameters():
             if p.grad is not None:

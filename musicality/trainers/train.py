@@ -13,6 +13,8 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
+from musicality.augmentations import AugmentedDataset, build_augmenter
+from musicality.callbacks.error_plot import ErrorVsTempoPlot
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.loaders.tempo_dataset import TempoDataset
 from musicality.splits.splitter import Splitter
@@ -54,6 +56,11 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
     train_ds, val_ds = Splitter(
         dataset, splits_dir, dataset_name, cfg.data.val_split
     ).run()
+
+    augmenter = build_augmenter(cfg.augmentations) if cfg.get("augmentations") else None
+    if augmenter is not None:
+        n_samples = int(cfg.data.duration * cfg.data.sample_rate)
+        train_ds = AugmentedDataset(train_ds, augmenter, cfg.data.sample_rate, n_samples)
 
     subsample = cfg.get("train_subsample", None)
     if subsample is not None:
@@ -108,6 +115,7 @@ def build_callbacks(cfg: DictConfig) -> list:
         ),
         # EarlyStopping(monitor="val/loss", patience=10, mode="min"),
         BestMetricsPrinter(),
+        ErrorVsTempoPlot(),
     ]
 
 

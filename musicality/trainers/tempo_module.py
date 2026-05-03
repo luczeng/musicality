@@ -83,16 +83,19 @@ class TempoModule(L.LightningModule):
         self.log(f"{stage}/mae", mae, prog_bar=False, on_step=False, on_epoch=True)
         self.log(f"{stage}/acc1", acc1, prog_bar=True, on_step=False, on_epoch=True)
 
-        return loss
+        return loss, pred
 
     def training_step(self, batch, batch_idx):
 
         self.log("lr", self.optimizers().param_groups[0]["lr"], prog_bar=True, on_step=False, on_epoch=True)
-        return self._step(batch, "train")
+        loss, _ = self._step(batch, "train")
+        return loss
 
     def validation_step(self, batch, batch_idx):
 
-        self._step(batch, "val")
+        x, tempo = batch
+        loss, pred = self._step(batch, "val")
+        return {"pred": pred.detach().cpu(), "target": tempo.detach().cpu()}
 
     def configure_optimizers(self):
 
