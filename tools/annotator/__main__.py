@@ -20,7 +20,6 @@ import mirdata
 from PySide6.QtWidgets import QApplication
 
 import musicality.dataformats as dataformats
-from .data import load_track
 from .main_window import MainWindow
 
 DATA_DIR = Path(__file__).parent.parent.parent / dataformats.load().data_dir
@@ -33,20 +32,23 @@ def main() -> None:
     args = parser.parse_args()
 
     ds = mirdata.initialize(args.dataset, data_home=str(DATA_DIR / args.dataset))
+    track_ids = ds.track_ids
 
-    track_id = args.track or random.choice(ds.track_ids)
-    if track_id not in ds.track_ids:
-        print(f"Track '{track_id}' not found in '{args.dataset}'.")
-        print(f"Available IDs (sample): {ds.track_ids[:5]}")
-        sys.exit(1)
+    if args.track is not None:
+        if args.track not in track_ids:
+            print(f"Track '{args.track}' not found in '{args.dataset}'.")
+            print(f"Available IDs (sample): {track_ids[:5]}")
+            sys.exit(1)
+        index = track_ids.index(args.track)
+    else:
+        index = random.randrange(len(track_ids))
 
-    print(f"[annotator] {args.dataset} / {track_id}")
-    track = load_track(args.dataset, track_id)
+    print(f"[annotator] {args.dataset} / {track_ids[index]}")
 
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    window = MainWindow(track)
+    window = MainWindow(args.dataset, track_ids, index)
     window.show()
 
     sys.exit(app.exec())

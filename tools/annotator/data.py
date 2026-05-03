@@ -40,6 +40,15 @@ class TrackData:
 # Pure helpers
 # ---------------------------------------------------------------------------
 
+def tempo_from_beats(beat_times: np.ndarray) -> float | None:
+    """Estimate tempo from beat timestamps using the median inter-beat interval."""
+    if len(beat_times) < 2:
+        return None
+    intervals = np.diff(beat_times)
+    median_interval = np.median(intervals)
+    return 60.0 / median_interval
+
+
 def beats_per_bar(beat_positions: np.ndarray | None) -> int:
     """Return the number of beats per bar inferred from beat positions.
 

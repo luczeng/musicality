@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import librosa
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -20,8 +20,10 @@ from .data import (
     add_beat,
     annotation_path,
     beats_per_bar,
+    load_track,
     remove_beat,
     save_annotations,
+    tempo_from_beats,
 )
 from .metronome_widget import MetronomeWidget
 from .waveform_widget import WaveformWidget
@@ -34,71 +36,88 @@ class MainWindow(QMainWindow):
 
     Layout
     ------
-    Toolbar : [▶ Play/Pause]  [💾 Save]  [track info]
+    Toolbar : [◀ Prev]  [▶ Play/Pause]  [Next ▶]  [💾 Save]  [track info]
     Center  : WaveformWidget  (resizable, takes remaining space)
     Bottom  : MetronomeWidget (fixed height)
 
     Keyboard shortcuts
     ------------------
     Space      : play / pause
+    Left/Right : previous / next track
     Ctrl+S     : save annotations
     Ctrl+click : add beat at clicked position on waveform
     Ctrl+right-click : remove beat nearest to clicked position
     """
 
-    def __init__(self, track: TrackData) -> None:
+    _playback_finished = Signal()
+
+    def __init__(
+        self,
+        dataset_name: str,
+        track_ids: list[str],
+        index: int = 0,
+    ) -> None:
         super().__init__()
-        self._track = track
+        self._dataset_name = dataset_name
+        self._track_ids = track_ids
+        self._index = index
+        self._track: TrackData | None = None
         self._engine = AudioEngine()
         self._timer = QTimer(self)
-        self._n_beats = beats_per_bar(track.beat_positions)
+        self._n_beats = 4
 
         self._setup_ui()
-        self._load_audio()
+
+        self._playback_finished.connect(self._on_playback_finished)
+        self._engine.on_finished(self._playback_finished.emit)
 
         self._timer.setInterval(_TICK_MS)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
+
+        self._load_track(self._index)
 
     # ------------------------------------------------------------------
     # UI setup
     # ------------------------------------------------------------------
 
     def _setup_ui(self) -> None:
-        self.setWindowTitle(f"{self._track.dataset_name}  /  {self._track.track_id}")
         self.resize(1200, 280)
 
-        # Toolbar widgets
+        self._prev_btn = QPushButton("◀  Prev")
+        self._prev_btn.setFixedWidth(90)
+        self._prev_btn.clicked.connect(self._on_prev)
+
         self._play_btn = QPushButton("▶  Play")
         self._play_btn.setFixedWidth(90)
         self._play_btn.clicked.connect(self._on_play_pause)
+
+        self._next_btn = QPushButton("Next  ▶")
+        self._next_btn.setFixedWidth(90)
+        self._next_btn.clicked.connect(self._on_next)
 
         self._save_btn = QPushButton("💾  Save")
         self._save_btn.setFixedWidth(90)
         self._save_btn.clicked.connect(self._on_save)
 
-        tempo_str = f"{self._track.tempo:.1f} BPM" if self._track.tempo else "? BPM"
-        self._info_label = QLabel(
-            f"{self._track.track_id}   —   {tempo_str}   —   {self._n_beats}/4"
-        )
+        self._info_label = QLabel()
 
         toolbar = QHBoxLayout()
+        toolbar.addWidget(self._prev_btn)
         toolbar.addWidget(self._play_btn)
+        toolbar.addWidget(self._next_btn)
         toolbar.addWidget(self._save_btn)
         toolbar.addWidget(self._info_label)
         toolbar.addStretch()
 
-        # Central widgets
         self._waveform = WaveformWidget()
-        self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._waveform.seek_requested.connect(self._on_seek)
         self._waveform.beat_added.connect(self._on_beat_added)
         self._waveform.beat_removed.connect(self._on_beat_removed)
 
         self._metronome = MetronomeWidget()
-        self._metronome.set_state(self._n_beats, None)
+        self._metronome.set_state(4, None)
 
-        # Root layout
         root = QVBoxLayout()
         root.setSpacing(4)
         root.addLayout(toolbar)
@@ -111,14 +130,55 @@ class MainWindow(QMainWindow):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
     # ------------------------------------------------------------------
-    # Audio
+    # Track loading / navigation
     # ------------------------------------------------------------------
 
-    def _load_audio(self) -> None:
+    def _load_track(self, index: int) -> None:
+        """Load the track at *index*, replacing any currently loaded track."""
+        self._engine.stop()
+        self._play_btn.setText("▶  Play")
+
+        self._index = index
+        track_id = self._track_ids[index]
+        self._track = load_track(self._dataset_name, track_id)
+        self._n_beats = beats_per_bar(self._track.beat_positions)
+
+        computed = tempo_from_beats(self._track.beat_times)
+        if computed is not None:
+            tempo_str = f"{computed:.1f} BPM"
+            if self._track.tempo:
+                tempo_str += f" (ann: {self._track.tempo:.1f})"
+        elif self._track.tempo:
+            tempo_str = f"{self._track.tempo:.1f} BPM"
+        else:
+            tempo_str = "? BPM"
+        self._info_label.setText(
+            f"[{index + 1}/{len(self._track_ids)}]  {track_id}"
+            f"   —   {tempo_str}   —   {self._n_beats}/4"
+        )
+        self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
+
+        self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+        self._metronome.set_state(self._n_beats, None)
+
+        self._prev_btn.setEnabled(index > 0)
+        self._next_btn.setEnabled(index < len(self._track_ids) - 1)
+
         audio, sr = librosa.load(self._track.audio_path, sr=None, mono=True)
         self._engine.load(audio, sr)
         self._waveform.set_waveform(audio, sr)
-        self._engine.on_finished(self._on_playback_finished)
+
+    def _on_prev(self) -> None:
+        if self._index > 0:
+            self._load_track(self._index - 1)
+
+    def _on_next(self) -> None:
+        if self._index < len(self._track_ids) - 1:
+            self._load_track(self._index + 1)
+
+    # ------------------------------------------------------------------
+    # Audio
+    # ------------------------------------------------------------------
 
     def _on_play_pause(self) -> None:
         if self._engine.is_playing:
@@ -133,6 +193,7 @@ class MainWindow(QMainWindow):
         self._waveform.set_position(t)
 
     def _on_playback_finished(self) -> None:
+        """Called on the main thread when playback reaches the end."""
         self._play_btn.setText("▶  Play")
 
     # ------------------------------------------------------------------
@@ -173,10 +234,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        if event.key() == Qt.Key.Key_Space:
+        key = event.key()
+        if key == Qt.Key.Key_Space:
             self._on_play_pause()
+        elif key == Qt.Key.Key_Left:
+            self._on_prev()
+        elif key == Qt.Key.Key_Right:
+            self._on_next()
         elif (
-            event.key() == Qt.Key.Key_S
+            key == Qt.Key.Key_S
             and event.modifiers() & Qt.KeyboardModifier.ControlModifier
         ):
             self._on_save()

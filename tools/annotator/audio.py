@@ -63,9 +63,14 @@ class AudioEngine:
         return self._stream is not None and self._stream.active
 
     def play(self) -> None:
-        """Start or resume playback from the current position."""
+        """Start or resume playback from the current position.
+
+        If playback has already reached the end, rewinds to the beginning first.
+        """
         if self._audio is None or self.is_playing:
             return
+        if self._frame >= len(self._audio):
+            self._frame = 0
         self._start_stream(self._frame)
 
     def pause(self) -> None:
