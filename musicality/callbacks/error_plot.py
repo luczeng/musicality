@@ -54,7 +54,5 @@ class ErrorVsTempoPlot(L.Callback):
         ax.legend(fontsize=8)
         fig.tight_layout()
 
-        # Write to summary so the image is overwritten each epoch rather than
-        # accumulating a new entry per step in the media panel.
-        trainer.logger.experiment.summary["val/error_vs_tempo"] = wandb.Image(fig)
+        trainer.logger.experiment.log({"val/error_vs_tempo": wandb.Image(fig)})
         plt.close(fig)
