@@ -15,8 +15,11 @@ class BestMetricsPrinter(L.Callback):
             val = metrics.get(key)
             if val is None:
                 continue
+            if key not in self.best:
+                self.best[key] = val.item()
+                continue
             better = val > self.best[key] if key == "val/acc1" else val < self.best[key]
-            if key not in self.best or better:
+            if better:
                 self.best[key] = val.item()
 
     def on_train_epoch_end(self, trainer, pl_module):
