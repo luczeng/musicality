@@ -11,18 +11,19 @@ class BestMetricsPrinter(L.Callback):
 
     def on_validation_epoch_end(self, trainer, pl_module):
         metrics = trainer.callback_metrics
-        for key in ("val/loss", "val/mse"):
+        for key in ("val/loss", "val/mae", "val/acc1"):
             val = metrics.get(key)
             if val is None:
                 continue
-            if key not in self.best or val < self.best[key]:
+            better = val > self.best[key] if key == "val/acc1" else val < self.best[key]
+            if key not in self.best or better:
                 self.best[key] = val.item()
 
     def on_train_epoch_end(self, trainer, pl_module):
         metrics = trainer.callback_metrics
         epoch = trainer.current_epoch
         parts = [f"epoch {epoch:>3}"]
-        for key in ("train/loss", "train/mse", "val/loss", "val/mse"):
+        for key in ("train/loss", "train/mae", "train/acc1", "val/loss", "val/mae", "val/acc1"):
             val = metrics.get(key)
             if val is not None:
                 parts.append(f"{key}: {val:.4f}")

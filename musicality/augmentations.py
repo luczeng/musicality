@@ -11,7 +11,6 @@ import random
 
 import torch
 import torch.nn.functional as F
-import torchaudio.functional as AF
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
 
@@ -41,7 +40,10 @@ class TimeStretch:
         self, wav: torch.Tensor, tempo: float, sr: int
     ) -> tuple[torch.Tensor, float]:
         rate = random.uniform(self.min_rate, self.max_rate)
-        stretched = AF.resample(wav, orig_freq=int(sr * rate), new_freq=sr)
+        new_len = int(wav.shape[-1] / rate)
+        stretched = F.interpolate(
+            wav.unsqueeze(0), size=new_len, mode="linear", align_corners=False
+        ).squeeze(0)
         return stretched, tempo * rate
 
 
