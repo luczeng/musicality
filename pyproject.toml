@@ -37,6 +37,12 @@ exclude = ["data"]
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore:You are trying to `self.log\\(\\)` but the `self.trainer` reference is not registered",
+    # Lightning internal deprecation in _pytree.py — not actionable from user code
+    "ignore:`isinstance\\(treespec, LeafSpec\\)` is deprecated",
+    # PyTorch STFT pre-allocates an empty out-tensor internally; harmless in practice
+    "ignore:An output with one or more elements was resized since it had shape",
+    # Test batches are intentionally tiny; logging interval mismatch is expected
+    "ignore:The number of training batches.*is smaller than the logging interval",
 ]
 
 [dependency-groups]

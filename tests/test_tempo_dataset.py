@@ -1,4 +1,4 @@
-"""Tests for musicality.loaders.loader — uses mocks to avoid disk I/O."""
+"""Tests for musicality.loaders.tempo_dataset — uses mocks to avoid disk I/O."""
 
 from unittest.mock import MagicMock, patch
 
@@ -30,10 +30,10 @@ def _patch_loader(tracks, wav_shape=(2, N_SAMPLES), sr=SAMPLE_RATE):
     fake_wav = torch.randn(*wav_shape)
 
     mirdata_patch = patch(
-        "musicality.loaders.loader.mirdata.initialize", return_value=fake_ds
+        "musicality.loaders.tempo_dataset.mirdata.initialize", return_value=fake_ds
     )
     audio_patch = patch(
-        "musicality.loaders.loader.torchaudio.load", return_value=(fake_wav, sr)
+        "musicality.loaders.tempo_dataset.torchaudio.load", return_value=(fake_wav, sr)
     )
     exists_patch = patch("pathlib.Path.exists", return_value=True)
     return mirdata_patch, audio_patch, exists_patch
@@ -48,7 +48,7 @@ class TestTempoDataset:
     def test_len(self):
         tracks = [_make_track(f"t{i}", tempo=100 + i) for i in range(5)]
         patches = _patch_loader(tracks)
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid")
@@ -57,7 +57,7 @@ class TestTempoDataset:
     def test_skips_none_tempo(self):
         tracks = [_make_track("t1", tempo=120.0), _make_track("t2", tempo=None)]
         patches = _patch_loader(tracks)
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid")
@@ -66,7 +66,7 @@ class TestTempoDataset:
     def test_item_shapes(self):
         tracks = [_make_track("t1", tempo=128.0)]
         patches = _patch_loader(tracks)
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid")
@@ -81,7 +81,7 @@ class TestTempoDataset:
         """Stereo input (2, N) must produce a (1, T) waveform."""
         tracks = [_make_track("t1", tempo=100.0)]
         patches = _patch_loader(tracks, wav_shape=(2, N_SAMPLES))
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid")
@@ -92,7 +92,7 @@ class TestTempoDataset:
         """Audio longer or shorter than duration produces the same fixed output shape."""
         tracks = [_make_track("t1", tempo=90.0)]
         patches = _patch_loader(tracks, wav_shape=(1, N_SAMPLES * 2))
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid")
@@ -111,7 +111,7 @@ class TestTempoDataset:
         wrong_sr = 44100
         n_at_wrong_sr = int(10.0 * wrong_sr)
         patches = _patch_loader(tracks, wav_shape=(1, n_at_wrong_sr), sr=wrong_sr)
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid", sample_rate=22050)
@@ -127,7 +127,7 @@ class TestTempoDataset:
 class TestDataLoader:
     def test_returns_dataloader(self):
         from torch.utils.data import DataLoader
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         tracks = [_make_track(f"t{i}", tempo=float(i * 10 + 60)) for i in range(8)]
         patches = _patch_loader(tracks)
@@ -138,7 +138,7 @@ class TestDataLoader:
 
     def test_batch_shape(self):
         from torch.utils.data import DataLoader
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         tracks = [_make_track(f"t{i}", tempo=float(i * 10 + 60)) for i in range(8)]
         patches = _patch_loader(tracks)
@@ -155,7 +155,7 @@ class TestDataLoader:
         tracks = [_make_track(f"t{i}", tempo=t) for i, t in enumerate(tempos)]
         patches = _patch_loader(tracks)
         from torch.utils.data import DataLoader
-        from musicality.loaders.loader import TempoDataset
+        from musicality.loaders.tempo_dataset import TempoDataset
 
         with patches[0], patches[1], patches[2]:
             ds = TempoDataset(name="brid")

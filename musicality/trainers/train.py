@@ -1,8 +1,12 @@
 """Core training routine for tempo estimation."""
 
+import logging
 import random
 
 import lightning as L
+
+# Suppress Lightning's promotional tip about LitLogger (INFO-level noise)
+logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
@@ -10,7 +14,7 @@ from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
-from musicality.loaders.loader import TempoDataset
+from musicality.loaders.tempo_dataset import TempoDataset
 from musicality.splits.splitter import Splitter
 from musicality.trainers.tempo_module import TempoModule
 
@@ -121,7 +125,6 @@ def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:
             name=cfg.wandb.run_name,
             tags=cfg.wandb.tags,
             config=OmegaConf.to_container(cfg, resolve=True),
-            anonymous=None,
         ),
         enable_progress_bar=True,
     )
