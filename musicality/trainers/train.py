@@ -85,6 +85,7 @@ def build_module(cfg: DictConfig) -> TempoModule:
 
     return TempoModule(
         model=cfg.model,
+        loss=cfg.loss,
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
     )

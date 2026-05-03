@@ -1,6 +1,7 @@
 defaults:
   - model: TCN
   - _self_
+loss: absolute  # relative | absolute
 lr: 1e-3
 weight_decay: 0.0
 batch_size: 55

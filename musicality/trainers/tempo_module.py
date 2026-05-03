@@ -5,32 +5,12 @@ import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
+from musicality.losses import absolute_tempo_loss, relative_tempo_loss
 
-def relative_tempo_loss(
-    pred: torch.Tensor,
-    target: torch.Tensor,
-    factors: tuple = (0.5, 1.0, 2.0),
-) -> torch.Tensor:
-    """MAE loss that is invariant to metrical octave errors.
-
-    For each sample, computes the absolute error between the prediction and
-    each factor × target, then takes the minimum. This means predicting double
-    or half the annotated tempo incurs zero penalty — both are musically valid
-    metrical interpretations of the same groove.
-
-    :param pred: Predicted BPM values, shape ``(B,)``.
-    :param target: Ground-truth BPM values, shape ``(B,)``.
-    :param factors: Metrical multiples to consider (default: 0.5×, 1×, 2×).
-    :returns: Scalar mean relative tempo loss.
-    :rtype: torch.Tensor
-    """
-
-    errors = torch.stack(
-        [(pred - f * target).abs() for f in factors],
-        dim=1,
-    )  # (B, n_factors)
-
-    return errors.min(dim=1).values.mean()
+_LOSSES = {
+    "relative": relative_tempo_loss,
+    "absolute": absolute_tempo_loss,
+}
 
 
 def tempo_acc1(
@@ -66,16 +46,26 @@ class TempoModule(L.LightningModule):
     """LightningModule wrapping a tempo regression model.
 
     :param model: DictConfig for instantiating the backbone (via hydra.utils.instantiate).
+    :param loss: Loss name — ``"relative"`` (octave-invariant MAE) or ``"absolute"`` (plain MAE).
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
     """
 
-    def __init__(self, model: DictConfig, lr: float = 1e-3, weight_decay: float = 1e-4):
+    def __init__(
+        self,
+        model: DictConfig,
+        loss: str = "relative",
+        lr: float = 1e-3,
+        weight_decay: float = 1e-4,
+    ):
         super().__init__()
         self.save_hyperparameters()
         model_cfg = OmegaConf.to_container(model, resolve=True)
         model_cfg.pop("arch", None)
         self.model = instantiate(model_cfg)
+        if loss not in _LOSSES:
+            raise ValueError(f"Unknown loss '{loss}'. Choose from: {list(_LOSSES)}")
+        self.loss_fn = _LOSSES[loss]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -85,7 +75,7 @@ class TempoModule(L.LightningModule):
         x, tempo = batch
         pred = self(x)
 
-        loss = relative_tempo_loss(pred, tempo)
+        loss = self.loss_fn(pred, tempo)
         mae = (pred - tempo).abs().mean()
         acc1 = tempo_acc1(pred, tempo)
 
