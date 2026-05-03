@@ -26,7 +26,7 @@ class ErrorVsTempoPlot(L.Callback):
         self._targets.append(outputs["target"])
 
     def on_validation_epoch_end(self, trainer, pl_module):
-        if not self._preds:
+        if not self._preds or trainer.sanity_checking:
             return
 
         preds = torch.cat(self._preds).numpy()
