@@ -26,6 +26,7 @@ from .data import (
     tempo_from_beats,
 )
 from .metronome_widget import MetronomeWidget
+from .tap_tempo_widget import TapTempoWidget
 from .waveform_widget import WaveformWidget
 
 _TICK_MS = 30   # ~33 fps refresh rate
@@ -42,7 +43,8 @@ class MainWindow(QMainWindow):
 
     Keyboard shortcuts
     ------------------
-    Space      : play / pause
+    Space      : tap tempo
+    P          : play / pause
     Left/Right : previous / next track
     Ctrl+S     : save annotations
     Ctrl+click : add beat at clicked position on waveform
@@ -86,18 +88,22 @@ class MainWindow(QMainWindow):
 
         self._prev_btn = QPushButton("◀  Prev")
         self._prev_btn.setFixedWidth(90)
+        self._prev_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._prev_btn.clicked.connect(self._on_prev)
 
         self._play_btn = QPushButton("▶  Play")
         self._play_btn.setFixedWidth(90)
+        self._play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._play_btn.clicked.connect(self._on_play_pause)
 
         self._next_btn = QPushButton("Next  ▶")
         self._next_btn.setFixedWidth(90)
+        self._next_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._next_btn.clicked.connect(self._on_next)
 
         self._save_btn = QPushButton("💾  Save")
         self._save_btn.setFixedWidth(90)
+        self._save_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._save_btn.clicked.connect(self._on_save)
 
         self._info_label = QLabel()
@@ -118,11 +124,14 @@ class MainWindow(QMainWindow):
         self._metronome = MetronomeWidget()
         self._metronome.set_state(4, None)
 
+        self._tap_widget = TapTempoWidget()
+
         root = QVBoxLayout()
         root.setSpacing(4)
         root.addLayout(toolbar)
         root.addWidget(self._waveform, stretch=1)
         root.addWidget(self._metronome)
+        root.addWidget(self._tap_widget)
 
         container = QWidget()
         container.setLayout(root)
@@ -160,6 +169,7 @@ class MainWindow(QMainWindow):
 
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._metronome.set_state(self._n_beats, None)
+        self._tap_widget.reset()
 
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
@@ -236,6 +246,8 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         if key == Qt.Key.Key_Space:
+            self._tap_widget.tap()
+        elif key == Qt.Key.Key_P:
             self._on_play_pause()
         elif key == Qt.Key.Key_Left:
             self._on_prev()
