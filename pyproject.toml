@@ -12,6 +12,7 @@ dependencies = [
     "matplotlib>=3.10.9",
     "mirdata>=1.0.0",
     "numpy",
+    "pyside6>=6.11.0",
     "pytest>=9.0.2",
     "sounddevice>=0.5.5",
     "soundfile>=0.13.1",
