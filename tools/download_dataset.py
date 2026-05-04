@@ -21,18 +21,24 @@ def _is_present(dataset_dir: Path) -> bool:
     return dataset_dir.exists() and any(dataset_dir.iterdir())
 
 
-def _download_one(dataset: str, data_home: Path) -> None:
+def _download_one(dataset: str, data_home: Path) -> bool:
+    """Download one dataset. Returns True on success, False on failure."""
     dataset_dir = data_home / dataset
     if _is_present(dataset_dir):
         click.echo(f"Skipping '{dataset}' — already present at {dataset_dir}")
-        return
+        return True
     click.echo(f"Downloading '{dataset}' to {dataset_dir} ...")
     ds = mirdata.initialize(dataset, data_home=str(dataset_dir))
-    ds.download()
+    try:
+        ds.download()
+    except Exception as e:
+        click.echo(f"WARNING: Failed to download '{dataset}': {e}", err=True)
+        return False
     for archive in list(dataset_dir.rglob("*.tar.gz")) + list(dataset_dir.rglob("*.zip")):
         archive.unlink()
         click.echo(f"Removed {archive}")
     click.echo(f"Done: {dataset}")
+    return True
 
 
 @click.command()
@@ -66,8 +72,10 @@ def main(dataset, download_all, list_datasets, data_home):
     resolved_data_home = Path(data_home) if data_home else Path(cfg["data_home"])
 
     if download_all:
-        for name in cfg["datasets"]:
-            _download_one(name, resolved_data_home)
+        failed = [n for n in cfg["datasets"] if not _download_one(n, resolved_data_home)]
+        if failed:
+            click.echo(f"\nFailed datasets: {', '.join(failed)}", err=True)
+            raise SystemExit(1)
         return
 
     if not dataset:
@@ -82,7 +90,8 @@ def main(dataset, download_all, list_datasets, data_home):
         click.echo("Run with --list to see available datasets.", err=True)
         raise SystemExit(1)
 
-    _download_one(dataset, resolved_data_home)
+    if not _download_one(dataset, resolved_data_home):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

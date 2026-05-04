@@ -149,3 +149,38 @@ def test_archives_deleted_after_download(mock_init, mock_list, tmp_path):
 
     assert result.exit_code == 0
     assert not archive.exists()
+
+
+@patch("download_dataset.mirdata.list_datasets", return_value=["ballroom"])
+@patch("download_dataset.mirdata.initialize")
+def test_download_failure_prints_warning_and_exits_1(mock_init, mock_list, tmp_path):
+    mock_ds = MagicMock()
+    mock_ds.download.side_effect = Exception("connection timed out")
+    mock_init.return_value = mock_ds
+
+    runner = CliRunner()
+    with patch("download_dataset.CONFIG_PATH", _make_config(tmp_path)):
+        result = runner.invoke(main, ["ballroom", "--data-home", str(tmp_path)])
+
+    assert result.exit_code == 1
+    assert "WARNING" in result.output or "WARNING" in (result.output + str(result.exception))
+
+
+@patch("download_dataset.mirdata.list_datasets", return_value=["ballroom", "gtzan"])
+@patch("download_dataset.mirdata.initialize")
+def test_download_all_continues_after_failure(mock_init, mock_list, tmp_path):
+    failing_ds = MagicMock()
+    failing_ds.download.side_effect = Exception("broken link")
+    ok_ds = MagicMock()
+    mock_init.side_effect = [failing_ds, ok_ds]
+
+    runner = CliRunner()
+    with patch("download_dataset.CONFIG_PATH", _make_config(tmp_path)):
+        result = runner.invoke(main, ["--all"])
+
+    # both datasets were attempted
+    assert mock_init.call_count == 2
+    # second one still downloaded
+    ok_ds.download.assert_called_once()
+    # exits with 1 because one failed
+    assert result.exit_code == 1
