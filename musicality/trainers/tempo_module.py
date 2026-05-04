@@ -37,8 +37,7 @@ def tempo_acc1(
     :param target: Ground-truth BPM values, shape ``(B,)``.
     :param tolerance: Relative tolerance (default: 0.08 → ±8%).
     :param factors: Metrical multiples to consider (default: 0.5×, 1×, 2×).
-    :returns: Fraction of correct predictions in ``[0, 1]``.
-    :rtype: torch.Tensor
+    :returns: Fraction of correct predictions in ``[0, 1]``, shape ``()``.
     """
 
     correct = torch.zeros(len(pred), dtype=torch.bool, device=pred.device)
@@ -104,7 +103,11 @@ class TempoModule(L.LightningModule):
         return self.model(x)
 
     def _decode(self, logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        """Returns (argmax_bpm, expected_bpm) for classification logits."""
+        """Decode classification logits into BPM predictions.
+
+        :param logits: Raw model output, shape ``(B, n_bins)``.
+        :returns: Tuple of ``(argmax_bpm, expected_bpm)``, each shape ``(B,)``.
+        """
         probs = F.softmax(logits, dim=-1)
         pred_argmax = self.bin_centers[probs.argmax(dim=-1)]
         pred_expected = (probs * self.bin_centers).sum(dim=-1)

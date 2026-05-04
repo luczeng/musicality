@@ -19,7 +19,9 @@ def relative_tempo_loss(
     :param pred: Predicted BPM values, shape ``(B,)``.
     :param target: Ground-truth BPM values, shape ``(B,)``.
     :param factors: Metrical multiples to consider (default: 0.5×, 1×, 2×).
+    :returns: Scalar mean loss, shape ``()``.
     """
+
     errors = torch.stack(
         [(pred - f * target).abs() for f in factors],
         dim=1,
@@ -38,7 +40,9 @@ def absolute_tempo_loss(
 
     :param pred: Predicted BPM values, shape ``(B,)``.
     :param target: Ground-truth BPM values, shape ``(B,)``.
+    :returns: Scalar mean loss, shape ``()``.
     """
+
     return (pred - target).abs().mean()
 
 
@@ -60,8 +64,10 @@ def gaussian_soft_target(
     :param sigma: Gaussian standard deviation in BPM units.
     :returns: Soft target distribution, shape ``(B, n_bins)``.
     """
+
     diff = bin_centers.unsqueeze(0) - tempo.unsqueeze(1)  # (B, n_bins)
-    return F.softmax(-(diff / sigma) ** 2 / 2, dim=-1)
+
+    return F.softmax(-((diff / sigma) ** 2) / 2, dim=-1)
 
 
 def classification_tempo_loss(
@@ -76,7 +82,10 @@ def classification_tempo_loss(
     :param tempo: True BPM values, shape ``(B,)``.
     :param bin_centers: BPM at the centre of each bin, shape ``(n_bins,)``.
     :param sigma: Gaussian standard deviation in BPM units.
+    :returns: Scalar mean loss, shape ``()``.
     """
+
     target = gaussian_soft_target(tempo, bin_centers, sigma)
     log_probs = F.log_softmax(logits, dim=-1)
+
     return -(target * log_probs).sum(dim=-1).mean()
