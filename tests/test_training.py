@@ -6,6 +6,7 @@ from omegaconf import OmegaConf
 
 from musicality.models.tempo_net import TempoNet
 from musicality.trainers.tempo_module import TempoModule
+from musicality.losses import gaussian_soft_target, classification_tempo_loss
 
 CLASSIFICATION_CFG = OmegaConf.create(
     {"bpm_min": 30, "bpm_max": 286, "n_bins": 64, "sigma": 1.5}
@@ -121,3 +122,74 @@ class TestTempoModuleClassification:
     def test_missing_classification_raises(self):
         with pytest.raises(ValueError, match="classification"):
             TempoModule(model=MODEL_CFG, loss="classification", classification=None)
+
+
+# ---------------------------------------------------------------------------
+# Loss functions
+# ---------------------------------------------------------------------------
+
+N_BINS = 64
+BPM_MIN, BPM_MAX = 30.0, 286.0
+BIN_CENTERS = torch.linspace(BPM_MIN, BPM_MAX, N_BINS)
+SIGMA = 1.5
+
+
+class TestGaussianSoftTarget:
+    def test_output_shape(self):
+        tempo = torch.tensor([120.0, 90.0])
+        out = gaussian_soft_target(tempo, BIN_CENTERS, SIGMA)
+        assert out.shape == (2, N_BINS)
+
+    def test_sums_to_one(self):
+        # softmax output must sum to 1 per sample
+        tempo = torch.tensor([60.0, 120.0, 180.0])
+        out = gaussian_soft_target(tempo, BIN_CENTERS, SIGMA)
+        assert torch.allclose(out.sum(dim=-1), torch.ones(3), atol=1e-5)
+
+    def test_peak_near_true_tempo(self):
+        # argmax of the soft target should be the bin closest to the true tempo
+        tempo = torch.tensor([120.0])
+        out = gaussian_soft_target(tempo, BIN_CENTERS, SIGMA)
+        peak_bpm = BIN_CENTERS[out.argmax(dim=-1).item()].item()
+        assert abs(peak_bpm - 120.0) < (BPM_MAX - BPM_MIN) / N_BINS + 1e-3
+
+    def test_smaller_sigma_sharpens_peak(self):
+        # a narrower Gaussian should concentrate more mass on the peak bin
+        tempo = torch.tensor([120.0])
+        wide = gaussian_soft_target(tempo, BIN_CENTERS, sigma=5.0)
+        narrow = gaussian_soft_target(tempo, BIN_CENTERS, sigma=0.5)
+        assert narrow.max() > wide.max()
+
+
+class TestClassificationTempoLoss:
+    def test_output_is_scalar(self):
+        logits = torch.randn(4, N_BINS)
+        tempo = torch.tensor([80.0, 100.0, 120.0, 140.0])
+        loss = classification_tempo_loss(logits, tempo, BIN_CENTERS, SIGMA)
+        assert loss.shape == ()
+
+    def test_loss_is_positive(self):
+        logits = torch.randn(4, N_BINS)
+        tempo = torch.tensor([80.0, 100.0, 120.0, 140.0])
+        loss = classification_tempo_loss(logits, tempo, BIN_CENTERS, SIGMA)
+        assert loss.item() > 0
+
+    def test_perfect_prediction_lower_than_random(self):
+        # logits sharply peaked at the true bin should give lower loss than
+        # random logits. Using a spike (not target.log()) to avoid -inf.
+        tempo = torch.tensor([120.0])
+        peak_bin = (BIN_CENTERS - 120.0).abs().argmin()
+        peaked_logits = torch.full((1, N_BINS), -10.0)
+        peaked_logits[0, peak_bin] = 10.0
+        random_logits = torch.randn(1, N_BINS)
+        peaked_loss = classification_tempo_loss(peaked_logits, tempo, BIN_CENTERS, SIGMA)
+        random_loss = classification_tempo_loss(random_logits, tempo, BIN_CENTERS, SIGMA)
+        assert peaked_loss.item() < random_loss.item()
+
+    def test_gradients_flow(self):
+        logits = torch.randn(4, N_BINS, requires_grad=True)
+        tempo = torch.tensor([80.0, 100.0, 120.0, 140.0])
+        loss = classification_tempo_loss(logits, tempo, BIN_CENTERS, SIGMA)
+        loss.backward()
+        assert logits.grad is not None
+        assert torch.isfinite(logits.grad).all()
