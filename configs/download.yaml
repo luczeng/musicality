@@ -7,5 +7,6 @@ datasets:
   - rwc_jazz
   - rwc_popular
   - acousticbrainz_genre
+  - groove_midi
   # gtzan_genre: audio hosted at opihi.cs.uvic.ca is a dead link.
   # Download manually from Marsyas or Kaggle and place in data/gtzan_genre/.
