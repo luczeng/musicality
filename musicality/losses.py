@@ -1,6 +1,7 @@
 """Tempo loss functions."""
 
 import torch
+import torch.nn.functional as F
 
 
 def relative_tempo_loss(
@@ -39,3 +40,43 @@ def absolute_tempo_loss(
     :param target: Ground-truth BPM values, shape ``(B,)``.
     """
     return (pred - target).abs().mean()
+
+
+def gaussian_soft_target(
+    tempo: torch.Tensor,
+    bin_centers: torch.Tensor,
+    sigma: float,
+) -> torch.Tensor:
+    """Soft target distribution over tempo bins.
+
+    For each sample, places a Gaussian centred on the true tempo across the
+    discrete bin grid, then normalises to a probability distribution. Bins
+    near the true tempo receive non-zero target mass, which gives the model
+    a smoother gradient than a one-hot target and bakes in the ordinal
+    structure of the bin grid.
+
+    :param tempo: True BPM values, shape ``(B,)``.
+    :param bin_centers: BPM at the centre of each bin, shape ``(n_bins,)``.
+    :param sigma: Gaussian standard deviation in BPM units.
+    :returns: Soft target distribution, shape ``(B, n_bins)``.
+    """
+    diff = bin_centers.unsqueeze(0) - tempo.unsqueeze(1)  # (B, n_bins)
+    return F.softmax(-(diff / sigma) ** 2 / 2, dim=-1)
+
+
+def classification_tempo_loss(
+    logits: torch.Tensor,
+    tempo: torch.Tensor,
+    bin_centers: torch.Tensor,
+    sigma: float,
+) -> torch.Tensor:
+    """Cross-entropy between predicted softmax and Gaussian soft target.
+
+    :param logits: Model logits over BPM bins, shape ``(B, n_bins)``.
+    :param tempo: True BPM values, shape ``(B,)``.
+    :param bin_centers: BPM at the centre of each bin, shape ``(n_bins,)``.
+    :param sigma: Gaussian standard deviation in BPM units.
+    """
+    target = gaussian_soft_target(tempo, bin_centers, sigma)
+    log_probs = F.log_softmax(logits, dim=-1)
+    return -(target * log_probs).sum(dim=-1).mean()

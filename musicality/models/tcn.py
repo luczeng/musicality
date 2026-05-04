@@ -23,6 +23,8 @@ class TCNTempoNet(nn.Module):
     :param n_layers: Number of dilated layers. Keep receptive field
         (3 × (2^n_layers − 1) frames) within the input sequence length.
     :param dropout: Dropout probability in the regression head.
+    :param n_outputs: Output dimension. ``1`` for scalar regression; > 1 for
+        classification over tempo bins (returns logits without softmax).
     """
 
     def __init__(
@@ -33,8 +35,10 @@ class TCNTempoNet(nn.Module):
         channels: int = 32,
         n_layers: int = 8,
         dropout: float = 0.3,
+        n_outputs: int = 1,
     ):
         super().__init__()
+        self.n_outputs = n_outputs
 
         self.mel = nn.Sequential(
             T.MelSpectrogram(
@@ -65,7 +69,7 @@ class TCNTempoNet(nn.Module):
             nn.Linear(channels, 128),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(128, 1),
+            nn.Linear(128, n_outputs),
         )
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
@@ -84,4 +88,5 @@ class TCNTempoNet(nn.Module):
 
         x = x.mean(dim=-1)  # (B, channels) — global average pool over time
 
-        return self.head(x).squeeze(1)  # regression head (B,)
+        out = self.head(x)  # (B, n_outputs)
+        return out.squeeze(-1) if self.n_outputs == 1 else out

@@ -15,6 +15,8 @@ class TempoNet(nn.Module):
     :param sample_rate: Audio sample rate, used to build the mel transform.
     :param hop_length: Hop length for the mel transform.
     :param dropout: Dropout probability in the regression head.
+    :param n_outputs: Output dimension. ``1`` for scalar regression; > 1 for
+        classification over tempo bins (returns logits without softmax).
     """
 
     def __init__(
@@ -23,9 +25,11 @@ class TempoNet(nn.Module):
         sample_rate: int = 22050,
         hop_length: int = 512,
         dropout: float = 0.3,
+        n_outputs: int = 1,
     ):
 
         super().__init__()
+        self.n_outputs = n_outputs
 
         self.mel = nn.Sequential(
             T.MelSpectrogram(
@@ -60,7 +64,7 @@ class TempoNet(nn.Module):
             nn.Linear(64, 128),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(128, 1),
+            nn.Linear(128, n_outputs),
         )
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
@@ -72,4 +76,5 @@ class TempoNet(nn.Module):
         std = mel.std(dim=(-2, -1), keepdim=True)
         mel = (mel - mean) / (std + 1e-6)
 
-        return self.head(self.encoder(mel)).squeeze(1)
+        out = self.head(self.encoder(mel))  # (B, n_outputs)
+        return out.squeeze(-1) if self.n_outputs == 1 else out

@@ -35,6 +35,7 @@ def train(cfg: DictConfig) -> None:
         "data/n_train": n_train,
         "data/n_val": n_val,
         "model/arch": cfg.model.get("arch"),
+        "loss/name": cfg.loss,
     })
 
     trainer.fit(module, train_loader, val_loader)
@@ -97,6 +98,7 @@ def build_module(cfg: DictConfig) -> TempoModule:
     return TempoModule(
         model=cfg.model,
         loss=cfg.loss,
+        classification=cfg.get("classification"),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
     )

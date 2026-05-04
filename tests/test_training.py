@@ -7,6 +7,10 @@ from omegaconf import OmegaConf
 from musicality.models.tempo_net import TempoNet
 from musicality.trainers.tempo_module import TempoModule
 
+CLASSIFICATION_CFG = OmegaConf.create(
+    {"bpm_min": 30, "bpm_max": 286, "n_bins": 64, "sigma": 1.5}
+)
+
 N_SAMPLES = 4096  # short but > n_fft (2048) so STFT doesn't error
 
 MODEL_CFG = OmegaConf.create(
@@ -74,3 +78,46 @@ class TestTempoModule:
         for p in module.parameters():
             if p.grad is not None:
                 assert torch.isfinite(p.grad).all()
+
+
+# ---------------------------------------------------------------------------
+# TempoModule (classification)
+# ---------------------------------------------------------------------------
+
+class TestTempoModuleClassification:
+    @pytest.fixture
+    def module(self):
+        return TempoModule(
+            model=MODEL_CFG,
+            loss="classification",
+            classification=CLASSIFICATION_CFG,
+            lr=1e-3,
+            weight_decay=0.0,
+        )
+
+    def test_model_outputs_logits(self, module):
+        wav, _ = BATCH
+        out = module(wav)
+        assert out.shape == (4, CLASSIFICATION_CFG.n_bins)
+
+    def test_step_returns_decoded_pred(self, module):
+        loss, pred = module._step(BATCH, "train")
+        assert loss.shape == ()
+        assert loss.item() > 0
+        assert pred.shape == (4,)
+
+    def test_predictions_within_bin_range(self, module):
+        _, pred = module._step(BATCH, "train")
+        assert (pred >= CLASSIFICATION_CFG.bpm_min - 1).all()
+        assert (pred <= CLASSIFICATION_CFG.bpm_max + 1).all()
+
+    def test_backward(self, module):
+        loss, _ = module._step(BATCH, "train")
+        loss.backward()
+        for p in module.parameters():
+            if p.grad is not None:
+                assert torch.isfinite(p.grad).all()
+
+    def test_missing_classification_raises(self):
+        with pytest.raises(ValueError, match="classification"):
+            TempoModule(model=MODEL_CFG, loss="classification", classification=None)

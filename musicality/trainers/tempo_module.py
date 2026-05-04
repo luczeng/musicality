@@ -1,16 +1,23 @@
 """PyTorch Lightning module for tempo estimation."""
 
 import torch
+import torch.nn.functional as F
 import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.losses import absolute_tempo_loss, relative_tempo_loss
+from musicality.losses import (
+    absolute_tempo_loss,
+    classification_tempo_loss,
+    relative_tempo_loss,
+)
 
-_LOSSES = {
+
+_REGRESSION_LOSSES = {
     "relative": relative_tempo_loss,
     "absolute": absolute_tempo_loss,
 }
+_VALID_LOSSES = set(_REGRESSION_LOSSES) | {"classification"}
 
 
 def tempo_acc1(
@@ -43,10 +50,21 @@ def tempo_acc1(
 
 
 class TempoModule(L.LightningModule):
-    """LightningModule wrapping a tempo regression model.
+    """LightningModule wrapping a tempo regression or classification model.
 
-    :param model: DictConfig for instantiating the backbone (via hydra.utils.instantiate).
-    :param loss: Loss name — ``"relative"`` (octave-invariant MAE) or ``"absolute"`` (plain MAE).
+    Three loss modes are supported:
+      * ``"absolute"`` — plain MAE between predicted and true BPM.
+      * ``"relative"`` — octave-invariant MAE.
+      * ``"classification"`` — softmax over BPM bins with a Gaussian soft
+        target. Requires the ``classification`` config section.
+
+    For classification mode the model's ``n_outputs`` is overridden to
+    ``classification.n_bins`` automatically.
+
+    :param model: DictConfig for instantiating the backbone.
+    :param loss: Loss name — ``"absolute"``, ``"relative"``, or ``"classification"``.
+    :param classification: Required when ``loss == "classification"``. Must have
+        ``bpm_min``, ``bpm_max``, ``n_bins``, ``sigma``.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
     """
@@ -54,36 +72,83 @@ class TempoModule(L.LightningModule):
     def __init__(
         self,
         model: DictConfig,
-        loss: str = "relative",
+        loss: str = "absolute",
+        classification: DictConfig | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
     ):
         super().__init__()
         self.save_hyperparameters()
+
+        if loss not in _VALID_LOSSES:
+            raise ValueError(f"Unknown loss '{loss}'. Choose from: {sorted(_VALID_LOSSES)}")
+        self.loss_name = loss
+
         model_cfg = OmegaConf.to_container(model, resolve=True)
         model_cfg.pop("arch", None)
+
+        if loss == "classification":
+            if classification is None:
+                raise ValueError("loss='classification' requires a 'classification' config section")
+            self.bpm_min = float(classification.bpm_min)
+            self.bpm_max = float(classification.bpm_max)
+            self.n_bins = int(classification.n_bins)
+            self.sigma = float(classification.sigma)
+            bin_centers = torch.linspace(self.bpm_min, self.bpm_max, self.n_bins)
+            self.register_buffer("bin_centers", bin_centers)
+            model_cfg["n_outputs"] = self.n_bins
+
         self.model = instantiate(model_cfg)
-        if loss not in _LOSSES:
-            raise ValueError(f"Unknown loss '{loss}'. Choose from: {list(_LOSSES)}")
-        self.loss_fn = _LOSSES[loss]
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
-    def _step(self, batch, stage: str):
+    def _decode(self, logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Returns (argmax_bpm, expected_bpm) for classification logits."""
+        probs = F.softmax(logits, dim=-1)
+        pred_argmax = self.bin_centers[probs.argmax(dim=-1)]
+        pred_expected = (probs * self.bin_centers).sum(dim=-1)
+        return pred_argmax, pred_expected
 
+    def _step_classification(self, batch, stage: str):
+        x, tempo = batch
+        logits = self(x)
+        loss = classification_tempo_loss(logits, tempo, self.bin_centers, self.sigma)
+        pred_argmax, pred_expected = self._decode(logits)
+
+        mae_argmax = (pred_argmax - tempo).abs().mean()
+        mae_expected = (pred_expected - tempo).abs().mean()
+        acc1_argmax = tempo_acc1(pred_argmax, tempo)
+        acc1_expected = tempo_acc1(pred_expected, tempo)
+
+        log_kw = dict(on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
+        self.log(f"{stage}/mae_argmax", mae_argmax, **log_kw)
+        self.log(f"{stage}/mae_expected", mae_expected, **log_kw)
+        self.log(f"{stage}/acc1_argmax", acc1_argmax, prog_bar=True, **log_kw)
+        self.log(f"{stage}/acc1_expected", acc1_expected, **log_kw)
+
+        return loss, pred_expected
+
+    def _step_regression(self, batch, stage: str):
         x, tempo = batch
         pred = self(x)
-
-        loss = self.loss_fn(pred, tempo)
+        loss_fn = _REGRESSION_LOSSES[self.loss_name]
+        loss = loss_fn(pred, tempo)
         mae = (pred - tempo).abs().mean()
         acc1 = tempo_acc1(pred, tempo)
 
-        self.log(f"{stage}/loss", loss, prog_bar=True, on_step=False, on_epoch=True)
-        self.log(f"{stage}/mae", mae, prog_bar=False, on_step=False, on_epoch=True)
-        self.log(f"{stage}/acc1", acc1, prog_bar=True, on_step=False, on_epoch=True)
+        log_kw = dict(on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
+        self.log(f"{stage}/mae", mae, **log_kw)
+        self.log(f"{stage}/acc1", acc1, prog_bar=True, **log_kw)
 
         return loss, pred
+
+    def _step(self, batch, stage: str):
+        if self.loss_name == "classification":
+            return self._step_classification(batch, stage)
+        return self._step_regression(batch, stage)
 
     def training_step(self, batch, batch_idx):
 
@@ -93,7 +158,7 @@ class TempoModule(L.LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        x, tempo = batch
+        _, tempo = batch
         loss, pred = self._step(batch, "val")
         return {"pred": pred.detach().cpu(), "target": tempo.detach().cpu()}
 

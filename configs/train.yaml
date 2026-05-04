@@ -1,11 +1,16 @@
 defaults:
   - model: TCN
   - _self_
-loss: absolute  # relative | absolute
-lr: 1e-3
+loss: absolute  # absolute | relative | classification
+classification:
+  bpm_min: 30
+  bpm_max: 286
+  n_bins: 256
+  sigma: 1.5
+lr: 4e-3
 weight_decay: 0.0
 batch_size: 32
-n_mels: 256
+n_mels: 128
 hop_length: 512
 train_subsample: null
 checkpoint_dir: checkpoints/
@@ -26,8 +31,8 @@ augmentations:
   enabled: true
   time_stretch:
     enabled: true
-    min_rate: 0.85
-    max_rate: 1.15
+    min_rate: 0.75
+    max_rate: 1.25
   gain:
     enabled: true
     min_db: -6.0
