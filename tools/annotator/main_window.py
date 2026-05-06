@@ -396,6 +396,31 @@ class MainWindow(QMainWindow):
     def _refresh_beats(self) -> None:
         self._n_beats = beats_per_bar(self._track.beat_positions)
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+        self._update_info_label()
+
+    def _update_info_label(self) -> None:
+        if self._track is None:
+            return
+        track_id = self._track_ids[self._index]
+        beat_times = self._track.beat_times
+        n = len(beat_times)
+        if n >= 2:
+            intervals = np.diff(beat_times)
+            mean_bpm = 60.0 / np.mean(intervals)
+            median_bpm = 60.0 / np.median(intervals)
+            beat_str = f"{n} beats  •  mean {mean_bpm:.1f}  •  med {median_bpm:.1f} BPM"
+        elif n == 1:
+            beat_str = "1 beat"
+        else:
+            beat_str = "no annotations"
+        if self._track.tempo:
+            label = (
+                f"[{self._index + 1}/{len(self._track_ids)}]  {track_id}"
+                f"   —   ref {self._track.tempo:.1f} BPM   —   {beat_str}"
+            )
+        else:
+            label = f"[{self._index + 1}/{len(self._track_ids)}]  {track_id}   —   {beat_str}"
+        self._info_label.setText(label)
 
     # ------------------------------------------------------------------
     # Timer tick
