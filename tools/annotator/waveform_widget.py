@@ -74,7 +74,8 @@ class WaveformWidget(QWidget):
         self._beat_positions: np.ndarray | None = None
         self._position: float = 0.0
         self._duration: float = 0.0
-        self.setMinimumHeight(120)
+        self.setMinimumHeight(40)
+        self.setMaximumHeight(60)
 
     # ------------------------------------------------------------------
     # Public API
