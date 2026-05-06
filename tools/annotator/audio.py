@@ -31,6 +31,7 @@ class AudioEngine:
         self._audio: np.ndarray | None = None
         self._sr: int = 22050
         self._frame: int = 0
+        self._volume: float = 1.0
         self._stream: sd.OutputStream | None = None
         self._finished_cb = None
 
@@ -97,6 +98,10 @@ class AudioEngine:
         if was_playing:
             self._start_stream(self._frame)
 
+    def set_volume(self, level: float) -> None:
+        """Set playback volume. *level* is 0.0 (silent) to 1.0 (full)."""
+        self._volume = max(0.0, min(1.0, level))
+
     def on_finished(self, callback) -> None:
         """Register *callback* to be called when playback reaches the end."""
         self._finished_cb = callback
@@ -113,7 +118,7 @@ class AudioEngine:
             end = pos + frames
             chunk = self._audio[pos:end]
             actual = len(chunk)
-            outdata[:actual, 0] = chunk
+            outdata[:actual, 0] = chunk * self._volume
             if actual < frames:
                 outdata[actual:] = 0
             frame_ref[0] = pos + actual
