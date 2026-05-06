@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.file_path' | { read -r f; [ -n \"$f\" ] && [ \"$f\" != \"null\" ] || exit 0; root=$(git -C \"$(dirname \"$f\")\" rev-parse --show-toplevel 2>/dev/null) || exit 0; cd \"$root\" || exit 0; git add \"$f\" 2>/dev/null || exit 0; git diff --cached --quiet && exit 0; rel=$(git ls-files --full-name \"$f\" 2>/dev/null || basename \"$f\"); git commit -m \"Update $rel\"; } 2>/dev/null || true",
+            "statusMessage": "Committing changes..."
+          }
+        ]
+      }
+    ]
+  }
+}
