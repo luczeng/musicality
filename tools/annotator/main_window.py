@@ -230,19 +230,7 @@ class MainWindow(QMainWindow):
         self._track = load_track(self._dataset_name, track_id)
         self._n_beats = beats_per_bar(self._track.beat_positions)
 
-        computed = tempo_from_beats(self._track.beat_times)
-        if computed is not None:
-            tempo_str = f"{computed:.1f} BPM"
-            if self._track.tempo:
-                tempo_str += f" (ann: {self._track.tempo:.1f})"
-        elif self._track.tempo:
-            tempo_str = f"{self._track.tempo:.1f} BPM"
-        else:
-            tempo_str = "? BPM"
-        self._info_label.setText(
-            f"[{index + 1}/{len(self._track_ids)}]  {track_id}"
-            f"   —   {tempo_str}   —   {self._n_beats}/4"
-        )
+        self._update_info_label()
         self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
 
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
