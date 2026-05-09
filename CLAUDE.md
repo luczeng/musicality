@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-`musicality` is a Python library for working with the [Million Song Dataset (MSD)](http://millionsongdataset.com/) — a collection of audio features and metadata for a million contemporary music tracks. The core data format is HDF5 (via PyTables).
+`musicality` is a PyTorch-based library for **tempo estimation** from audio. It provides dataset loaders, model architectures, a Lightning training pipeline, and a GUI annotation tool.
 
 ## Commands
 
@@ -17,13 +17,25 @@ uv pip install -e .
 uv run pytest tests/
 
 # Run a single test
-uv run pytest tests/test_get_beat.py
+uv run pytest tests/test_tempo_dataset.py
 
 # Format code
-uv run black musicality/
+uv run ruff format musicality/
 
-# Display a song's HDF5 contents
-uv run python musicality/display_song.py <path-to-.h5-file>
+# Train a tempo model (Hydra config)
+uv run python tools/train.py
+
+# Download datasets
+uv run python tools/download_dataset.py
+
+# Launch the annotator GUI
+uv run python -m tools.annotator
+
+# Inspect a track
+uv run python tools/inspect_track.py <path-to-audio>
+
+# Plot tempo histograms across datasets
+uv run python tools/plot_tempo_histograms.py
 
 # Add a dependency
 uv add <package>
@@ -31,41 +43,74 @@ uv add <package>
 
 ## Architecture
 
-### HDF5 Data Layer
+### Models (`musicality/models/`)
 
-The primary interface for reading song data is `hdf5_getters.py`, which exposes ~55 getter functions (e.g. `get_tempo`, `get_beats_start`, `get_artist_name`). All getters accept an open HDF5 file handle and an optional `songidx` integer for aggregate files.
+- `tcn.py` — Dilated TCN (`TCNTempoNet`), the default architecture. Log-mel → residual dilated convolutions → global pool → regression head.
+- `tempo_net.py` — Alternative tempo model.
+- `huggingface.py` — Wraps HuggingFace `transformers` models (e.g. wav2vec2) for tempo estimation.
+- `torch_audio.py` — Wraps `torchaudio` pretrained models.
 
-`hdf5_descriptors.py` defines the PyTables schema:
-- `SongMetaData` — artist/song identifiers and text fields
-- `SongAnalysis` — audio features (tempo, loudness, key, mode, energy, danceability) and time-series arrays (beats, bars, segments, sections, tatums)
-- `SongMusicBrainz` — MusicBrainz-sourced IDs and tags
+### Training (`musicality/trainers/`)
 
-`hdf5_utils.py` handles file creation and low-level read/write; `hdf5_getters.py` is the public API.
+- `tempo_module.py` — `TempoModule`: Lightning `LightningModule` wrapping a model, loss, and optimizer.
+- `train.py` — Core training routine: builds dataloaders, `TempoModule`, W&B logger, callbacks, and calls `L.Trainer.fit()`.
 
-### Aggregate vs. Single-Song Files
+Entry point: `tools/train.py` uses Hydra to compose config and calls `train()`.
 
-Single-song `.h5` files hold one track. `create_aggregate_file.py` merges multiple single-song files into one aggregate `.h5`, where each table row is a song. Getters use `songidx` to index into aggregate files.
+### Dataset Loaders (`musicality/loaders/`)
 
-### Dataset Creation (`DatasetCreation/`)
+- `tempo_dataset.py` — `TempoDataset`: loads audio + BPM annotations via `mirdata`.
+- `beat_dataset.py` — `BeatDataset`: loads audio + beat-level annotations.
 
-`dataset_creator.py` downloads and builds the dataset by querying the Echo Nest API and an optional local MusicBrainz PostgreSQL database (`MBrainzDB/query.py`). It uses multiprocessing with file-based locking for parallel downloads.
+### Augmentations (`musicality/augmentations.py`)
 
-### Format Converters
+`AugmentedDataset` wraps any dataset with configurable time-stretch, gain, and noise augmentation. `build_augmenter(cfg)` constructs it from the Hydra config.
 
-- `enpyapi_to_hdf5.py` — Echo Nest API response → HDF5
-- `hdf5_to_matfile.py` — HDF5 → MATLAB `.mat`
-- `create_summary_file.py` — generates summary statistics across the dataset
+### Losses (`musicality/losses.py`)
 
-### File Discovery
+Supports absolute, relative, and classification loss modes. Classification loss treats tempo as a discretized bin with a Gaussian target distribution.
 
-`utils.py` provides `get_all_files(basedir, ext='.h5')` for recursively walking the dataset directory tree (files are organized in a `A/A/A/...` three-level prefix hierarchy).
+### Callbacks (`musicality/callbacks/`)
+
+- `error_plot.py` — `ErrorVsTempoPlot`: logs a per-epoch error-vs-tempo scatter to W&B.
+- `metrics_logger.py` — `BestMetricsPrinter`: prints best validation metrics at the end of training.
+
+### Data Formats (`musicality/dataformats/`)
+
+Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits dir) as a typed `DataFormat` object.
+
+### Splits (`musicality/splits/splitter.py`)
+
+`Splitter` manages train/val splits. Pre-computed splits live in `splits/`.
+
+### Tools (`tools/`)
+
+- `annotator/` — PySide6 GUI for manual beat/tempo annotation. Features: waveform display, playback, tap-tempo widget, metronome, recording.
+- `download_dataset.py` — Downloads datasets listed in `configs/download.yaml` via `mirdata`.
+- `inspect_track.py` — Prints metadata and annotations for a single audio file.
+- `plot_tempo_histograms.py` — Plots BPM distributions across datasets.
+- `summarize_datasets.py` — Prints summary statistics for all datasets.
+- `train.py` — Hydra entry point for training.
+
+## Configuration
+
+Hydra configs live in `configs/`:
+
+- `train.yaml` — Top-level training config (loss, lr, batch size, dataset, augmentations, W&B).
+- `download.yaml` — List of datasets to download and their `data_home`.
+- `model/` — Per-model overrides: `tcn.yaml`, `beat.yaml`, `cnn.yaml`, `wav2vec2.yaml`.
+- `trainer/` — Lightning Trainer overrides.
+
+## Datasets
+
+Downloaded data lives in `data/`. Supported datasets (via `mirdata`): ballroom, brid, hainsworth, rwc_classical, rwc_jazz, rwc_popular, groove_midi, guitarset.
 
 ## Dependencies
 
-- `numpy` — array handling for time-series audio features
-- `tables` (PyTables) — HDF5 file I/O
-
-## Notes
-
-- The codebase was originally written for Python 2 (`print` statements, `Queue` module, old-style exception syntax). Some Python 3 compatibility issues may exist.
-- The sample dataset lives in `data/MillionSongSubset/`; the full subset archive is `millionsongsubset.tar.gz`.
+- `torch` / `torchaudio` / `lightning` — model training
+- `mirdata` — dataset loading and annotation access
+- `librosa` — audio analysis utilities
+- `hydra-core` — config composition
+- `wandb` — experiment tracking
+- `pyside6` — annotator GUI
+- `sounddevice` / `soundfile` — audio I/O in the annotator
