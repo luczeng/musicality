@@ -144,6 +144,26 @@ uv run python tools/train.py model=cnn data.n_mels=64
 Hydra writes logs and run configs to `outputs/<date>/<time>/` by default.
 Checkpoints are saved to `checkpoints/` (top-3 by `val/loss`, with early stopping after 10 epochs without improvement).
 
+## Tools
+
+| Tool | Description |
+|---|---|
+| `tools/train.py` | Hydra entry point for training a tempo model |
+| `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
+| `tools/summarize_datasets.py` | Print summary statistics (song count, annotation types) for all downloaded datasets |
+| `tools/inspect_track.py` | Print metadata and annotations for a single audio file |
+| `tools/plot_tempo_histograms.py` | Plot BPM distributions across datasets |
+| `tools/annotator/` | PySide6 GUI for manual beat/tempo annotation (waveform display, playback, tap-tempo, metronome) |
+
+```bash
+uv run python tools/train.py
+uv run python tools/download_dataset.py
+uv run python tools/summarize_datasets.py
+uv run python tools/inspect_track.py path/to/audio.wav
+uv run python tools/plot_tempo_histograms.py
+uv run python -m tools.annotator
+```
+
 ## Tests
 
 ```bash
