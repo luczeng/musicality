@@ -56,7 +56,7 @@ class TapTempoWidget(QWidget):
         reset_btn = QPushButton("Reset taps")
         reset_btn.setFixedWidth(90)
         reset_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        reset_btn.clicked.connect(self.reset)
+        reset_btn.clicked.connect(self._on_reset_clicked)
 
         layout = QHBoxLayout()
         layout.setContentsMargins(4, 0, 4, 0)
