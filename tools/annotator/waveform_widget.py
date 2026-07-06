@@ -145,7 +145,9 @@ class WaveformWidget(QWidget):
         for i, t in enumerate(self._beat_times):
             x = int(t / self._duration * w)
             pos = (
-                int(self._beat_positions[i]) if self._beat_positions is not None else 0
+                int(self._beat_positions[i])
+                if self._beat_positions is not None
+                else (i % 4) + 1
             )
             color = "#44cc44" if pos == 1 else "#cc7700"
             painter.setPen(QPen(QColor(color), 1))
