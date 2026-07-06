@@ -160,6 +160,13 @@ class MainWindow(QMainWindow):
 
         self._info_label = QLabel()
 
+        record_bar = QHBoxLayout()
+        record_bar.addWidget(QLabel("Dataset:"))
+        record_bar.addWidget(self._record_dataset_edit)
+        record_bar.addWidget(self._record_btn)
+        record_bar.addWidget(self._elapsed_label)
+        record_bar.addStretch()
+
         toolbar = QHBoxLayout()
         toolbar.addWidget(self._prev_btn)
         toolbar.addWidget(self._restart_btn)
@@ -169,10 +176,6 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._delete_btn)
         toolbar.addWidget(QLabel("🔊"))
         toolbar.addWidget(self._volume_slider)
-        toolbar.addWidget(QLabel("Dataset:"))
-        toolbar.addWidget(self._record_dataset_edit)
-        toolbar.addWidget(self._record_btn)
-        toolbar.addWidget(self._elapsed_label)
         toolbar.addWidget(self._info_label)
         toolbar.addStretch()
 
