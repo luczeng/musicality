@@ -123,11 +123,9 @@ class AudioEngine:
     ) -> None:
         """Update beat click info. Regenerates click sounds if sample rate changed."""
         if sr != self._sr:
-            self._sr = sr
             self._high_click = _make_click(sr, 1000.0)
             self._low_click = _make_click(sr, 600.0)
-        self._beat_frames = beat_frames
-        self._beat_is_down = beat_is_down
+        self._beats_data = (beat_frames, beat_is_down)  # single atomic assignment
 
     def set_click_enabled(self, enabled: bool) -> None:
         self._click_enabled = enabled
