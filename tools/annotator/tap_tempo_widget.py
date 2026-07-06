@@ -20,6 +20,8 @@ class TapTempoWidget(QWidget):
     ``_RECENT_N`` intervals), and full-history mean / median / variance.
     """
 
+    reset_requested = Signal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._timestamps: list[float] = []
