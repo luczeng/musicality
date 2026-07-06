@@ -196,6 +196,7 @@ class MainWindow(QMainWindow):
 
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
+        self._tap_widget.layout().addWidget(self._save_btn)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
