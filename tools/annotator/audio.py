@@ -39,8 +39,10 @@ class AudioEngine:
         self._volume: float = 1.0
         self._stream: sd.OutputStream | None = None
         self._finished_cb = None
-        self._beat_frames: np.ndarray = np.array([], dtype=int)
-        self._beat_is_down: np.ndarray = np.array([], dtype=bool)
+        self._beats_data: tuple[np.ndarray, np.ndarray] = (
+            np.array([], dtype=int),
+            np.array([], dtype=bool),
+        )
         self._high_click: np.ndarray = _make_click(self._sr, 1000.0)
         self._low_click: np.ndarray = _make_click(self._sr, 600.0)
         self._click_enabled: bool = False
