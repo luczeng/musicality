@@ -190,10 +190,11 @@ class MainWindow(QMainWindow):
 
         # Left panel: dataset tree
         self._dataset_tree = QTreeWidget()
-        self._dataset_tree.setColumnCount(2)
+        self._dataset_tree.setColumnCount(3)
         self._dataset_tree.header().hide()
-        self._dataset_tree.setColumnWidth(0, 355)
+        self._dataset_tree.setColumnWidth(0, 320)
         self._dataset_tree.setColumnWidth(1, 18)
+        self._dataset_tree.setColumnWidth(2, 18)
         self._dataset_tree.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
