@@ -32,6 +32,7 @@ from .data import (
     annotation_path,
     beats_per_bar,
     has_annotation,
+    has_mirdata_annotation,
     list_datasets,
     load_dataset_tracks,
     load_track,
@@ -43,7 +44,7 @@ from .metronome_widget import MetronomeWidget
 from .tap_tempo_widget import TapTempoWidget
 from .waveform_widget import WaveformWidget
 
-_TICK_MS = 30   # ~33 fps refresh rate
+_TICK_MS = 30  # ~33 fps refresh rate
 
 
 class MainWindow(QMainWindow):
@@ -356,7 +357,9 @@ class MainWindow(QMainWindow):
             if self._track_audio is not None:
                 self._waveform.set_waveform(self._track_audio, self._track_sr)
             if self._track is not None:
-                self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+                self._waveform.set_beats(
+                    self._track.beat_times, self._track.beat_positions
+                )
             self.statusBar().showMessage(f"Recording saved → {path}", 4000)
             self._populate_dataset_list()
 
