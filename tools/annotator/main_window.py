@@ -135,8 +135,7 @@ class MainWindow(QMainWindow):
         self._record_dataset_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._record_dataset_edit.setPlaceholderText("dataset")
 
-        self._record_btn = QPushButton("⏺  Record")
-        self._record_btn.setFixedWidth(100)
+        self._record_btn = QPushButton("⏺  Record new track")
         self._record_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._record_btn.setCheckable(True)
         self._record_btn.clicked.connect(self._on_record_toggle)
