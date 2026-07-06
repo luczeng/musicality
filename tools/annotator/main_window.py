@@ -193,6 +193,7 @@ class MainWindow(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setSpacing(4)
+        right_layout.addLayout(record_bar)
         right_layout.addLayout(toolbar)
         right_layout.addWidget(self._waveform, stretch=1)
         right_layout.addWidget(self._metronome)
