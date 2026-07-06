@@ -271,3 +271,30 @@ def save_annotations(track: TrackData, path: Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(f"{t:.6f}" for t in track.beat_times))
+
+
+def rename_track(track: TrackData, new_id: str) -> TrackData:
+    """Rename a custom-dataset track on disk and return an updated TrackData.
+
+    Renames the audio file and the annotation file (if present).
+    Raises ValueError for mirdata datasets or if *new_id* is already taken.
+    """
+    tracks_dir = DATA_DIR / track.dataset_name / "tracks"
+    if not tracks_dir.is_dir():
+        raise ValueError("Cannot rename tracks from a mirdata dataset.")
+    old_audio = Path(track.audio_path)
+    new_audio = old_audio.with_stem(new_id)
+    if new_audio.exists():
+        raise ValueError(f"A track named '{new_id}' already exists.")
+    old_audio.rename(new_audio)
+    old_ann = annotation_path(track)
+    if old_ann.exists():
+        old_ann.rename(old_ann.with_stem(new_id))
+    return TrackData(
+        dataset_name=track.dataset_name,
+        track_id=new_id,
+        audio_path=str(new_audio),
+        tempo=track.tempo,
+        beat_times=track.beat_times,
+        beat_positions=track.beat_positions,
+    )
