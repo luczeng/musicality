@@ -152,14 +152,13 @@ class AudioEngine:
             outdata[:actual, 0] = chunk * self._volume
             if actual < frames:
                 outdata[actual:] = 0
-            if self._click_enabled and len(self._beat_frames):
-                for i, bf in enumerate(self._beat_frames):
+            if self._click_enabled:
+                beat_frames, beat_is_down = (
+                    self._beats_data
+                )  # single read — always consistent
+                for i, bf in enumerate(beat_frames):
                     if pos <= bf < end:
-                        click = (
-                            self._high_click
-                            if self._beat_is_down[i]
-                            else self._low_click
-                        )
+                        click = self._high_click if beat_is_down[i] else self._low_click
                         offset = bf - pos
                         n = min(len(click), frames - offset)
                         outdata[offset : offset + n, 0] += (
