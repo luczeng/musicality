@@ -490,6 +490,7 @@ class MainWindow(QMainWindow):
         if key == Qt.Key.Key_Space:
             if not self._recorder.is_recording and self._track is not None:
                 self._on_beat_added(self._engine.position)
+                self._tap_widget.tap()
         elif key == Qt.Key.Key_P:
             self._on_play_pause()
         elif key == Qt.Key.Key_Left:
