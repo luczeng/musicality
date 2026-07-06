@@ -405,6 +405,19 @@ class MainWindow(QMainWindow):
         self._track = remove_beat(self._track, t)
         self._refresh_beats()
 
+    def _on_reset_beats(self) -> None:
+        if self._track is None:
+            return
+        self._track = TrackData(
+            dataset_name=self._track.dataset_name,
+            track_id=self._track.track_id,
+            audio_path=self._track.audio_path,
+            tempo=self._track.tempo,
+            beat_times=np.array([]),
+            beat_positions=None,
+        )
+        self._refresh_beats()
+
     def _on_save(self) -> None:
         path = annotation_path(self._track)
         save_annotations(self._track, path)
