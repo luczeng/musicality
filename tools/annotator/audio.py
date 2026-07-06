@@ -148,6 +148,16 @@ class AudioEngine:
 
     def _start_stream(self, start_frame: int) -> None:
         frame_ref = [start_frame]
+        pending: list[np.ndarray] = []  # click samples that spill into the next buffer
+
+        def _mix(
+            outdata: np.ndarray, frames: int, click: np.ndarray, offset: int
+        ) -> None:
+            scaled = click * self._click_volume
+            n = min(len(scaled), frames - offset)
+            outdata[offset : offset + n, 0] += scaled[:n]
+            if n < len(scaled):
+                pending.append(scaled[n:])
 
         def _callback(outdata, frames, time_info, status):
             pos = frame_ref[0]
@@ -157,6 +167,24 @@ class AudioEngine:
             outdata[:actual, 0] = chunk * self._volume
             if actual < frames:
                 outdata[actual:] = 0
+
+            # Carry over click samples that spilled from the previous buffer
+            carried = pending.copy()
+            pending.clear()
+            offset = 0
+            for tail in carried:
+                n = min(len(tail), frames - offset)
+                outdata[offset : offset + n, 0] += tail[:n]
+                if n < len(tail):
+                    pending.append(tail[n:])
+                offset += n
+
+            # Immediate click (annotation feedback — beat already in the past)
+            immediate = self._immediate_click
+            if immediate is not None:
+                self._immediate_click = None
+                _mix(outdata, frames, immediate, 0)
+
             if self._click_enabled:
                 beat_frames, beat_is_down = (
                     self._beats_data
@@ -164,11 +192,8 @@ class AudioEngine:
                 for i, bf in enumerate(beat_frames):
                     if pos <= bf < end:
                         click = self._high_click if beat_is_down[i] else self._low_click
-                        offset = bf - pos
-                        n = min(len(click), frames - offset)
-                        outdata[offset : offset + n, 0] += (
-                            click[:n] * self._click_volume
-                        )
+                        _mix(outdata, frames, click, bf - pos)
+
             frame_ref[0] = pos + actual
             self._frame = frame_ref[0]
             if actual < frames:
