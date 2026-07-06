@@ -452,6 +452,45 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Deleted → {path}", 3000)
         self._update_annotation_indicator()
 
+    def _on_rename(self) -> None:
+        if self._track is None:
+            return
+        new_id, ok = QInputDialog.getText(
+            self,
+            "Rename track",
+            "New name:",
+            text=self._track.track_id,
+        )
+        if not ok or not new_id.strip():
+            return
+        new_id = new_id.strip()
+        try:
+            self._track = rename_track(self._track, new_id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Rename failed", str(exc))
+            return
+        self._track_ids[self._index] = new_id
+        self.setWindowTitle(f"{self._dataset_name}  /  {new_id}")
+        self._update_info_label()
+        # Refresh tree row if the dataset is currently expanded
+        for i in range(self._dataset_tree.topLevelItemCount()):
+            ds_item = self._dataset_tree.topLevelItem(i)
+            if ds_item.data(0, Qt.ItemDataRole.UserRole) != self._dataset_name:
+                continue
+            for j in range(ds_item.childCount()):
+                child = ds_item.child(j)
+                if child.data(0, Qt.ItemDataRole.UserRole) == self._track.track_id:
+                    # Already updated — can't reach here before rename
+                    break
+                # Match by old id is impossible; rebuild from track_ids
+            ds_item.takeChildren()
+            placeholder = QTreeWidgetItem([""])
+            placeholder.setData(0, Qt.ItemDataRole.UserRole, "__loading__")
+            ds_item.addChild(placeholder)
+            ds_item.setExpanded(False)
+            break
+        self.statusBar().showMessage(f"Renamed → {new_id}", 3000)
+
     def _refresh_beats(self) -> None:
         self._n_beats = beats_per_bar(self._track.beat_positions)
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
