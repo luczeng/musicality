@@ -113,6 +113,26 @@ class AudioEngine:
         """Set playback volume. *level* is 0.0 (silent) to 1.0 (full)."""
         self._volume = max(0.0, min(1.0, level))
 
+    def set_clicks(
+        self,
+        beat_frames: np.ndarray,
+        beat_is_down: np.ndarray,
+        sr: int,
+    ) -> None:
+        """Update beat click info. Regenerates click sounds if sample rate changed."""
+        if sr != self._sr:
+            self._sr = sr
+            self._high_click = _make_click(sr, 1000.0)
+            self._low_click = _make_click(sr, 600.0)
+        self._beat_frames = beat_frames
+        self._beat_is_down = beat_is_down
+
+    def set_click_enabled(self, enabled: bool) -> None:
+        self._click_enabled = enabled
+
+    def set_click_volume(self, level: float) -> None:
+        self._click_volume = max(0.0, min(1.0, level))
+
     def on_finished(self, callback) -> None:
         """Register *callback* to be called when playback reaches the end."""
         self._finished_cb = callback
