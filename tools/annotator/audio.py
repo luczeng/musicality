@@ -134,6 +134,10 @@ class AudioEngine:
     def set_click_volume(self, level: float) -> None:
         self._click_volume = max(0.0, min(1.0, level))
 
+    def trigger_click_now(self, is_down: bool) -> None:
+        """Fire a click at the next callback invocation (annotation feedback)."""
+        self._immediate_click = self._high_click if is_down else self._low_click
+
     def on_finished(self, callback) -> None:
         """Register *callback* to be called when playback reaches the end."""
         self._finished_cb = callback
