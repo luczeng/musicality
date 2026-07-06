@@ -296,12 +296,18 @@ class MainWindow(QMainWindow):
     def _set_annotation_indicator(
         item: QTreeWidgetItem, dataset_name: str, track_id: str
     ) -> None:
-        if has_annotation(dataset_name, track_id):
+        if has_mirdata_annotation(dataset_name, track_id):
             item.setText(1, "●")
             item.setForeground(1, QColor("#44cc44"))
         else:
             item.setText(1, "✕")
             item.setForeground(1, QColor("#cc4444"))
+        if has_annotation(dataset_name, track_id):
+            item.setText(2, "●")
+            item.setForeground(2, QColor("#44cc44"))
+        else:
+            item.setText(2, "✕")
+            item.setForeground(2, QColor("#cc4444"))
 
     def _update_annotation_indicator(self) -> None:
         """Refresh the ●/✕ for the currently loaded track without rebuilding the tree."""
