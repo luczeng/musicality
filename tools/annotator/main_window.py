@@ -39,6 +39,7 @@ from .data import (
     load_dataset_tracks,
     load_track,
     remove_beat,
+    rename_track,
     save_annotations,
     tempo_from_beats,
 )
