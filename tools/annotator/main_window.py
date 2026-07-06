@@ -179,7 +179,6 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._restart_btn)
         toolbar.addWidget(self._play_btn)
         toolbar.addWidget(self._next_btn)
-        toolbar.addWidget(self._save_btn)
         toolbar.addWidget(self._delete_btn)
         toolbar.addWidget(self._rename_btn)
         toolbar.addWidget(QLabel("🔊"))
