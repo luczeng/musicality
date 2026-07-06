@@ -12,6 +12,11 @@ import numpy as np
 import sounddevice as sd
 
 
+def _make_click(sr: int, freq: float, duration: float = 0.02) -> np.ndarray:
+    t = np.linspace(0, duration, int(sr * duration), endpoint=False)
+    return (np.sin(2 * np.pi * freq * t) * np.exp(-200 * t)).astype(np.float32)
+
+
 class AudioEngine:
     """Plays a mono float32 audio buffer with precise position tracking.
 
