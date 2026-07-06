@@ -285,6 +285,7 @@ class MainWindow(QMainWindow):
         self._track_sr = sr
         self._engine.load(audio, sr)
         self._waveform.set_waveform(audio, sr)
+        self._update_engine_clicks()
 
     def _populate_dataset_list(self) -> None:
         self._dataset_tree.clear()
