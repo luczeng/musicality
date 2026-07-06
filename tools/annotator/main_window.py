@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
         self._metronome.set_state(4, None)
 
         self._tap_widget = TapTempoWidget()
+        self._tap_widget.reset_requested.connect(self._on_reset_beats)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
