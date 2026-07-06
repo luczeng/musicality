@@ -132,6 +132,11 @@ class MainWindow(QMainWindow):
         self._delete_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._delete_btn.clicked.connect(self._on_delete)
 
+        self._rename_btn = QPushButton("✏  Rename")
+        self._rename_btn.setFixedWidth(90)
+        self._rename_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._rename_btn.clicked.connect(self._on_rename)
+
         self._record_dataset_edit = QLineEdit("swing")
         self._record_dataset_edit.setFixedWidth(110)
         self._record_dataset_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
