@@ -410,6 +410,23 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved → {path}", 3000)
         self._update_annotation_indicator()
 
+    def _on_delete(self) -> None:
+        path = annotation_path(self._track)
+        if not path.exists():
+            self.statusBar().showMessage("No manual annotation to delete.", 3000)
+            return
+        reply = QMessageBox.question(
+            self,
+            "Delete annotation",
+            f"Delete manual annotation for {self._track.track_id}?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        path.unlink()
+        self.statusBar().showMessage(f"Deleted → {path}", 3000)
+        self._update_annotation_indicator()
+
     def _refresh_beats(self) -> None:
         self._n_beats = beats_per_bar(self._track.beat_positions)
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
