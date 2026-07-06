@@ -17,7 +17,10 @@ from PySide6.QtWidgets import QWidget
 # Pure helper — separated for testability
 # ---------------------------------------------------------------------------
 
-def compute_envelope(audio: np.ndarray, n_points: int = 2048) -> tuple[np.ndarray, np.ndarray]:
+
+def compute_envelope(
+    audio: np.ndarray, n_points: int = 2048
+) -> tuple[np.ndarray, np.ndarray]:
     """Downsample *audio* to *n_points* min/max pairs for waveform display.
 
     Splits the signal into exactly *n_points* equal-width segments and
@@ -33,19 +36,28 @@ def compute_envelope(audio: np.ndarray, n_points: int = 2048) -> tuple[np.ndarra
 
     edges = np.linspace(0, n, n_points + 1, dtype=int)
     min_env = np.array(
-        [audio[edges[i]:edges[i + 1]].min() if edges[i] < edges[i + 1] else 0.0
-         for i in range(n_points)]
+        [
+            audio[edges[i] : edges[i + 1]].min() if edges[i] < edges[i + 1] else 0.0
+            for i in range(n_points)
+        ]
     )
     max_env = np.array(
-        [audio[edges[i]:edges[i + 1]].max() if edges[i] < edges[i + 1] else 0.0
-         for i in range(n_points)]
+        [
+            audio[edges[i] : edges[i + 1]].max() if edges[i] < edges[i + 1] else 0.0
+            for i in range(n_points)
+        ]
     )
+    peak = max(np.abs(min_env).max(), np.abs(max_env).max())
+    if peak > 0:
+        min_env /= peak
+        max_env /= peak
     return min_env, max_env
 
 
 # ---------------------------------------------------------------------------
 # Widget
 # ---------------------------------------------------------------------------
+
 
 class WaveformWidget(QWidget):
     """Displays an audio waveform with beat markers and a playback cursor.
@@ -132,7 +144,9 @@ class WaveformWidget(QWidget):
         # Beat markers
         for i, t in enumerate(self._beat_times):
             x = int(t / self._duration * w)
-            pos = int(self._beat_positions[i]) if self._beat_positions is not None else 0
+            pos = (
+                int(self._beat_positions[i]) if self._beat_positions is not None else 0
+            )
             color = "#cc4444" if pos == 1 else "#cc8800"
             painter.setPen(QPen(QColor(color), 1))
             painter.drawLine(x, 0, x, h)
