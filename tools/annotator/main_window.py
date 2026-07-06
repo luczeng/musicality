@@ -431,6 +431,13 @@ class MainWindow(QMainWindow):
     def _on_beat_added(self, t: float) -> None:
         self._track = add_beat(self._track, t)
         self._refresh_beats()
+        if self._click_btn.isChecked() and self._engine.is_playing:
+            idx = int(np.searchsorted(self._track.beat_times, t))
+            if self._track.beat_positions is not None:
+                is_down = bool(self._track.beat_positions[idx] == 1)
+            else:
+                is_down = (idx % self._n_beats) == 0
+            self._engine.trigger_click_now(is_down)
 
     def _on_beat_removed(self, t: float) -> None:
         self._track = remove_beat(self._track, t)
