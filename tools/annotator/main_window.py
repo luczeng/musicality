@@ -511,9 +511,24 @@ class MainWindow(QMainWindow):
             break
         self.statusBar().showMessage(f"Renamed → {new_id}", 3000)
 
+    def _update_engine_clicks(self) -> None:
+        if self._track is None:
+            return
+        beat_times = self._track.beat_times
+        beat_positions = self._track.beat_positions
+        beat_frames = (beat_times * self._track_sr).astype(int)
+        if beat_positions is not None:
+            beat_is_down = beat_positions == 1
+        else:
+            beat_is_down = np.array(
+                [(i % 4) == 0 for i in range(len(beat_times))], dtype=bool
+            )
+        self._engine.set_clicks(beat_frames, beat_is_down, self._track_sr)
+
     def _refresh_beats(self) -> None:
         self._n_beats = beats_per_bar(self._track.beat_positions)
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+        self._update_engine_clicks()
         self._update_info_label()
 
     def _update_info_label(self) -> None:
