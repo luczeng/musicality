@@ -5,11 +5,11 @@ from __future__ import annotations
 import time
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
-_RECENT_N = 8   # intervals used for the "recent" estimate
-_WARMUP = 4     # initial intervals discarded to let tapping stabilise
+_RECENT_N = 8  # intervals used for the "recent" estimate
+_WARMUP = 4  # initial intervals discarded to let tapping stabilise
 
 
 class TapTempoWidget(QWidget):
@@ -75,7 +75,7 @@ class TapTempoWidget(QWidget):
         self._n_label.setText(f"N: {n}")
 
         tempos = 60.0 / np.diff(self._timestamps) if n >= 2 else np.array([])
-        valid = tempos[_WARMUP:]   # discard first _WARMUP intervals
+        valid = tempos[_WARMUP:]  # discard first _WARMUP intervals
 
         if len(valid) == 0:
             self._last_label.setText("Last: —")
