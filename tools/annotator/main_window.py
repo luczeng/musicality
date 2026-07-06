@@ -502,7 +502,11 @@ class MainWindow(QMainWindow):
     def keyPressEvent(self, event) -> None:  # noqa: N802
         key = event.key()
         if key == Qt.Key.Key_Space:
-            if not self._recorder.is_recording and self._track is not None:
+            if (
+                not self._recorder.is_recording
+                and self._track is not None
+                and self._engine.position < self._waveform._duration
+            ):
                 self._on_beat_added(self._engine.position)
                 self._tap_widget.tap()
         elif key == Qt.Key.Key_P:
