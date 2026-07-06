@@ -147,7 +147,7 @@ class WaveformWidget(QWidget):
             pos = (
                 int(self._beat_positions[i]) if self._beat_positions is not None else 0
             )
-            color = "#cc4444" if pos == 1 else "#cc8800"
+            color = "#44cc44" if pos == 1 else "#cccc00"
             painter.setPen(QPen(QColor(color), 1))
             painter.drawLine(x, 0, x, h)
 
