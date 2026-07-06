@@ -41,6 +41,10 @@ class TapTempoWidget(QWidget):
         self._timestamps.clear()
         self._refresh()
 
+    def _on_reset_clicked(self) -> None:
+        self.reset()
+        self.reset_requested.emit()
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
