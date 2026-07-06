@@ -200,6 +200,8 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._rename_btn)
         toolbar.addWidget(QLabel("🔊"))
         toolbar.addWidget(self._volume_slider)
+        toolbar.addWidget(self._click_btn)
+        toolbar.addWidget(self._click_volume_slider)
         toolbar.addWidget(self._info_label)
         toolbar.addStretch()
 
