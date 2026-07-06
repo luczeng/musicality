@@ -125,6 +125,11 @@ class MainWindow(QMainWindow):
         self._save_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._save_btn.clicked.connect(self._on_save)
 
+        self._delete_btn = QPushButton("🗑  Delete")
+        self._delete_btn.setFixedWidth(90)
+        self._delete_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._delete_btn.clicked.connect(self._on_delete)
+
         self._record_dataset_edit = QLineEdit("swing")
         self._record_dataset_edit.setFixedWidth(110)
         self._record_dataset_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
