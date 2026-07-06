@@ -47,6 +47,7 @@ class AudioEngine:
         self._low_click: np.ndarray = _make_click(self._sr, 600.0)
         self._click_enabled: bool = False
         self._click_volume: float = 0.7
+        self._immediate_click: np.ndarray | None = None
 
     # ------------------------------------------------------------------
     # Public API
