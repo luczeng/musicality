@@ -165,6 +165,23 @@ class MainWindow(QMainWindow):
             lambda v: self._engine.set_volume(v / 100)
         )
 
+        self._click_btn = QPushButton("🥁  Click")
+        self._click_btn.setFixedWidth(80)
+        self._click_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._click_btn.setCheckable(True)
+        self._click_btn.clicked.connect(
+            lambda checked: self._engine.set_click_enabled(checked)
+        )
+
+        self._click_volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self._click_volume_slider.setRange(0, 100)
+        self._click_volume_slider.setValue(70)
+        self._click_volume_slider.setFixedWidth(70)
+        self._click_volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._click_volume_slider.valueChanged.connect(
+            lambda v: self._engine.set_click_volume(v / 100)
+        )
+
         self._info_label = QLabel()
 
         record_bar = QHBoxLayout()
