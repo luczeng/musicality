@@ -22,6 +22,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / dataformats.load().data_dir
 # Data model
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class DatasetInfo:
     name: str
@@ -37,13 +38,14 @@ class TrackData:
     track_id: str
     audio_path: str
     tempo: float | None
-    beat_times: np.ndarray       # seconds, sorted ascending
+    beat_times: np.ndarray  # seconds, sorted ascending
     beat_positions: np.ndarray | None  # 1-indexed bar positions, or None
 
 
 # ---------------------------------------------------------------------------
 # Pure helpers
 # ---------------------------------------------------------------------------
+
 
 def tempo_from_beats(beat_times: np.ndarray) -> float | None:
     """Estimate tempo from beat timestamps using the median inter-beat interval."""
@@ -167,8 +169,7 @@ def list_datasets() -> list[DatasetInfo]:
         tracks_dir = path / "tracks"
         if tracks_dir.is_dir():
             n_tracks = sum(
-                1 for f in tracks_dir.iterdir()
-                if f.suffix.lower() in _AUDIO_EXTENSIONS
+                1 for f in tracks_dir.iterdir() if f.suffix.lower() in _AUDIO_EXTENSIONS
             )
         else:
             try:
@@ -187,12 +188,25 @@ def has_annotation(dataset_name: str, track_id: str) -> bool:
     return (DATA_DIR / dataset_name / "annotations" / f"{track_id}.beats").exists()
 
 
+def has_mirdata_annotation(dataset_name: str, track_id: str) -> bool:
+    """Return True if the mirdata dataset has built-in beat annotations for this track."""
+    if (DATA_DIR / dataset_name / "tracks").is_dir():
+        return False
+    try:
+        ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
+        track = ds.track(track_id)
+        return track.beats is not None and len(track.beats.times) > 0
+    except Exception:
+        return False
+
+
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
     tracks_dir = DATA_DIR / dataset_name / "tracks"
     if tracks_dir.is_dir():
         return [
-            f.stem for f in sorted(tracks_dir.iterdir())
+            f.stem
+            for f in sorted(tracks_dir.iterdir())
             if f.suffix.lower() in _AUDIO_EXTENSIONS
         ]
     ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
