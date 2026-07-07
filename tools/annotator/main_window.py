@@ -182,7 +182,11 @@ class MainWindow(QMainWindow):
             lambda v: self._engine.set_click_volume(v / 100)
         )
 
-        self._info_label = QLabel()
+        self._track_label = QLabel()
+        self._track_label.setStyleSheet("font-weight: bold;")
+
+        self._stats_label = QLabel()
+        self._stats_label.setStyleSheet("color: #aaaaaa;")
 
         record_bar = QHBoxLayout()
         record_bar.addWidget(QLabel("Dataset:"))
