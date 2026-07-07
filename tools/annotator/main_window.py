@@ -182,7 +182,7 @@ class MainWindow(QMainWindow):
         self._click_volume_slider = QSlider(Qt.Orientation.Horizontal)
         self._click_volume_slider.setRange(0, 100)
         self._click_volume_slider.setValue(70)
-        self._click_volume_slider.setFixedWidth(70)
+        self._click_volume_slider.setFixedWidth(80)
         self._click_volume_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._click_volume_slider.valueChanged.connect(
             lambda v: self._engine.set_click_volume(v / 100)
