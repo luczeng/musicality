@@ -207,6 +207,7 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._play_btn)
         toolbar.addWidget(self._next_btn)
         toolbar.addWidget(self._delete_btn)
+        toolbar.addWidget(self._delete_track_btn)
         toolbar.addWidget(self._rename_btn)
         toolbar.addWidget(QLabel("🔊"))
         toolbar.addWidget(self._volume_slider)
