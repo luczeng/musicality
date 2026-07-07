@@ -547,6 +547,14 @@ class MainWindow(QMainWindow):
         if self._track is None:
             return
         track_id = self._track_ids[self._index]
+        self._track_label.setText(
+            f"[{self._index + 1}/{len(self._track_ids)}]  {track_id}"
+        )
+
+        dur = self._engine.duration
+        m, s = divmod(int(dur), 60)
+        dur_str = f"{m}:{s:02d}"
+
         beat_times = self._track.beat_times
         n = len(beat_times)
         if n >= 2:
@@ -558,14 +566,12 @@ class MainWindow(QMainWindow):
             beat_str = "1 beat"
         else:
             beat_str = "no annotations"
+
+        parts = [f"duration {dur_str}"]
         if self._track.tempo:
-            label = (
-                f"[{self._index + 1}/{len(self._track_ids)}]  {track_id}"
-                f"   —   ref {self._track.tempo:.1f} BPM   —   {beat_str}"
-            )
-        else:
-            label = f"[{self._index + 1}/{len(self._track_ids)}]  {track_id}   —   {beat_str}"
-        self._info_label.setText(label)
+            parts.append(f"ref {self._track.tempo:.1f} BPM")
+        parts.append(beat_str)
+        self._stats_label.setText("  •  ".join(parts))
 
     # ------------------------------------------------------------------
     # Timer tick
