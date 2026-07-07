@@ -481,6 +481,8 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
         path.unlink()
+        self._track = load_track(self._dataset_name, self._track.track_id)
+        self._refresh_beats()
         self.statusBar().showMessage(f"Deleted → {path}", 3000)
         self._update_annotation_indicator()
 
