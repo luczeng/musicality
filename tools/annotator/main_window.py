@@ -431,6 +431,8 @@ class MainWindow(QMainWindow):
                 )
             self.statusBar().showMessage(f"Recording saved → {path}", 4000)
             self._populate_dataset_list()
+            if dataset == self._dataset_name:
+                self._track_ids = load_dataset_tracks(dataset)
 
     def _on_restart(self) -> None:
         self._engine.seek(0.0)
