@@ -214,6 +214,8 @@ class MainWindow(QMainWindow):
         sound_bar.addWidget(self._volume_slider)
         sound_bar.addSpacing(16)
         sound_bar.addWidget(self._click_btn)
+        sound_bar.addSpacing(4)
+        sound_bar.addWidget(QLabel("🔊"))
         sound_bar.addWidget(self._click_volume_slider)
         sound_bar.addStretch()
 
