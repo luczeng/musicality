@@ -38,6 +38,7 @@ from .data import (
     list_datasets,
     load_dataset_tracks,
     load_track,
+    delete_track,
     remove_beat,
     rename_track,
     save_annotations,
