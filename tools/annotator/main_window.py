@@ -128,10 +128,15 @@ class MainWindow(QMainWindow):
         self._save_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._save_btn.clicked.connect(self._on_save)
 
-        self._delete_btn = QPushButton("🗑  Delete")
-        self._delete_btn.setFixedWidth(90)
+        self._delete_btn = QPushButton("🗑  Annotation")
+        self._delete_btn.setFixedWidth(105)
         self._delete_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._delete_btn.clicked.connect(self._on_delete)
+
+        self._delete_track_btn = QPushButton("🗑  Track")
+        self._delete_track_btn.setFixedWidth(90)
+        self._delete_track_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._delete_track_btn.clicked.connect(self._on_delete_track)
 
         self._rename_btn = QPushButton("✏  Rename")
         self._rename_btn.setFixedWidth(90)
