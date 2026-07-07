@@ -273,6 +273,22 @@ def save_annotations(track: TrackData, path: Path) -> None:
     path.write_text("\n".join(f"{t:.6f}" for t in track.beat_times))
 
 
+def delete_track(track: TrackData) -> None:
+    """Delete a custom-dataset track (audio file + annotation) from disk.
+
+    Raises ValueError for mirdata datasets.
+    """
+    tracks_dir = DATA_DIR / track.dataset_name / "tracks"
+    if not tracks_dir.is_dir():
+        raise ValueError("Cannot delete tracks from a mirdata dataset.")
+    audio = Path(track.audio_path)
+    if audio.exists():
+        audio.unlink()
+    ann = annotation_path(track)
+    if ann.exists():
+        ann.unlink()
+
+
 def rename_track(track: TrackData, new_id: str) -> TrackData:
     """Rename a custom-dataset track on disk and return an updated TrackData.
 
