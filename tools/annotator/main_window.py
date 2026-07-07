@@ -496,15 +496,32 @@ class MainWindow(QMainWindow):
     def _on_delete_track(self) -> None:
         if self._track is None:
             return
+        reply = QMessageBox.question(
+            self,
+            "Delete track",
+            f"Permanently delete '{self._track.track_id}' (audio + annotation)?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
         try:
             delete_track(self._track)
         except ValueError as exc:
             QMessageBox.warning(self, "Cannot delete", str(exc))
             return
-        # Confirm first — the ValueError check above handles mirdata, but we
-        # still want a confirmation dialog before actually deleting.
-        # Re-implement: ask first, then delete.
-        pass
+        self._track_ids.pop(self._index)
+        if self._track_ids:
+            self._index = min(self._index, len(self._track_ids) - 1)
+            self._load_track(self._index)
+        else:
+            self._track = None
+            self._engine.stop()
+            self._waveform.set_waveform(np.array([]), 44100)
+            self._waveform.set_beats(np.array([]), None)
+            self._track_label.setText("")
+            self._stats_label.setText("")
+        self._populate_dataset_list()
+        self.statusBar().showMessage(f"Track deleted.", 3000)
 
     def _on_rename(self) -> None:
         if self._track is None:
