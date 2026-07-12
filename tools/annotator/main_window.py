@@ -615,11 +615,13 @@ class MainWindow(QMainWindow):
         beat_positions = self._track.beat_positions
         beat_frames = (beat_times * self._track_sr).astype(int)
         if beat_positions is not None:
-            beat_is_down = beat_positions == 1
+            is_downbeat = beat_positions == 1
         else:
-            beat_is_down = np.array(
-                [(i % 4) == 0 for i in range(len(beat_times))], dtype=bool
+            is_downbeat = np.array(
+                [(i % self._n_beats) == 0 for i in range(len(beat_times))], dtype=bool
             )
+        bars = bar_indices(beat_positions, len(beat_times))
+        beat_is_down = is_downbeat & (bars % self._accent_group_bars == 0)
         self._engine.set_clicks(beat_frames, beat_is_down, self._track_sr)
 
     def _refresh_beats(self) -> None:
