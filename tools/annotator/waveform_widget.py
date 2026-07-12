@@ -112,6 +112,11 @@ class WaveformWidget(QWidget):
         self._beat_positions = beat_positions
         self.update()
 
+    def set_accent_group(self, group_bars: int) -> None:
+        """Set how many bars form one accent group (see MetronomeWidget docstring)."""
+        self._group_bars = max(1, group_bars)
+        self.update()
+
     def set_position(self, seconds: float) -> None:
         """Move the playback cursor to *seconds*."""
         self._position = seconds
