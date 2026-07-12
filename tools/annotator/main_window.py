@@ -236,6 +236,27 @@ class MainWindow(QMainWindow):
         self._metronome = MetronomeWidget()
         self._metronome.set_state(4, None)
 
+        self._accent_group = QButtonGroup(self)
+        self._accent_group.setExclusive(True)
+        accent_bar = QHBoxLayout()
+        accent_bar.addWidget(QLabel("Accent:"))
+        for label, group_bars in (
+            ("Every Bar", 1),
+            ("Every 2 Bars", 2),
+            ("Every 8 Bars", 8),
+            ("Every 32 Bars", 32),
+        ):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setChecked(group_bars == self._accent_group_bars)
+            btn.clicked.connect(
+                lambda _checked, n=group_bars: self._on_accent_mode_changed(n)
+            )
+            self._accent_group.addButton(btn)
+            accent_bar.addWidget(btn)
+        accent_bar.addStretch()
+
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
         self._tap_widget.layout().addWidget(self._save_btn)
@@ -250,6 +271,7 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(delete_bar)
         right_layout.addWidget(self._stats_label)
         right_layout.addWidget(self._waveform, stretch=1)
+        right_layout.addLayout(accent_bar)
         right_layout.addWidget(self._metronome)
         right_layout.addWidget(self._tap_widget)
 
