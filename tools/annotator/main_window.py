@@ -38,6 +38,7 @@ from .data import (
     beats_per_bar,
     has_annotation,
     has_mirdata_annotation,
+    is_accent_beat,
     list_datasets,
     load_dataset_tracks,
     load_track,
