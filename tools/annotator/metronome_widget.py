@@ -66,9 +66,9 @@ class MetronomeWidget(QWidget):
         self._bar_index = bar_index
         self.update()
 
-    def set_accent_group(self, group_bars: int) -> None:
-        """Set how many bars form one accent group (see module docstring)."""
-        self._group_bars = max(1, group_bars)
+    def set_accent_bars(self, accent_bars: float) -> None:
+        """Set the accent period in bars (see module docstring)."""
+        self._accent_bars = accent_bars
         self.update()
 
     # ------------------------------------------------------------------
