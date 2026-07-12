@@ -4,11 +4,10 @@ Shows one dot per beat in the bar.  The active dot lights up green on a
 downbeat (position 1) and yellow on any other beat.  All other dots are
 dark grey.
 
-An accent period (in bars) controls how often a beat lights up green instead
-of yellow — see :func:`musicality...data.is_accent_beat` for the exact rule.
-1 (the default) accents every bar's downbeat; N > 1 accents the downbeat only
-once every N bars; 0.5 accents both the downbeat and the halfway beat of
-every bar.
+An accent period (in bars, see ``data.is_accent_beat``) controls how often a
+beat lights up green instead of yellow. 1 (the default) accents every bar's
+downbeat; N > 1 accents the downbeat only once every N bars; 0.5 accents both
+the downbeat and the halfway beat of every bar.
 """
 
 from __future__ import annotations
