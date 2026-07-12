@@ -683,7 +683,10 @@ class MainWindow(QMainWindow):
         pos = active_beat_position(
             self._track.beat_times, self._track.beat_positions, t
         )
-        self._metronome.set_state(self._n_beats, pos)
+        bar_index = active_bar_index(
+            self._track.beat_times, self._track.beat_positions, t
+        )
+        self._metronome.set_state(self._n_beats, pos, bar_index)
 
     # ------------------------------------------------------------------
     # Keyboard
