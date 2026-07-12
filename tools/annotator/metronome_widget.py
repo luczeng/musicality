@@ -91,14 +91,10 @@ class MetronomeWidget(QWidget):
             cy = h // 2
             pos = i + 1  # 1-indexed
             if pos == self._active:
-                is_accented_downbeat = (
-                    pos == 1
-                    and self._bar_index is not None
-                    and self._bar_index % self._group_bars == 0
+                accented = self._bar_index is not None and is_accent_beat(
+                    pos, self._bar_index, self._n_beats, self._accent_bars
                 )
-                color = (
-                    self._COLOR_DOWNBEAT if is_accented_downbeat else self._COLOR_BEAT
-                )
+                color = self._COLOR_DOWNBEAT if accented else self._COLOR_BEAT
             else:
                 color = self._COLOR_INACTIVE
             painter.setBrush(color)
