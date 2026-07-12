@@ -72,14 +72,14 @@ def main() -> None:
         QPushButton:pressed {
             background-color: #262626;
         }
-        QPushButton:checkable:checked {
-            background-color: #2d7d32;
+        QPushButton:checked {
+            background-color: #4a4a4a;
             border: 2px solid #7fe07f;
             color: #ffffff;
             font-weight: bold;
         }
-        QPushButton:checkable:checked:hover {
-            background-color: #35913a;
+        QPushButton:checked:hover {
+            background-color: #565656;
         }
         QPushButton:disabled {
             color: #777777;
