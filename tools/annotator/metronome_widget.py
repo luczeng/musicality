@@ -39,7 +39,7 @@ class MetronomeWidget(QWidget):
         self._n_beats: int = 4
         self._active: int | None = None  # 1-indexed active position, or None
         self._bar_index: int | None = None  # 0-indexed bar number, or None
-        self._group_bars: int = 1
+        self._accent_bars: float = 1.0
         self.setFixedHeight(56)
 
     # ------------------------------------------------------------------
