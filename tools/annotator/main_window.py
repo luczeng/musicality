@@ -268,10 +268,10 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self._track_label)
         right_layout.addLayout(play_bar)
         right_layout.addLayout(sound_bar)
+        right_layout.addLayout(accent_bar)
         right_layout.addLayout(delete_bar)
         right_layout.addWidget(self._stats_label)
         right_layout.addWidget(self._waveform, stretch=1)
-        right_layout.addLayout(accent_bar)
         right_layout.addWidget(self._metronome)
         right_layout.addWidget(self._tap_widget)
 
