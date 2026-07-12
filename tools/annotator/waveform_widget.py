@@ -151,6 +151,7 @@ class WaveformWidget(QWidget):
 
         # Beat markers
         bars = bar_indices(self._beat_positions, len(self._beat_times))
+        n_beats = beats_per_bar(self._beat_positions)
         for i, t in enumerate(self._beat_times):
             x = int(t / self._duration * w)
             pos = (
@@ -158,8 +159,8 @@ class WaveformWidget(QWidget):
                 if self._beat_positions is not None
                 else (i % 4) + 1
             )
-            is_accented_downbeat = pos == 1 and bars[i] % self._group_bars == 0
-            color = "#44cc44" if is_accented_downbeat else "#cc7700"
+            accented = is_accent_beat(pos, bars[i], n_beats, self._accent_bars)
+            color = "#44cc44" if accented else "#cc7700"
             painter.setPen(QPen(QColor(color), 1))
             painter.drawLine(x, 0, x, h)
 
