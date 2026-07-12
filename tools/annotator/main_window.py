@@ -92,7 +92,7 @@ class MainWindow(QMainWindow):
         self._recorder = Recorder()
         self._timer = QTimer(self)
         self._n_beats = 4
-        self._accent_group_bars = 1
+        self._accent_bars: float = 1.0
         self._record_start: float = 0.0
         self._record_tick: int = 0
 
