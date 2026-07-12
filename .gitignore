@@ -33,6 +33,3 @@ wandb/
 # Claude Code
 .claude/settings.local.json
 AGENTS.md
-
-# DVC
-.dvc/config
