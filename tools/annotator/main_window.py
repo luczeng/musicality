@@ -240,7 +240,8 @@ class MainWindow(QMainWindow):
         self._accent_group.setExclusive(True)
         accent_bar = QHBoxLayout()
         accent_bar.addWidget(QLabel("Accent:"))
-        for label, group_bars in (
+        for label, accent_bars in (
+            ("Half Bar", 0.5),
             ("Every Bar", 1),
             ("Every 2 Bars", 2),
             ("Every 8 Bars", 8),
@@ -249,9 +250,9 @@ class MainWindow(QMainWindow):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setChecked(group_bars == self._accent_group_bars)
+            btn.setChecked(accent_bars == self._accent_bars)
             btn.clicked.connect(
-                lambda _checked, n=group_bars: self._on_accent_mode_changed(n)
+                lambda _checked, n=accent_bars: self._on_accent_mode_changed(n)
             )
             self._accent_group.addButton(btn)
             accent_bar.addWidget(btn)
