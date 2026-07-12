@@ -15,7 +15,6 @@ env/
 *.h5
 *.mat
 *.tar.gz
-data/
 splits/
 !configs/data/
 
