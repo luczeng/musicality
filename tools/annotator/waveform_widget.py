@@ -86,7 +86,7 @@ class WaveformWidget(QWidget):
         self._env_max: np.ndarray | None = None
         self._beat_times: np.ndarray = np.array([])
         self._beat_positions: np.ndarray | None = None
-        self._group_bars: int = 1
+        self._accent_bars: float = 1.0
         self._position: float = 0.0
         self._duration: float = 0.0
         self.setMinimumHeight(40)
