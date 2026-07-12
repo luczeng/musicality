@@ -117,6 +117,25 @@ def active_bar_index(
     return int(bar_indices(beat_positions, len(beat_times))[idx])
 
 
+def is_accent_beat(
+    position: int,
+    bar_index: int,
+    n_beats: int,
+    accent_bars: float,
+) -> bool:
+    """Return whether the beat at 1-indexed *position* in *bar_index* is accented.
+
+    *accent_bars* is the accent period in bars:
+    - 0.5 accents the downbeat and the halfway beat of every bar.
+    - 1 (default) accents the downbeat of every bar.
+    - N >= 1 accents the downbeat only once every N bars.
+    """
+    if accent_bars < 1:
+        halfway = n_beats // 2 + 1
+        return position in (1, halfway)
+    return position == 1 and bar_index % int(accent_bars) == 0
+
+
 def add_beat(track: TrackData, time: float) -> TrackData:
     """Return a new :class:`TrackData` with a beat inserted at *time*.
 
