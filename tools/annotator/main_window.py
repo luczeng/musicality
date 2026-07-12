@@ -9,6 +9,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -29,9 +30,11 @@ from .recorder import Recorder, _SR as _REC_SR
 from .data import (
     DATA_DIR,
     TrackData,
+    active_bar_index,
     active_beat_position,
     add_beat,
     annotation_path,
+    bar_indices,
     beats_per_bar,
     has_annotation,
     has_mirdata_annotation,
