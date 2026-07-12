@@ -1,0 +1,5 @@
+[core]
+    remote = storage
+['remote "storage"']
+    url = s3://92a4abfc1c6632d592f0051f/
+    endpointurl = https://s3.us-east-005.backblazeb2.com
