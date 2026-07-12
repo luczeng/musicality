@@ -423,6 +423,11 @@ class MainWindow(QMainWindow):
         if self._index < len(self._track_ids) - 1:
             self._load_track(self._index + 1)
 
+    def _on_accent_mode_changed(self, group_bars: int) -> None:
+        self._accent_group_bars = group_bars
+        self._metronome.set_accent_group(group_bars)
+        self._update_engine_clicks()
+
     # ------------------------------------------------------------------
     # Audio
     # ------------------------------------------------------------------
