@@ -17,6 +17,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QWidget
 
+from .data import is_accent_beat
+
 
 class MetronomeWidget(QWidget):
     """A row of dots that flash in sync with beat annotations during playback.
