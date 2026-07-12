@@ -86,6 +86,37 @@ def active_beat_position(
     return (idx % n) + 1
 
 
+def bar_indices(beat_positions: np.ndarray | None, n_total: int) -> np.ndarray:
+    """Return the 0-indexed bar number for each of *n_total* beats.
+
+    Uses ``beat_positions`` (cumulative count of downbeats) when available,
+    otherwise assumes a constant beats-per-bar cycle.
+    """
+    if n_total == 0:
+        return np.array([], dtype=int)
+    if beat_positions is not None:
+        return np.cumsum(beat_positions == 1) - 1
+    n = beats_per_bar(beat_positions)
+    return np.arange(n_total) // n
+
+
+def active_bar_index(
+    beat_times: np.ndarray,
+    beat_positions: np.ndarray | None,
+    t: float,
+) -> int | None:
+    """Return the 0-indexed bar number containing the most recent beat at time *t*.
+
+    Returns ``None`` if *t* is before the first beat.
+    """
+    if len(beat_times) == 0:
+        return None
+    idx = int(np.searchsorted(beat_times, t, side="right")) - 1
+    if idx < 0:
+        return None
+    return int(bar_indices(beat_positions, len(beat_times))[idx])
+
+
 def add_beat(track: TrackData, time: float) -> TrackData:
     """Return a new :class:`TrackData` with a beat inserted at *time*.
 
