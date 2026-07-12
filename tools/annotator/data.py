@@ -1,8 +1,8 @@
 """Track data model, beat annotation helpers, and persistence.
 
-Pure functions (``beats_per_bar``, ``active_beat_position``, ``add_beat``,
-``remove_beat``) are kept side-effect-free so they can be tested without
-mirdata or a filesystem.
+Pure functions (``beats_per_bar``, ``active_beat_position``, ``bar_indices``,
+``active_bar_index``, ``add_beat``, ``remove_beat``) are kept side-effect-free
+so they can be tested without mirdata or a filesystem.
 """
 
 from __future__ import annotations
