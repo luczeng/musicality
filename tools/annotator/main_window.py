@@ -426,6 +426,7 @@ class MainWindow(QMainWindow):
     def _on_accent_mode_changed(self, group_bars: int) -> None:
         self._accent_group_bars = group_bars
         self._metronome.set_accent_group(group_bars)
+        self._waveform.set_accent_group(group_bars)
         self._update_engine_clicks()
 
     # ------------------------------------------------------------------
