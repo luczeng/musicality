@@ -6,7 +6,6 @@ datasets:
   - rwc_classical
   - rwc_jazz
   - rwc_popular
-  - acousticbrainz_genre
   - groove_midi
   - guitarset
   # gtzan_genre: audio hosted at opihi.cs.uvic.ca is a dead link.

@@ -80,7 +80,9 @@ class TempoModule(L.LightningModule):
         self.save_hyperparameters()
 
         if loss not in _VALID_LOSSES:
-            raise ValueError(f"Unknown loss '{loss}'. Choose from: {sorted(_VALID_LOSSES)}")
+            raise ValueError(
+                f"Unknown loss '{loss}'. Choose from: {sorted(_VALID_LOSSES)}"
+            )
         self.loss_name = loss
 
         model_cfg = OmegaConf.to_container(model, resolve=True)
@@ -88,7 +90,9 @@ class TempoModule(L.LightningModule):
 
         if loss == "classification":
             if classification is None:
-                raise ValueError("loss='classification' requires a 'classification' config section")
+                raise ValueError(
+                    "loss='classification' requires a 'classification' config section"
+                )
             self.bpm_min = float(classification.bpm_min)
             self.bpm_max = float(classification.bpm_max)
             self.n_bins = int(classification.n_bins)
@@ -155,7 +159,13 @@ class TempoModule(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
 
-        self.log("lr", self.optimizers().param_groups[0]["lr"], prog_bar=True, on_step=False, on_epoch=True)
+        self.log(
+            "lr",
+            self.optimizers().param_groups[0]["lr"],
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+        )
         loss, _ = self._step(batch, "train")
         return loss
 

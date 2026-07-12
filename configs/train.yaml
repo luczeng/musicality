@@ -1,13 +1,13 @@
 defaults:
   - model: TCN
   - _self_
-loss: absolute  # absolute | relative | classification
+loss: classification  # absolute | relative | classification
 classification:
   bpm_min: 30
   bpm_max: 286
   n_bins: 256
   sigma: 1.5
-lr: 4e-3
+lr: 5e-4
 weight_decay: 0.0
 batch_size: 32
 n_mels: 128
