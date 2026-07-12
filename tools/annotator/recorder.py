@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import re
 import threading
 from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+
+from tools.annotator.naming import sanitize_track_name
 
 _SR = 44100
 
@@ -102,7 +103,7 @@ class Recorder:
             chunks = list(self._chunks)
             self._chunks = []
 
-        safe_name = re.sub(r"[^\w\-]", "_", name.strip()) or "recording"
+        safe_name = sanitize_track_name(name)
         save_dir.mkdir(parents=True, exist_ok=True)
         out_path = save_dir / f"{safe_name}.wav"
 

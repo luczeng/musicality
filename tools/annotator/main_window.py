@@ -9,6 +9,8 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QButtonGroup,
+    QComboBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -29,12 +31,15 @@ from .recorder import Recorder, _SR as _REC_SR
 from .data import (
     DATA_DIR,
     TrackData,
+    active_bar_index,
     active_beat_position,
     add_beat,
     annotation_path,
+    bar_indices,
     beats_per_bar,
     has_annotation,
     has_mirdata_annotation,
+    is_accent_beat,
     list_datasets,
     load_dataset_tracks,
     load_track,
@@ -56,7 +61,7 @@ class MainWindow(QMainWindow):
 
     Layout
     ------
-    Toolbar : [◀ Prev]  [▶ Play/Pause]  [Next ▶]  [💾 Save]  [track info]
+    Toolbar : [◀ Prev]  [▶ Play]  [⏸ Pause]  [Next ▶]  [💾 Save]  [track info]
     Center  : WaveformWidget  (resizable, takes remaining space)
     Bottom  : MetronomeWidget (fixed height)
 
@@ -89,6 +94,7 @@ class MainWindow(QMainWindow):
         self._recorder = Recorder()
         self._timer = QTimer(self)
         self._n_beats = 4
+        self._accent_bars: float = 1.0
         self._record_start: float = 0.0
         self._record_tick: int = 0
 
@@ -116,7 +122,12 @@ class MainWindow(QMainWindow):
         self._play_btn = QPushButton("▶  Play")
         self._play_btn.setFixedWidth(90)
         self._play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._play_btn.clicked.connect(self._on_play_pause)
+        self._play_btn.clicked.connect(self._on_play)
+
+        self._pause_btn = QPushButton("⏸  Pause")
+        self._pause_btn.setFixedWidth(90)
+        self._pause_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._pause_btn.clicked.connect(self._on_pause)
 
         self._next_btn = QPushButton("Next  ▶")
         self._next_btn.setFixedWidth(90)
@@ -138,8 +149,8 @@ class MainWindow(QMainWindow):
         self._delete_track_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._delete_track_btn.clicked.connect(self._on_delete_track)
 
-        self._rename_btn = QPushButton("✏  Rename")
-        self._rename_btn.setFixedWidth(90)
+        self._rename_btn = QPushButton("✏  Rename track")
+        self._rename_btn.setFixedWidth(120)
         self._rename_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._rename_btn.clicked.connect(self._on_rename)
 
@@ -205,9 +216,13 @@ class MainWindow(QMainWindow):
         play_bar.addWidget(self._prev_btn)
         play_bar.addWidget(self._restart_btn)
         play_bar.addWidget(self._play_btn)
+        play_bar.addWidget(self._pause_btn)
         play_bar.addWidget(self._next_btn)
-        play_bar.addWidget(self._rename_btn)
         play_bar.addStretch()
+
+        rename_bar = QHBoxLayout()
+        rename_bar.addWidget(self._rename_btn)
+        rename_bar.addStretch()
 
         sound_bar = QHBoxLayout()
         sound_bar.addWidget(QLabel("🔊"))
@@ -232,6 +247,41 @@ class MainWindow(QMainWindow):
         self._metronome = MetronomeWidget()
         self._metronome.set_state(4, None)
 
+        self._speed = 1.0
+        self._speed_combo = QComboBox()
+        self._speed_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for pct in range(100, 45, -5):
+            self._speed_combo.addItem(f"{pct}%", pct / 100)
+        self._speed_combo.currentIndexChanged.connect(
+            lambda i: self._on_speed_changed(self._speed_combo.itemData(i))
+        )
+        speed_bar = QHBoxLayout()
+        speed_bar.addWidget(QLabel("Speed:"))
+        speed_bar.addWidget(self._speed_combo)
+        speed_bar.addStretch()
+
+        self._accent_group = QButtonGroup(self)
+        self._accent_group.setExclusive(True)
+        accent_bar = QHBoxLayout()
+        accent_bar.addWidget(QLabel("Accent:"))
+        for label, accent_bars in (
+            ("Half Bar", 0.5),
+            ("Every Bar", 1),
+            ("Every 2 Bars", 2),
+            ("Every 8 Bars", 8),
+            ("Every 32 Bars", 32),
+        ):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setChecked(accent_bars == self._accent_bars)
+            btn.clicked.connect(
+                lambda _checked, n=accent_bars: self._on_accent_mode_changed(n)
+            )
+            self._accent_group.addButton(btn)
+            accent_bar.addWidget(btn)
+        accent_bar.addStretch()
+
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
         self._tap_widget.layout().addWidget(self._save_btn)
@@ -242,7 +292,10 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(record_bar)
         right_layout.addWidget(self._track_label)
         right_layout.addLayout(play_bar)
+        right_layout.addLayout(rename_bar)
         right_layout.addLayout(sound_bar)
+        right_layout.addLayout(speed_bar)
+        right_layout.addLayout(accent_bar)
         right_layout.addLayout(delete_bar)
         right_layout.addWidget(self._stats_label)
         right_layout.addWidget(self._waveform, stretch=1)
@@ -250,6 +303,17 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self._tap_widget)
 
         # Left panel: dataset tree
+        self._dataset_sort_combo = QComboBox()
+        self._dataset_sort_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._dataset_sort_combo.addItem("Alphabetical", "alphabetical")
+        self._dataset_sort_combo.addItem("Recording date (newest)", "recording_date")
+        self._dataset_sort_combo.currentIndexChanged.connect(
+            lambda _i: self._populate_dataset_list()
+        )
+        sort_bar = QHBoxLayout()
+        sort_bar.addWidget(QLabel("Sort:"))
+        sort_bar.addWidget(self._dataset_sort_combo)
+
         self._dataset_tree = QTreeWidget()
         self._dataset_tree.setColumnCount(3)
         self._dataset_tree.header().hide()
@@ -267,6 +331,7 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.setSpacing(0)
+        left_layout.addLayout(sort_bar)
         left_layout.addWidget(self._dataset_tree)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -286,7 +351,6 @@ class MainWindow(QMainWindow):
     def _load_track(self, index: int) -> None:
         """Load the track at *index*, replacing any currently loaded track."""
         self._engine.stop()
-        self._play_btn.setText("▶  Play")
 
         self._index = index
         track_id = self._track_ids[index]
@@ -314,7 +378,12 @@ class MainWindow(QMainWindow):
         self._dataset_tree.clear()
         bold = QFont()
         bold.setBold(True)
-        for info in list_datasets():
+        infos = list_datasets()
+        if self._dataset_sort_combo.currentData() == "recording_date":
+            infos.sort(key=lambda info: info.mtime, reverse=True)
+        else:
+            infos.sort(key=lambda info: info.name.lower())
+        for info in infos:
             suffix = f"  ({info.n_tracks} · {info.n_annotations} ann)"
             ds_item = QTreeWidgetItem([info.name + suffix])
             ds_item.setFont(0, bold)
@@ -348,7 +417,6 @@ class MainWindow(QMainWindow):
         track_id = item.data(0, Qt.ItemDataRole.UserRole)
         if dataset_name != self._dataset_name:
             self._engine.stop()
-            self._play_btn.setText("▶  Play")
             self._dataset_name = dataset_name
             self._track_ids = load_dataset_tracks(dataset_name)
         elif track_id not in self._track_ids:
@@ -397,17 +465,33 @@ class MainWindow(QMainWindow):
         if self._index < len(self._track_ids) - 1:
             self._load_track(self._index + 1)
 
+    def _on_accent_mode_changed(self, accent_bars: float) -> None:
+        self._accent_bars = accent_bars
+        self._metronome.set_accent_bars(accent_bars)
+        self._waveform.set_accent_bars(accent_bars)
+        self._update_engine_clicks()
+
     # ------------------------------------------------------------------
     # Audio
     # ------------------------------------------------------------------
 
-    def _on_play_pause(self) -> None:
+    def _on_speed_changed(self, speed: float) -> None:
+        self._speed = speed
+        self._engine.set_speed(speed)
+
+    def _on_play(self) -> None:
+        if not self._engine.is_playing:
+            self._engine.play()
+
+    def _on_pause(self) -> None:
         if self._engine.is_playing:
             self._engine.pause()
-            self._play_btn.setText("▶  Play")
+
+    def _on_play_pause(self) -> None:
+        if self._engine.is_playing:
+            self._on_pause()
         else:
-            self._engine.play()
-            self._play_btn.setText("⏸  Pause")
+            self._on_play()
 
     def _on_record_toggle(self, checked: bool) -> None:
         if checked:
@@ -441,7 +525,6 @@ class MainWindow(QMainWindow):
         self._waveform.set_position(0.0)
         if not self._engine.is_playing:
             self._engine.play()
-            self._play_btn.setText("⏸  Pause")
 
     def _on_seek(self, t: float) -> None:
         self._engine.seek(t)
@@ -449,7 +532,6 @@ class MainWindow(QMainWindow):
 
     def _on_playback_finished(self) -> None:
         """Called on the main thread when playback reaches the end."""
-        self._play_btn.setText("▶  Play")
 
     # ------------------------------------------------------------------
     # Annotation
@@ -583,12 +665,19 @@ class MainWindow(QMainWindow):
         beat_times = self._track.beat_times
         beat_positions = self._track.beat_positions
         beat_frames = (beat_times * self._track_sr).astype(int)
+        n = len(beat_times)
         if beat_positions is not None:
-            beat_is_down = beat_positions == 1
+            positions = beat_positions
         else:
-            beat_is_down = np.array(
-                [(i % 4) == 0 for i in range(len(beat_times))], dtype=bool
-            )
+            positions = np.array([(i % self._n_beats) + 1 for i in range(n)])
+        bars = bar_indices(beat_positions, n)
+        beat_is_down = np.array(
+            [
+                is_accent_beat(positions[i], bars[i], self._n_beats, self._accent_bars)
+                for i in range(n)
+            ],
+            dtype=bool,
+        )
         self._engine.set_clicks(beat_frames, beat_is_down, self._track_sr)
 
     def _refresh_beats(self) -> None:
@@ -650,7 +739,10 @@ class MainWindow(QMainWindow):
         pos = active_beat_position(
             self._track.beat_times, self._track.beat_positions, t
         )
-        self._metronome.set_state(self._n_beats, pos)
+        bar_index = active_bar_index(
+            self._track.beat_times, self._track.beat_positions, t
+        )
+        self._metronome.set_state(self._n_beats, pos, bar_index)
 
     # ------------------------------------------------------------------
     # Keyboard

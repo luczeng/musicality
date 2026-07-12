@@ -1,8 +1,8 @@
 """Track data model, beat annotation helpers, and persistence.
 
-Pure functions (``beats_per_bar``, ``active_beat_position``, ``add_beat``,
-``remove_beat``) are kept side-effect-free so they can be tested without
-mirdata or a filesystem.
+Pure functions (``beats_per_bar``, ``active_beat_position``, ``bar_indices``,
+``active_bar_index``, ``add_beat``, ``remove_beat``) are kept side-effect-free
+so they can be tested without mirdata or a filesystem.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ class DatasetInfo:
     name: str
     n_tracks: int
     n_annotations: int
+    mtime: float
 
 
 @dataclass
@@ -84,6 +85,56 @@ def active_beat_position(
         return int(beat_positions[idx])
     n = beats_per_bar(beat_positions)
     return (idx % n) + 1
+
+
+def bar_indices(beat_positions: np.ndarray | None, n_total: int) -> np.ndarray:
+    """Return the 0-indexed bar number for each of *n_total* beats.
+
+    Uses ``beat_positions`` (cumulative count of downbeats) when available,
+    otherwise assumes a constant beats-per-bar cycle.
+    """
+    if n_total == 0:
+        return np.array([], dtype=int)
+    if beat_positions is not None:
+        return np.cumsum(beat_positions == 1) - 1
+    n = beats_per_bar(beat_positions)
+    return np.arange(n_total) // n
+
+
+def active_bar_index(
+    beat_times: np.ndarray,
+    beat_positions: np.ndarray | None,
+    t: float,
+) -> int | None:
+    """Return the 0-indexed bar number containing the most recent beat at time *t*.
+
+    Returns ``None`` if *t* is before the first beat.
+    """
+    if len(beat_times) == 0:
+        return None
+    idx = int(np.searchsorted(beat_times, t, side="right")) - 1
+    if idx < 0:
+        return None
+    return int(bar_indices(beat_positions, len(beat_times))[idx])
+
+
+def is_accent_beat(
+    position: int,
+    bar_index: int,
+    n_beats: int,
+    accent_bars: float,
+) -> bool:
+    """Return whether the beat at 1-indexed *position* in *bar_index* is accented.
+
+    *accent_bars* is the accent period in bars:
+    - 0.5 accents the downbeat and the halfway beat of every bar.
+    - 1 (default) accents the downbeat of every bar.
+    - N >= 1 accents the downbeat only once every N bars.
+    """
+    if accent_bars < 1:
+        halfway = n_beats // 2 + 1
+        return position in (1, halfway)
+    return position == 1 and bar_index % int(accent_bars) == 0
 
 
 def add_beat(track: TrackData, time: float) -> TrackData:
@@ -154,6 +205,24 @@ def _read_beats_file(path: Path) -> np.ndarray:
     )
 
 
+def _dataset_mtime(path: Path, tracks_dir: Path) -> float:
+    """Most recent modification time for a dataset, used to rank by recording date.
+
+    For custom recorded datasets, this is the newest audio file's mtime (i.e. the
+    last time a track was recorded into it). Falls back to the folder's own mtime
+    for mirdata datasets, where "recording date" isn't meaningful.
+    """
+    if tracks_dir.is_dir():
+        mtimes = [
+            f.stat().st_mtime
+            for f in tracks_dir.iterdir()
+            if f.suffix.lower() in _AUDIO_EXTENSIONS
+        ]
+        if mtimes:
+            return max(mtimes)
+    return path.stat().st_mtime
+
+
 def list_datasets() -> list[DatasetInfo]:
     """Return info for every dataset found in DATA_DIR.
 
@@ -179,7 +248,10 @@ def list_datasets() -> list[DatasetInfo]:
                 continue
         ann_dir = path / "annotations"
         n_ann = len(list(ann_dir.glob("*.beats"))) if ann_dir.is_dir() else 0
-        infos.append(DatasetInfo(name=name, n_tracks=n_tracks, n_annotations=n_ann))
+        mtime = _dataset_mtime(path, tracks_dir)
+        infos.append(
+            DatasetInfo(name=name, n_tracks=n_tracks, n_annotations=n_ann, mtime=mtime)
+        )
     return infos
 
 

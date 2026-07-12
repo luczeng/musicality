@@ -12,6 +12,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
+from .data import bar_indices, beats_per_bar, is_accent_beat
+
 
 # ---------------------------------------------------------------------------
 # Pure helper — separated for testability
@@ -84,6 +86,7 @@ class WaveformWidget(QWidget):
         self._env_max: np.ndarray | None = None
         self._beat_times: np.ndarray = np.array([])
         self._beat_positions: np.ndarray | None = None
+        self._accent_bars: float = 1.0
         self._position: float = 0.0
         self._duration: float = 0.0
         self.setMinimumHeight(40)
@@ -107,6 +110,11 @@ class WaveformWidget(QWidget):
         """Update the beat markers."""
         self._beat_times = beat_times
         self._beat_positions = beat_positions
+        self.update()
+
+    def set_accent_bars(self, accent_bars: float) -> None:
+        """Set the accent period in bars (see MetronomeWidget docstring)."""
+        self._accent_bars = accent_bars
         self.update()
 
     def set_position(self, seconds: float) -> None:
@@ -142,6 +150,8 @@ class WaveformWidget(QWidget):
             return
 
         # Beat markers
+        bars = bar_indices(self._beat_positions, len(self._beat_times))
+        n_beats = beats_per_bar(self._beat_positions)
         for i, t in enumerate(self._beat_times):
             x = int(t / self._duration * w)
             pos = (
@@ -149,7 +159,8 @@ class WaveformWidget(QWidget):
                 if self._beat_positions is not None
                 else (i % 4) + 1
             )
-            color = "#44cc44" if pos == 1 else "#cc7700"
+            accented = is_accent_beat(pos, bars[i], n_beats, self._accent_bars)
+            color = "#44cc44" if accented else "#cc7700"
             painter.setPen(QPen(QColor(color), 1))
             painter.drawLine(x, 0, x, h)
 

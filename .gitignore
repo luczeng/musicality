@@ -21,6 +21,9 @@ splits/
 # Pytest
 .pytest_cache/
 
+# Local dev TLS certs (mkcert)
+tools/mobile_companion/certs/
+
 # Training outputs
 checkpoints/
 logs/

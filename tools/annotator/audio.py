@@ -35,8 +35,9 @@ class AudioEngine:
     def __init__(self) -> None:
         self._audio: np.ndarray | None = None
         self._sr: int = 22050
-        self._frame: int = 0
+        self._frame: float = 0.0
         self._volume: float = 1.0
+        self._speed: float = 1.0
         self._stream: sd.OutputStream | None = None
         self._finished_cb = None
         self._beats_data: tuple[np.ndarray, np.ndarray] = (
@@ -58,7 +59,7 @@ class AudioEngine:
         self.stop()
         self._audio = np.asarray(audio, dtype=np.float32)
         self._sr = sr
-        self._frame = 0
+        self._frame = 0.0
 
     @property
     def position(self) -> float:
@@ -85,7 +86,7 @@ class AudioEngine:
         if self._audio is None or self.is_playing:
             return
         if self._frame >= len(self._audio):
-            self._frame = 0
+            self._frame = 0.0
         self._start_stream(self._frame)
 
     def pause(self) -> None:
@@ -98,7 +99,7 @@ class AudioEngine:
         if self._stream is not None:
             self._stream.close()
             self._stream = None
-        self._frame = 0
+        self._frame = 0.0
 
     def seek(self, seconds: float) -> None:
         """Jump to *seconds* and resume if currently playing."""
@@ -108,13 +109,22 @@ class AudioEngine:
         if self._stream is not None:
             self._stream.close()
             self._stream = None
-        self._frame = max(0, min(int(seconds * self._sr), len(self._audio) - 1))
+        self._frame = max(0.0, min(seconds * self._sr, len(self._audio) - 1))
         if was_playing:
             self._start_stream(self._frame)
 
     def set_volume(self, level: float) -> None:
         """Set playback volume. *level* is 0.0 (silent) to 1.0 (full)."""
         self._volume = max(0.0, min(1.0, level))
+
+    def set_speed(self, speed: float) -> None:
+        """Set playback speed as a fraction of normal (e.g. 0.9 = 90%, slower).
+
+        This is a naive rate change (like a slowed-down tape): pitch drops as
+        speed decreases. Position tracking stays in the original track's
+        sample coordinates, so beat times / annotations are unaffected.
+        """
+        self._speed = max(0.1, min(1.0, speed))
 
     def set_clicks(
         self,
@@ -146,8 +156,8 @@ class AudioEngine:
     # Internal
     # ------------------------------------------------------------------
 
-    def _start_stream(self, start_frame: int) -> None:
-        frame_ref = [start_frame]
+    def _start_stream(self, start_frame: float) -> None:
+        frame_ref = [float(start_frame)]
         pending: list[np.ndarray] = []  # click samples that spill into the next buffer
 
         def _mix(
@@ -160,13 +170,34 @@ class AudioEngine:
                 pending.append(scaled[n:])
 
         def _callback(outdata, frames, time_info, status):
+            speed = self._speed
             pos = frame_ref[0]
-            end = pos + frames
-            chunk = self._audio[pos:end]
-            actual = len(chunk)
-            outdata[:actual, 0] = chunk * self._volume
+            audio = self._audio
+            n_samples = len(audio)
+
+            if speed == 1.0:
+                # Exact path: no resampling needed.
+                start = int(pos)
+                end = start + frames
+                chunk = audio[start:end]
+                actual = len(chunk)
+                outdata[:actual, 0] = chunk * self._volume
+            else:
+                # Naive rate change (vinyl-style slowdown): read the source
+                # `speed` samples per output sample, linearly interpolated.
+                idx = pos + speed * np.arange(frames, dtype=np.float64)
+                i0 = np.floor(idx).astype(np.int64)
+                valid = (i0 + 1) < n_samples
+                actual = frames if valid.all() else int(np.argmax(~valid))
+                i0v = i0[:actual]
+                frac = (idx[:actual] - i0v).astype(np.float32)
+                outdata[:actual, 0] = (
+                    audio[i0v] * (1 - frac) + audio[i0v + 1] * frac
+                ) * self._volume
+
             if actual < frames:
                 outdata[actual:] = 0
+            new_pos = pos + actual * speed
 
             # Carry over click samples that spilled from the previous buffer
             carried = pending.copy()
@@ -190,12 +221,14 @@ class AudioEngine:
                     self._beats_data
                 )  # single read — always consistent
                 for i, bf in enumerate(beat_frames):
-                    if pos <= bf < end:
+                    if pos <= bf < new_pos:
                         click = self._high_click if beat_is_down[i] else self._low_click
-                        _mix(outdata, frames, click, bf - pos)
+                        click_offset = int(round((bf - pos) / speed))
+                        click_offset = max(0, min(click_offset, frames - 1))
+                        _mix(outdata, frames, click, click_offset)
 
-            frame_ref[0] = pos + actual
-            self._frame = frame_ref[0]
+            frame_ref[0] = new_pos
+            self._frame = new_pos
             if actual < frames:
                 raise sd.CallbackStop()
 
