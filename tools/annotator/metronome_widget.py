@@ -3,6 +3,12 @@
 Shows one dot per beat in the bar.  The active dot lights up green on a
 downbeat (position 1) and yellow on any other beat.  All other dots are
 dark grey.
+
+An accent group size controls how often the downbeat is actually green:
+with a group of *N* bars, only the downbeat of the first bar in each group
+of N lights up green — the downbeats of the other N-1 bars light up yellow
+like any other beat. A group of 1 (the default) means every bar's downbeat
+is green.
 """
 
 from __future__ import annotations
@@ -23,13 +29,13 @@ class MetronomeWidget(QWidget):
     """
 
     _COLOR_INACTIVE = QColor("#444444")
-    _COLOR_BEAT     = QColor("#FFD700")
+    _COLOR_BEAT = QColor("#FFD700")
     _COLOR_DOWNBEAT = QColor("#44CC44")
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._n_beats: int = 4
-        self._active: int | None = None   # 1-indexed active position, or None
+        self._active: int | None = None  # 1-indexed active position, or None
         self.setFixedHeight(56)
 
     # ------------------------------------------------------------------
