@@ -99,7 +99,7 @@ class AudioEngine:
         if self._stream is not None:
             self._stream.close()
             self._stream = None
-        self._frame = 0
+        self._frame = 0.0
 
     def seek(self, seconds: float) -> None:
         """Jump to *seconds* and resume if currently playing."""
@@ -109,13 +109,22 @@ class AudioEngine:
         if self._stream is not None:
             self._stream.close()
             self._stream = None
-        self._frame = max(0, min(int(seconds * self._sr), len(self._audio) - 1))
+        self._frame = max(0.0, min(seconds * self._sr, len(self._audio) - 1))
         if was_playing:
             self._start_stream(self._frame)
 
     def set_volume(self, level: float) -> None:
         """Set playback volume. *level* is 0.0 (silent) to 1.0 (full)."""
         self._volume = max(0.0, min(1.0, level))
+
+    def set_speed(self, speed: float) -> None:
+        """Set playback speed as a fraction of normal (e.g. 0.9 = 90%, slower).
+
+        This is a naive rate change (like a slowed-down tape): pitch drops as
+        speed decreases. Position tracking stays in the original track's
+        sample coordinates, so beat times / annotations are unaffected.
+        """
+        self._speed = max(0.1, min(1.0, speed))
 
     def set_clicks(
         self,
