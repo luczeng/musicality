@@ -385,7 +385,6 @@ class MainWindow(QMainWindow):
         track_id = item.data(0, Qt.ItemDataRole.UserRole)
         if dataset_name != self._dataset_name:
             self._engine.stop()
-            self._play_btn.setText("▶  Play")
             self._dataset_name = dataset_name
             self._track_ids = load_dataset_tracks(dataset_name)
         elif track_id not in self._track_ids:
