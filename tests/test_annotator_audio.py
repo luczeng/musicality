@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 from tools.annotator.audio import AudioEngine
 
 
-AUDIO = np.zeros(22050, dtype=np.float32)   # 1 second of silence
+AUDIO = np.zeros(22050, dtype=np.float32)  # 1 second of silence
 SR = 22050
 
 
@@ -91,7 +91,7 @@ class TestAudioEnginePlay:
         e = AudioEngine()
         e.load(AUDIO, SR)
         e.play()
-        e.play()   # second call should be a no-op
+        e.play()  # second call should be a no-op
 
         assert mock_cls.call_count == 1
 
@@ -107,3 +107,52 @@ class TestAudioEnginePlay:
         e.pause()
 
         mock_stream.stop.assert_called_once()
+
+
+class TestAudioEngineSpeed:
+    def test_default_speed_is_full(self):
+        assert AudioEngine()._speed == 1.0
+
+    def test_set_speed_clamps_to_valid_range(self):
+        e = AudioEngine()
+        e.set_speed(0.9)
+        assert e._speed == pytest.approx(0.9)
+        e.set_speed(2.0)
+        assert e._speed == 1.0
+        e.set_speed(-1.0)
+        assert e._speed == 0.1
+
+    @patch("tools.annotator.audio.sd.OutputStream")
+    def test_slower_speed_advances_position_more_slowly(self, mock_cls):
+        mock_stream = MagicMock()
+        mock_stream.active = True
+        mock_cls.return_value = mock_stream
+
+        e = AudioEngine()
+        e.load(AUDIO, SR)
+        e.set_speed(0.9)
+        e.play()
+
+        callback = mock_cls.call_args.kwargs["callback"]
+        frames = 512
+        outdata = np.zeros((frames, 1), dtype=np.float32)
+        callback(outdata, frames, None, None)
+
+        assert e.position == pytest.approx(frames * 0.9 / SR)
+
+    @patch("tools.annotator.audio.sd.OutputStream")
+    def test_full_speed_advances_position_exactly(self, mock_cls):
+        mock_stream = MagicMock()
+        mock_stream.active = True
+        mock_cls.return_value = mock_stream
+
+        e = AudioEngine()
+        e.load(AUDIO, SR)
+        e.play()
+
+        callback = mock_cls.call_args.kwargs["callback"]
+        frames = 512
+        outdata = np.zeros((frames, 1), dtype=np.float32)
+        callback(outdata, frames, None, None)
+
+        assert e.position == pytest.approx(frames / SR)
