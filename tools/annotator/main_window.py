@@ -278,6 +278,7 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(record_bar)
         right_layout.addWidget(self._track_label)
         right_layout.addLayout(play_bar)
+        right_layout.addLayout(rename_bar)
         right_layout.addLayout(sound_bar)
         right_layout.addLayout(accent_bar)
         right_layout.addLayout(delete_bar)
