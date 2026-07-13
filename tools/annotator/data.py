@@ -205,6 +205,24 @@ def _read_beats_file(path: Path) -> np.ndarray:
     )
 
 
+def _dataset_mtime(path: Path, tracks_dir: Path) -> float:
+    """Most recent modification time for a dataset, used to rank by recording date.
+
+    For custom recorded datasets, this is the newest audio file's mtime (i.e. the
+    last time a track was recorded into it). Falls back to the folder's own mtime
+    for mirdata datasets, where "recording date" isn't meaningful.
+    """
+    if tracks_dir.is_dir():
+        mtimes = [
+            f.stat().st_mtime
+            for f in tracks_dir.iterdir()
+            if f.suffix.lower() in _AUDIO_EXTENSIONS
+        ]
+        if mtimes:
+            return max(mtimes)
+    return path.stat().st_mtime
+
+
 def list_datasets() -> list[DatasetInfo]:
     """Return info for every dataset found in DATA_DIR.
 
@@ -230,7 +248,10 @@ def list_datasets() -> list[DatasetInfo]:
                 continue
         ann_dir = path / "annotations"
         n_ann = len(list(ann_dir.glob("*.beats"))) if ann_dir.is_dir() else 0
-        infos.append(DatasetInfo(name=name, n_tracks=n_tracks, n_annotations=n_ann))
+        mtime = _dataset_mtime(path, tracks_dir)
+        infos.append(
+            DatasetInfo(name=name, n_tracks=n_tracks, n_annotations=n_ann, mtime=mtime)
+        )
     return infos
 
 
