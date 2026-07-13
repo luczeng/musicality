@@ -460,6 +460,10 @@ class MainWindow(QMainWindow):
     # Audio
     # ------------------------------------------------------------------
 
+    def _on_speed_changed(self, speed: float) -> None:
+        self._speed = speed
+        self._engine.set_speed(speed)
+
     def _on_play(self) -> None:
         if not self._engine.is_playing:
             self._engine.play()
