@@ -28,6 +28,7 @@ class DatasetInfo:
     name: str
     n_tracks: int
     n_annotations: int
+    mtime: float
 
 
 @dataclass
