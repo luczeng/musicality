@@ -489,7 +489,6 @@ class MainWindow(QMainWindow):
         self._waveform.set_position(0.0)
         if not self._engine.is_playing:
             self._engine.play()
-            self._play_btn.setText("⏸  Pause")
 
     def _on_seek(self, t: float) -> None:
         self._engine.seek(t)
@@ -497,7 +496,6 @@ class MainWindow(QMainWindow):
 
     def _on_playback_finished(self) -> None:
         """Called on the main thread when playback reaches the end."""
-        self._play_btn.setText("▶  Play")
 
     # ------------------------------------------------------------------
     # Annotation
