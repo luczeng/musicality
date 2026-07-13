@@ -60,7 +60,7 @@ class MainWindow(QMainWindow):
 
     Layout
     ------
-    Toolbar : [◀ Prev]  [▶ Play/Pause]  [Next ▶]  [💾 Save]  [track info]
+    Toolbar : [◀ Prev]  [▶ Play]  [⏸ Pause]  [Next ▶]  [💾 Save]  [track info]
     Center  : WaveformWidget  (resizable, takes remaining space)
     Bottom  : MetronomeWidget (fixed height)
 
