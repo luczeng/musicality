@@ -331,6 +331,7 @@ class MainWindow(QMainWindow):
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.setSpacing(0)
+        left_layout.addLayout(sort_bar)
         left_layout.addWidget(self._dataset_tree)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
