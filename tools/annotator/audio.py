@@ -35,8 +35,9 @@ class AudioEngine:
     def __init__(self) -> None:
         self._audio: np.ndarray | None = None
         self._sr: int = 22050
-        self._frame: int = 0
+        self._frame: float = 0.0
         self._volume: float = 1.0
+        self._speed: float = 1.0
         self._stream: sd.OutputStream | None = None
         self._finished_cb = None
         self._beats_data: tuple[np.ndarray, np.ndarray] = (
