@@ -324,7 +324,6 @@ class MainWindow(QMainWindow):
     def _load_track(self, index: int) -> None:
         """Load the track at *index*, replacing any currently loaded track."""
         self._engine.stop()
-        self._play_btn.setText("▶  Play")
 
         self._index = index
         track_id = self._track_ids[index]
