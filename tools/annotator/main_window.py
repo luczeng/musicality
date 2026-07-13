@@ -248,19 +248,16 @@ class MainWindow(QMainWindow):
         self._metronome.set_state(4, None)
 
         self._speed = 1.0
-        self._speed_group = QButtonGroup(self)
-        self._speed_group.setExclusive(True)
+        self._speed_combo = QComboBox()
+        self._speed_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        for pct in range(100, 45, -5):
+            self._speed_combo.addItem(f"{pct}%", pct / 100)
+        self._speed_combo.currentIndexChanged.connect(
+            lambda i: self._on_speed_changed(self._speed_combo.itemData(i))
+        )
         speed_bar = QHBoxLayout()
         speed_bar.addWidget(QLabel("Speed:"))
-        for pct in (100, 95, 90, 85):
-            btn = QPushButton(f"{pct}%")
-            btn.setFixedWidth(60)
-            btn.setCheckable(True)
-            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setChecked(pct == 100)
-            btn.clicked.connect(lambda _checked, p=pct: self._on_speed_changed(p / 100))
-            self._speed_group.addButton(btn)
-            speed_bar.addWidget(btn)
+        speed_bar.addWidget(self._speed_combo)
         speed_bar.addStretch()
 
         self._accent_group = QButtonGroup(self)
