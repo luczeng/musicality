@@ -303,6 +303,17 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self._tap_widget)
 
         # Left panel: dataset tree
+        self._dataset_sort_combo = QComboBox()
+        self._dataset_sort_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._dataset_sort_combo.addItem("Alphabetical", "alphabetical")
+        self._dataset_sort_combo.addItem("Recording date (newest)", "recording_date")
+        self._dataset_sort_combo.currentIndexChanged.connect(
+            lambda _i: self._populate_dataset_list()
+        )
+        sort_bar = QHBoxLayout()
+        sort_bar.addWidget(QLabel("Sort:"))
+        sort_bar.addWidget(self._dataset_sort_combo)
+
         self._dataset_tree = QTreeWidget()
         self._dataset_tree.setColumnCount(3)
         self._dataset_tree.header().hide()
