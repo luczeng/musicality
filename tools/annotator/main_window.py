@@ -445,13 +445,19 @@ class MainWindow(QMainWindow):
     # Audio
     # ------------------------------------------------------------------
 
-    def _on_play_pause(self) -> None:
+    def _on_play(self) -> None:
+        if not self._engine.is_playing:
+            self._engine.play()
+
+    def _on_pause(self) -> None:
         if self._engine.is_playing:
             self._engine.pause()
-            self._play_btn.setText("▶  Play")
+
+    def _on_play_pause(self) -> None:
+        if self._engine.is_playing:
+            self._on_pause()
         else:
-            self._engine.play()
-            self._play_btn.setText("⏸  Pause")
+            self._on_play()
 
     def _on_record_toggle(self, checked: bool) -> None:
         if checked:
