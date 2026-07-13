@@ -215,9 +215,13 @@ class MainWindow(QMainWindow):
         play_bar.addWidget(self._prev_btn)
         play_bar.addWidget(self._restart_btn)
         play_bar.addWidget(self._play_btn)
+        play_bar.addWidget(self._pause_btn)
         play_bar.addWidget(self._next_btn)
-        play_bar.addWidget(self._rename_btn)
         play_bar.addStretch()
+
+        rename_bar = QHBoxLayout()
+        rename_bar.addWidget(self._rename_btn)
+        rename_bar.addStretch()
 
         sound_bar = QHBoxLayout()
         sound_bar.addWidget(QLabel("🔊"))
