@@ -86,7 +86,7 @@ class AudioEngine:
         if self._audio is None or self.is_playing:
             return
         if self._frame >= len(self._audio):
-            self._frame = 0
+            self._frame = 0.0
         self._start_stream(self._frame)
 
     def pause(self) -> None:
