@@ -121,7 +121,12 @@ class MainWindow(QMainWindow):
         self._play_btn = QPushButton("▶  Play")
         self._play_btn.setFixedWidth(90)
         self._play_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._play_btn.clicked.connect(self._on_play_pause)
+        self._play_btn.clicked.connect(self._on_play)
+
+        self._pause_btn = QPushButton("⏸  Pause")
+        self._pause_btn.setFixedWidth(90)
+        self._pause_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._pause_btn.clicked.connect(self._on_pause)
 
         self._next_btn = QPushButton("Next  ▶")
         self._next_btn.setFixedWidth(90)
