@@ -59,7 +59,7 @@ class AudioEngine:
         self.stop()
         self._audio = np.asarray(audio, dtype=np.float32)
         self._sr = sr
-        self._frame = 0
+        self._frame = 0.0
 
     @property
     def position(self) -> float:
