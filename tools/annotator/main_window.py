@@ -378,7 +378,12 @@ class MainWindow(QMainWindow):
         self._dataset_tree.clear()
         bold = QFont()
         bold.setBold(True)
-        for info in list_datasets():
+        infos = list_datasets()
+        if self._dataset_sort_combo.currentData() == "recording_date":
+            infos.sort(key=lambda info: info.mtime, reverse=True)
+        else:
+            infos.sort(key=lambda info: info.name.lower())
+        for info in infos:
             suffix = f"  ({info.n_tracks} · {info.n_annotations} ann)"
             ds_item = QTreeWidgetItem([info.name + suffix])
             ds_item.setFont(0, bold)
