@@ -156,8 +156,8 @@ class AudioEngine:
     # Internal
     # ------------------------------------------------------------------
 
-    def _start_stream(self, start_frame: int) -> None:
-        frame_ref = [start_frame]
+    def _start_stream(self, start_frame: float) -> None:
+        frame_ref = [float(start_frame)]
         pending: list[np.ndarray] = []  # click samples that spill into the next buffer
 
         def _mix(
@@ -170,13 +170,34 @@ class AudioEngine:
                 pending.append(scaled[n:])
 
         def _callback(outdata, frames, time_info, status):
+            speed = self._speed
             pos = frame_ref[0]
-            end = pos + frames
-            chunk = self._audio[pos:end]
-            actual = len(chunk)
-            outdata[:actual, 0] = chunk * self._volume
+            audio = self._audio
+            n_samples = len(audio)
+
+            if speed == 1.0:
+                # Exact path: no resampling needed.
+                start = int(pos)
+                end = start + frames
+                chunk = audio[start:end]
+                actual = len(chunk)
+                outdata[:actual, 0] = chunk * self._volume
+            else:
+                # Naive rate change (vinyl-style slowdown): read the source
+                # `speed` samples per output sample, linearly interpolated.
+                idx = pos + speed * np.arange(frames, dtype=np.float64)
+                i0 = np.floor(idx).astype(np.int64)
+                valid = (i0 + 1) < n_samples
+                actual = frames if valid.all() else int(np.argmax(~valid))
+                i0v = i0[:actual]
+                frac = (idx[:actual] - i0v).astype(np.float32)
+                outdata[:actual, 0] = (
+                    audio[i0v] * (1 - frac) + audio[i0v + 1] * frac
+                ) * self._volume
+
             if actual < frames:
                 outdata[actual:] = 0
+            new_pos = pos + actual * speed
 
             # Carry over click samples that spilled from the previous buffer
             carried = pending.copy()
@@ -200,12 +221,14 @@ class AudioEngine:
                     self._beats_data
                 )  # single read — always consistent
                 for i, bf in enumerate(beat_frames):
-                    if pos <= bf < end:
+                    if pos <= bf < new_pos:
                         click = self._high_click if beat_is_down[i] else self._low_click
-                        _mix(outdata, frames, click, bf - pos)
+                        click_offset = int(round((bf - pos) / speed))
+                        click_offset = max(0, min(click_offset, frames - 1))
+                        _mix(outdata, frames, click, click_offset)
 
-            frame_ref[0] = pos + actual
-            self._frame = frame_ref[0]
+            frame_ref[0] = new_pos
+            self._frame = new_pos
             if actual < frames:
                 raise sd.CallbackStop()
 
