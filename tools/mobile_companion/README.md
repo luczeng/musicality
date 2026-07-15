@@ -59,7 +59,7 @@ the command line — needs your login in a browser):
 ```bash
 uv run uvicorn tools.mobile_companion.server:app \
   --host 0.0.0.0 --port 8443 \
-  --ssl-keyfile tools/mobile_companion/certs/<device-name>.<tailnet-name>.ts.net-key.pem \
+  --ssl-keyfile tools/mobile_companion/certs/<device-name>.<tailnet-name>.ts.net.key \
   --ssl-certfile tools/mobile_companion/certs/<device-name>.<tailnet-name>.ts.net.crt
 ```
 
