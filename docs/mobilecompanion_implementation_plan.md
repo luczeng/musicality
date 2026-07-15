@@ -25,11 +25,18 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - `tools/mobile_companion/__init__.py` (empty), `tools/mobile_companion/server.py`: `FastAPI()` app with `GET /health` → `{"status": "ok"}`.
 - Test: `tests/test_mobile_companion_server.py` — `TestClient(app).get("/health")` returns 200 and `{"status": "ok"}`. **Passing.**
 
-### 2. Local HTTPS / LAN dev setup — ✅ DONE
-- Installed `mkcert` via Homebrew; generated a dev CA + cert covering `localhost`, `127.0.0.1`, and the LAN IP, at `tools/mobile_companion/certs/dev-{cert,key}.pem` (gitignored — machine-local, regenerate if the LAN IP changes).
-- Full setup + phone-trust instructions documented in `tools/mobile_companion/README.md`.
-- **Manual step still owed by the user** (can't be scripted): run `mkcert -install` in a real terminal to trust the CA in the Mac's system keychain (needs an interactive sudo password), and AirDrop `rootCA.pem` (path via `mkcert -CAROOT`) to the phone to trust it there too.
-- Verified: `curl --cacert <mkcert CAROOT>/rootCA.pem https://<lan-ip>:8443/health` returns `{"status":"ok"}` cleanly over TLS.
+### 2. Remote connectivity + HTTPS (via Tailscale) — ⚠️ REVISED, IN PROGRESS
+
+**Original plan assumed the phone would always be on the same home WiFi as the laptop — that's wrong.** The real requirement is: phone on mobile data, anywhere, sending captures back to the laptop. A plain LAN IP (`192.168.178.96`) only resolves inside the home network, so mobile data can't reach it at all. Revised approach: **Tailscale** — a private mesh VPN app installed on both the laptop and phone, giving the phone a stable way to reach the laptop from any network (WiFi or cellular), plus auto-issued trusted HTTPS certificates for the laptop's Tailscale address (no more manual mkcert cert generation or AirDropping a root CA to the phone).
+
+- **Superseded**: the mkcert-based local cert setup (`tools/mobile_companion/certs/dev-{cert,key}.pem`, the phone-trust instructions in `tools/mobile_companion/README.md`) is no longer the primary connectivity path. Left in place for now as a same-WiFi fallback for quick local dev without Tailscale running; may be removed later once Tailscale is confirmed sufficient on its own.
+- **New steps**:
+  1. Install Tailscale on the laptop (`brew install --cask tailscale`) and sign in — this opens a browser for an interactive login (Google/Microsoft/GitHub/etc.), can't be scripted, needs the user.
+  2. Install the Tailscale app on the phone, sign in with the same account.
+  3. Enable Tailscale's HTTPS certificates feature for the laptop's tailnet device, so it gets a real trusted cert automatically.
+  4. Update `tools/mobile_companion/README.md` and the run command to use the Tailscale hostname/address instead of the LAN IP.
+- Offline-first design (steps 7–10) is unaffected — recordings still queue locally on the phone regardless of connectivity, since even mobile data can be a dead zone at a venue. This step only changes *how the phone finds and trusts the laptop when it does have a connection*.
+- **Status**: not yet started — awaiting the user to confirm they're ready to do the interactive Tailscale login on both devices.
 
 ### 3. Dataset listing endpoint — NOT STARTED
 - `GET /datasets` in `server.py`, reusing `list_datasets()` (`tools/annotator/data.py:226`) unchanged. Returns dataset names (+ track/annotation counts) for the frontend's dataset picker.
