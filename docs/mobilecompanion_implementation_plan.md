@@ -31,12 +31,12 @@ This needs **true offline capture**: the phone must be usable with zero network 
 
 - **Superseded**: the mkcert-based local cert setup (`tools/mobile_companion/certs/dev-{cert,key}.pem`, the phone-trust instructions in `tools/mobile_companion/README.md`) is no longer the primary connectivity path. Left in place for now as a same-WiFi fallback for quick local dev without Tailscale running; may be removed later once Tailscale is confirmed sufficient on its own.
 - **New steps**:
-  1. Install Tailscale on the laptop (`brew install --cask tailscale`) and sign in — this opens a browser for an interactive login (Google/Microsoft/GitHub/etc.), can't be scripted, needs the user.
-  2. Install the Tailscale app on the phone, sign in with the same account.
-  3. Enable Tailscale's HTTPS certificates feature for the laptop's tailnet device, so it gets a real trusted cert automatically.
-  4. Update `tools/mobile_companion/README.md` and the run command to use the Tailscale hostname/address instead of the LAN IP.
+  1. ✅ Install Tailscale on the laptop (`brew install --cask tailscale`) and sign in. Laptop is live: Tailscale IP `100.103.0.56`, hostname `ge-mb001.tail288fcf.ts.net`.
+  2. ⬜ Install the Tailscale app on the phone, sign in with the same account. **User will do this later.**
+  3. ⬜ Enable Tailscale's HTTPS certificates feature — one-time toggle at https://login.tailscale.com/admin/dns, needs the user's interactive login in a browser. Attempted `tailscale cert` before this was on; got `500: your Tailscale account does not support getting TLS certs`, confirming it's off. Once enabled, run `tailscale cert ge-mb001.tail288fcf.ts.net` from `tools/mobile_companion/certs/` to get a real trusted cert.
+  4. ✅ Updated `tools/mobile_companion/README.md` with full Tailscale setup + cert instructions, and the run command using the Tailscale hostname. Old mkcert/LAN approach kept as a documented same-WiFi fallback only.
 - Offline-first design (steps 7–10) is unaffected — recordings still queue locally on the phone regardless of connectivity, since even mobile data can be a dead zone at a venue. This step only changes *how the phone finds and trusts the laptop when it does have a connection*.
-- **Status**: not yet started — awaiting the user to confirm they're ready to do the interactive Tailscale login on both devices.
+- **Status**: blocked on two manual user steps (phone login, HTTPS toggle in admin console) before this can be verified end-to-end. Backend feature work (steps 3+) can proceed independently in the meantime since it doesn't depend on connectivity being finished.
 
 ### 3. Dataset listing endpoint — NOT STARTED
 - `GET /datasets` in `server.py`, reusing `list_datasets()` (`tools/annotator/data.py:226`) unchanged. Returns dataset names (+ track/annotation counts) for the frontend's dataset picker.
