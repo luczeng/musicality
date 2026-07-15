@@ -25,7 +25,7 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - `tools/mobile_companion/__init__.py` (empty), `tools/mobile_companion/server.py`: `FastAPI()` app with `GET /health` → `{"status": "ok"}`.
 - Test: `tests/test_mobile_companion_server.py` — `TestClient(app).get("/health")` returns 200 and `{"status": "ok"}`. **Passing.**
 
-### 2. Remote connectivity + HTTPS (via Tailscale) — ⚠️ REVISED, IN PROGRESS
+### 2. Remote connectivity + HTTPS (via Tailscale) — ✅ DONE
 
 **Original plan assumed the phone would always be on the same home WiFi as the laptop — that's wrong.** The real requirement is: phone on mobile data, anywhere, sending captures back to the laptop. A plain LAN IP (`192.168.178.96`) only resolves inside the home network, so mobile data can't reach it at all. Revised approach: **Tailscale** — a private mesh VPN app installed on both the laptop and phone, giving the phone a stable way to reach the laptop from any network (WiFi or cellular), plus auto-issued trusted HTTPS certificates for the laptop's Tailscale address (no more manual mkcert cert generation or AirDropping a root CA to the phone).
 
