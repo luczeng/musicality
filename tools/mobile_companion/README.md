@@ -5,70 +5,91 @@ from a phone, syncing captures into the same `data/{dataset}/tracks/` +
 `annotations/*.beats` structure `tools/annotator` reads. See
 `docs/mobilecompanionfeasibility.md` for the design rationale.
 
-## Local HTTPS / LAN dev setup
+## Remote connectivity + HTTPS (via Tailscale)
 
-Phones require a secure context (HTTPS) for microphone access and for
-installing the app as a PWA — plain `http://<lan-ip>` will not work. This
-repo uses [mkcert](https://github.com/FiloSottile/mkcert) to generate a
-locally-trusted certificate for dev use.
+The phone needs to reach the laptop from **any** network — home WiFi, mobile
+data, anywhere — not just the same LAN. A plain WiFi address like
+`192.168.178.96` only resolves inside the home network, so it can't work for
+that. This repo uses [Tailscale](https://tailscale.com), a private mesh VPN,
+so the laptop and phone can always find each other regardless of network,
+plus it can auto-issue trusted HTTPS certificates (no manual cert-trusting
+dance needed).
 
-### One-time setup (per machine)
+### One-time setup (per device)
 
-```bash
-brew install mkcert
-mkcert -install   # installs the local CA into your Mac's trust store — needs your sudo password interactively
-```
+**Laptop**: `brew install --cask tailscale`, then open the Tailscale app and
+log in (opens a browser — pick any account, e.g. Google/Microsoft/GitHub).
+This needs to be done interactively by hand, it can't be scripted.
 
-`mkcert -install` prompts for your macOS password (it calls `sudo security
-add-trusted-cert` under the hood) — run it yourself in a real terminal, it
-can't be scripted non-interactively.
+**Phone**: install the Tailscale app from the App Store / Play Store, log in
+with the **same account**.
 
-### Generate the dev certificate
-
-Find your Mac's LAN IP (it can change between networks/DHCP leases):
-
-```bash
-ipconfig getifaddr en0
-```
-
-Then, from `tools/mobile_companion/certs/` (create it if missing):
+Once both are signed in, check the laptop's Tailscale identity:
 
 ```bash
-cd tools/mobile_companion/certs
-mkcert -cert-file dev-cert.pem -key-file dev-key.pem localhost 127.0.0.1 <your-lan-ip>
+tailscale status   # confirms it's connected
+tailscale ip        # e.g. 100.103.0.56
 ```
 
-Re-run this whenever your LAN IP changes. These files are gitignored —
-they're machine-local dev artifacts, not something to commit.
+The laptop also gets a stable hostname of the form
+`<device-name>.<tailnet-name>.ts.net` (run `tailscale status` to see it) —
+this is what the phone will use to reach it, since the IP is more likely to
+be memorized wrong than the name.
 
-### Trusting the cert on your phone
+### Enabling HTTPS certificates
 
-`mkcert -install` only trusts the CA on *this Mac*. Your phone's browser
-needs to trust it too:
+This is a one-time toggle in the Tailscale admin console (can't be done from
+the command line — needs your login in a browser):
 
-1. Find the CA root: `mkcert -CAROOT` (prints a directory containing
-   `rootCA.pem`).
-2. AirDrop / email `rootCA.pem` to your phone.
-3. **iPhone**: open the file → Settings will prompt to install the profile →
-   then go to *Settings → General → About → Certificate Trust Settings* and
-   enable full trust for the mkcert root.
-4. **Android**: open the file → *Settings → Security → Encryption &
-   credentials → Install a certificate → CA certificate*.
+1. Go to https://login.tailscale.com/admin/dns and turn on **HTTPS
+   Certificates**.
+2. Then, on the laptop:
+   ```bash
+   cd tools/mobile_companion/certs
+   tailscale cert <device-name>.<tailnet-name>.ts.net
+   ```
+   This writes a real, trusted certificate + key (no phone-side trust setup
+   needed at all — unlike a self-signed cert, the phone already trusts it).
+   Re-run this before the cert's expiry (Tailscale certs auto-renew if you
+   set up a cron/launchd job to re-run this periodically; for now, manual
+   re-issue is enough).
 
 ### Running the server over HTTPS
 
 ```bash
 uv run uvicorn tools.mobile_companion.server:app \
   --host 0.0.0.0 --port 8443 \
-  --ssl-keyfile tools/mobile_companion/certs/dev-key.pem \
-  --ssl-certfile tools/mobile_companion/certs/dev-cert.pem
+  --ssl-keyfile tools/mobile_companion/certs/<device-name>.<tailnet-name>.ts.net-key.pem \
+  --ssl-certfile tools/mobile_companion/certs/<device-name>.<tailnet-name>.ts.net.crt
 ```
 
-Then, from your phone (same WiFi network as the laptop):
+Then, from your phone (on WiFi *or* mobile data — Tailscale must be running
+in the phone's Tailscale app):
 
 ```
-https://<your-lan-ip>:8443/health
+https://<device-name>.<tailnet-name>.ts.net:8443/health
 ```
 
-should return `{"status": "ok"}` with no certificate warning, once the CA
-is trusted on the phone.
+should return `{"status": "ok"}` with no certificate warning.
+
+## Local same-WiFi dev fallback (mkcert)
+
+For quick local testing without Tailscale running, a self-signed cert for
+the LAN IP still works, though the phone must manually trust it and be on
+the same WiFi:
+
+```bash
+brew install mkcert
+mkcert -install   # needs your sudo password interactively, run it yourself
+cd tools/mobile_companion/certs
+mkcert -cert-file dev-cert.pem -key-file dev-key.pem localhost 127.0.0.1 <your-lan-ip>
+```
+
+Trusting it on the phone: find the CA root with `mkcert -CAROOT`, AirDrop/
+email `rootCA.pem` to the phone, then on **iPhone**: open the file → install
+the profile → *Settings → General → About → Certificate Trust Settings* →
+enable full trust; on **Android**: open the file → *Settings → Security →
+Encryption & credentials → Install a certificate → CA certificate*.
+
+This path is a fallback only — Tailscale above is the primary way this app
+is meant to be used.
