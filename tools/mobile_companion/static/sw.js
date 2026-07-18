@@ -1,4 +1,4 @@
-const CACHE_NAME = "musicality-mobile-companion-v7";
+const CACHE_NAME = "musicality-mobile-companion-v8";
 const APP_SHELL = [
   "/",
   "/manifest.json",
