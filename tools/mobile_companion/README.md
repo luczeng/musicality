@@ -5,6 +5,14 @@ from a phone, syncing captures into the same `data/{dataset}/tracks/` +
 `annotations/*.beats` structure `tools/annotator` reads. See
 `docs/mobilecompanionfeasibility.md` for the design rationale.
 
+## Requirements
+
+`ffmpeg` must be installed on the machine running the server (`brew install
+ffmpeg`). Phones record compressed audio — webm/opus on Android, mp4/aac on
+iOS — and decoding those formats falls back to `librosa`/`audioread` shelling
+out to `ffmpeg`; without it, uploads from real devices fail with a 400
+("could not decode audio") even though everything else works fine.
+
 ## Remote connectivity + HTTPS (via Tailscale)
 
 The phone needs to reach the laptop from **any** network — home WiFi, mobile
