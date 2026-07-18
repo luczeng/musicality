@@ -42,10 +42,10 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - `GET /datasets` in `server.py`, reusing `list_datasets()` (`tools/annotator/data.py:226`) unchanged. Returns each dataset's `name`, `n_tracks`, `n_annotations` for the frontend's dataset picker.
 - Test: `tests/test_mobile_companion_server.py::TestDatasets` — `TestClient` calls against a monkeypatched `tools.annotator.data.DATA_DIR` pointed at `tmp_path`, covering an empty data dir and a fake dataset folder with tracks + annotations. **Passing.**
 
-### 4. Track naming helper (pure function) — NOT STARTED
-- Extract the sanitization regex already in `recorder.py:105` (`re.sub(r"[^\w\-]", "_", name.strip()) or "recording"`) into a shared pure function so both `recorder.py` and the new endpoint use identical logic — no duplicated regex.
-- Add `generate_track_id() -> str`, a timestamp-based fallback id (e.g. `field_20260715_143201`) for quick captures where typing a name on a phone is friction.
-- Test: pure unit tests, same style as `tests/test_annotator_data.py` — no I/O, no mocks.
+### 4. Track naming helper (pure function) — ✅ DONE
+- New `tools/annotator/naming.py`: `sanitize_track_name(name)` (the regex formerly inlined at `recorder.py:105`) and `generate_track_id() -> str`, a timestamp-based fallback id (`field_YYYYMMDD_HHMMSS`) for quick captures where typing a name on a phone is friction.
+- `recorder.py` now imports `sanitize_track_name` instead of inlining the regex — single source of truth, ready for the step 5 upload endpoint to import the same module.
+- Test: `tests/test_annotator_naming.py`, pure unit tests, same style as `tests/test_annotator_data.py` — no I/O, no mocks. **Passing (9 tests).**
 
 ### 5. Audio upload endpoint — NOT STARTED
 - `POST /datasets/{dataset}/tracks` — multipart file + optional name. Decode with `librosa.load(io.BytesIO(raw), sr=44100, mono=True)` and write via `soundfile.write` at 44.1kHz mono — matching `recorder.py:13`'s `_SR = 44100` convention, so `load_track()`'s hardcoded `tracks_dir / f"{track_id}.wav"` (`data.py:297`) keeps working untouched.
