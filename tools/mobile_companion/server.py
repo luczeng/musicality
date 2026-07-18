@@ -7,7 +7,7 @@ from a phone are indistinguishable from ones made in the desktop app.
 
 from __future__ import annotations
 
-import io
+import tempfile
 from pathlib import Path
 
 import librosa
