@@ -245,12 +245,6 @@ async function syncPendingCaptures() {
   }
 }
 
-  syncBtn.disabled = false;
-  syncStatusEl.textContent =
-    `Synced ${succeeded}` + (failed ? `, ${failed} failed (still queued).` : ".");
-  await refreshPendingCount();
-}
-
 syncBtn.addEventListener("click", syncPendingCaptures);
 
 loadDatasetOptions();
