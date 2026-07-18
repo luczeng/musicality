@@ -7,9 +7,16 @@ from a phone are indistinguishable from ones made in the desktop app.
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+import io
 
-from tools.annotator.data import list_datasets
+import librosa
+import soundfile as sf
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+
+import tools.annotator.data as annotator_data
+from tools.annotator.naming import generate_track_id, sanitize_track_name
+
+_SR = 44100
 
 app = FastAPI(title="musicality mobile companion")
 
@@ -27,5 +34,25 @@ def datasets() -> list[dict]:
             "n_tracks": info.n_tracks,
             "n_annotations": info.n_annotations,
         }
-        for info in list_datasets()
+        for info in annotator_data.list_datasets()
     ]
+
+
+@app.post("/datasets/{dataset}/tracks")
+async def upload_track(
+    dataset: str, file: UploadFile = File(...), name: str | None = Form(None)
+) -> dict[str, str]:
+    raw = await file.read()
+    try:
+        audio, _ = librosa.load(io.BytesIO(raw), sr=_SR, mono=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400, detail=f"could not decode audio: {exc}"
+        ) from exc
+
+    track_id = sanitize_track_name(name) if name else generate_track_id()
+    tracks_dir = annotator_data.DATA_DIR / dataset / "tracks"
+    tracks_dir.mkdir(parents=True, exist_ok=True)
+    sf.write(str(tracks_dir / f"{track_id}.wav"), audio, _SR)
+
+    return {"dataset": dataset, "track_id": track_id}
