@@ -1,11 +1,24 @@
 """Tests for tools.mobile_companion.server."""
 
+import io
+
+import numpy as np
+import soundfile as sf
 from fastapi.testclient import TestClient
 
 import tools.annotator.data as annotator_data
 from tools.mobile_companion.server import app
 
 client = TestClient(app)
+
+
+def _wav_bytes(duration_s: float = 0.5, sr: int = 22050) -> bytes:
+    """Synthetic sine-wave WAV, at a different sample rate than the server's target."""
+    t = np.linspace(0, duration_s, int(duration_s * sr), endpoint=False)
+    audio = 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    buf = io.BytesIO()
+    sf.write(buf, audio, sr, format="WAV")
+    return buf.getvalue()
 
 
 class TestHealth:
