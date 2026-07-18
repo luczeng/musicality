@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import re
 import threading
 from pathlib import Path
 
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
+
+from tools.annotator.naming import sanitize_track_name
 
 _SR = 44100
 
