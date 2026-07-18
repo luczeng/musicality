@@ -1,9 +1,11 @@
-const CACHE_NAME = "musicality-mobile-companion-v1";
+const CACHE_NAME = "musicality-mobile-companion-v2";
 const APP_SHELL = [
   "/",
   "/manifest.json",
   "/static/icon-192.png",
   "/static/icon-512.png",
+  "/static/app.js",
+  "/static/queue.js",
 ];
 
 self.addEventListener("install", (event) => {
