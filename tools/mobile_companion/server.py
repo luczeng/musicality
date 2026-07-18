@@ -10,8 +10,10 @@ from __future__ import annotations
 import io
 
 import librosa
+import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
 import tools.annotator.data as annotator_data
 from tools.annotator.naming import generate_track_id, sanitize_track_name
@@ -19,6 +21,10 @@ from tools.annotator.naming import generate_track_id, sanitize_track_name
 _SR = 44100
 
 app = FastAPI(title="musicality mobile companion")
+
+
+class TapAnnotation(BaseModel):
+    tap_times: list[float]
 
 
 @app.get("/health")
