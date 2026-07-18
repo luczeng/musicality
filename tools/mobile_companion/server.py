@@ -71,8 +71,16 @@ async def upload_track(
     dataset: str, file: UploadFile = File(...), name: str | None = Form(None)
 ) -> dict[str, str]:
     raw = await file.read()
+    suffix = Path(file.filename or "").suffix
     try:
-        audio, _ = librosa.load(io.BytesIO(raw), sr=_SR, mono=True)
+        # librosa can't decode compressed formats (webm/opus, mp4/aac — what
+        # real phones record) straight from a BytesIO: soundfile doesn't
+        # support those containers, and its audioread/ffmpeg fallback shells
+        # out to the ffmpeg binary, which needs a real path, not a stream.
+        with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
+            tmp.write(raw)
+            tmp.flush()
+            audio, _ = librosa.load(tmp.name, sr=_SR, mono=True)
     except Exception as exc:
         raise HTTPException(
             status_code=400, detail=f"could not decode audio: {exc}"
