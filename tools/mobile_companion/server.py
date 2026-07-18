@@ -8,19 +8,24 @@ from a phone are indistinguishable from ones made in the desktop app.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import librosa
 import numpy as np
 import soundfile as sf
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import tools.annotator.data as annotator_data
 from tools.annotator.naming import generate_track_id, sanitize_track_name
 
 _SR = 44100
+_STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="musicality mobile companion")
+app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 
 class TapAnnotation(BaseModel):
