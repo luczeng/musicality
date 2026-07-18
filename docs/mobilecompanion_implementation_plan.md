@@ -47,9 +47,9 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - `recorder.py` now imports `sanitize_track_name` instead of inlining the regex — single source of truth, ready for the step 5 upload endpoint to import the same module.
 - Test: `tests/test_annotator_naming.py`, pure unit tests, same style as `tests/test_annotator_data.py` — no I/O, no mocks. **Passing (9 tests).**
 
-### 5. Audio upload endpoint — NOT STARTED
-- `POST /datasets/{dataset}/tracks` — multipart file + optional name. Decode with `librosa.load(io.BytesIO(raw), sr=44100, mono=True)` and write via `soundfile.write` at 44.1kHz mono — matching `recorder.py:13`'s `_SR = 44100` convention, so `load_track()`'s hardcoded `tracks_dir / f"{track_id}.wav"` (`data.py:297`) keeps working untouched.
-- Test: `TestClient` posting synthetic WAV bytes (generated in-test with `soundfile`/`numpy`) against a tmp `DATA_DIR`; assert the file lands at the exact path `load_track()` expects and is re-decodable.
+### 5. Audio upload endpoint — ✅ DONE
+- `POST /datasets/{dataset}/tracks` in `server.py` — multipart `file` + optional `name` form field. Decodes with `librosa.load(io.BytesIO(raw), sr=44100, mono=True)` and writes via `soundfile.write` at 44.1kHz mono — matching `recorder.py`'s `_SR = 44100` convention, so `load_track()`'s hardcoded `tracks_dir / f"{track_id}.wav"` (`data.py:297`) keeps working untouched. Track id is `sanitize_track_name(name)` when a name is given, else `generate_track_id()` (both from step 4's `naming.py`). Creates `{dataset}/tracks/` if the dataset doesn't exist yet. Malformed audio returns `400`.
+- Test: `tests/test_mobile_companion_server.py::TestUploadTrack` — `TestClient` posting synthetic WAV bytes (generated in-test with `soundfile`/`numpy`, at a different input sample rate to exercise resampling) against a tmp `DATA_DIR`; covers the exact output path, resampling to 44.1kHz, named vs. auto-generated ids, new-dataset creation, and the 400 error path. **Passing (6 tests).**
 - **Deferred to step 10**: real device recordings are webm/opus (Android) or mp4/aac (iOS), not WAV — decoding those depends on `ffmpeg` being installed on the machine running the server. Verify on real devices before trusting the pipeline end-to-end.
 
 ### 6. Tap-annotation endpoint — NOT STARTED
