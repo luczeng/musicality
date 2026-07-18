@@ -56,9 +56,11 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - `POST /datasets/{dataset}/tracks/{track_id}/annotations` in `server.py` — JSON body `{"tap_times": [...]}` (seconds, relative to recording start), validated via a `TapAnnotation` pydantic model. Sorts the tap times (`np.sort`, matching `add_beat`'s convention that `beat_times` stays sorted ascending), builds a `TrackData`, and calls the existing `save_annotations(track, annotation_path(track))` (`data.py:341`, `data.py:188`) and `tempo_from_beats` (`data.py:51`) — zero changes to `data.py`. Returns the resulting `tempo`.
 - Test: `tests/test_mobile_companion_server.py::TestUploadAnnotation` — `TestClient` posts tap times (after uploading a clip via step 5's endpoint so `load_track()` can resolve the track), then reads back via `load_track()` asserting `beat_times` round-trips, out-of-order taps get sorted, and the returned tempo matches `tempo_from_beats`. **Passing (4 tests).**
 
-### 7. PWA shell — NOT STARTED
-- `tools/mobile_companion/static/manifest.json` + a minimal service worker that precaches the app's own HTML/JS/CSS/icons, so the already-installed app opens with zero network. `server.py` mounts `static/` and serves `index.html` at `/`.
-- Verification: manual — install to home screen while on WiFi, switch to airplane mode, confirm the app still opens.
+### 7. PWA shell — ✅ IMPLEMENTED, ON-DEVICE CHECK PENDING
+- `tools/mobile_companion/static/`: `manifest.json` (name/icons/`display: standalone`), `sw.js` (cache-first service worker, precaches `/`, `/manifest.json`, and both icon sizes on install, purges stale cache versions on activate), `index.html` (minimal placeholder shell that registers the service worker — no recording UI yet, that's step 9), and generated `icon-192.png`/`icon-512.png`.
+- `server.py`: mounts `static/` at `/static` (`StaticFiles`) for the icons, and serves `index.html`/`manifest.json`/`sw.js` each from their own root-scoped route (`sw.js` must be served from `/`, not `/static/sw.js`, so its default scope covers the whole app rather than just `/static/`).
+- Verified so far: ran the server locally, curled `/`, `/manifest.json`, `/sw.js`, `/static/icon-192.png` — all 200 with correct content types; `/health` and `/datasets` still work alongside the new mount.
+- **Still needed (manual, on real hardware)**: install to the phone's home screen while on WiFi (over Tailscale HTTPS per step 2), switch to airplane mode, confirm the app still opens from the cached shell. Not yet done — worth checking whenever convenient.
 
 ### 8. IndexedDB capture queue (JS module) — NOT STARTED
 - `static/queue.js`: `addPendingCapture(blob, tapTimes, dataset, trackName)`, `listPending()`, `markSynced(id)`, `deletePending(id)` — isolated from recording/network code.
