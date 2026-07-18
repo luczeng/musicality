@@ -30,8 +30,12 @@ class TestSanitizeTrackName:
 
 class TestGenerateTrackId:
     def test_matches_expected_pattern(self):
-        assert re.fullmatch(r"field_\d{8}_\d{6}", generate_track_id())
+        assert re.fullmatch(r"field_\d{8}_\d{6}_\d{6}", generate_track_id())
 
     def test_is_a_valid_sanitized_name(self):
         track_id = generate_track_id()
         assert sanitize_track_name(track_id) == track_id
+
+    def test_two_calls_in_a_row_do_not_collide(self):
+        ids = {generate_track_id() for _ in range(100)}
+        assert len(ids) == 100
