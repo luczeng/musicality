@@ -202,28 +202,48 @@ async function syncOneCapture(capture) {
 // Drains the queue.js queue into the steps 5–6 backend endpoints. Failures
 // (server unreachable, decode error, ...) leave the capture queued for a
 // later retry rather than losing it.
+let syncInFlight = false;
+
 async function syncPendingCaptures() {
-  const pending = await listPending();
-  if (pending.length === 0) {
-    syncStatusEl.textContent = "Nothing to sync.";
-    return;
-  }
-
+  // Checked and set synchronously, before any `await`, so the opportunistic
+  // on-load sync and a manual Sync click can't both start: the server's
+  // auto-generated track id only has microsecond resolution, so two
+  // concurrent syncs of the same capture racing each other could otherwise
+  // overwrite one another (observed in practice before this guard existed).
+  if (syncInFlight) return;
+  syncInFlight = true;
   syncBtn.disabled = true;
-  syncStatusEl.textContent = `Syncing ${pending.length} capture(s)…`;
 
-  let succeeded = 0;
-  let failed = 0;
-  for (const capture of pending) {
-    try {
-      await syncOneCapture(capture);
-      await markSynced(capture.id);
-      await deletePending(capture.id);
-      succeeded++;
-    } catch {
-      failed++;
+  try {
+    const pending = await listPending();
+    if (pending.length === 0) {
+      syncStatusEl.textContent = "Nothing to sync.";
+      return;
     }
+
+    syncStatusEl.textContent = `Syncing ${pending.length} capture(s)…`;
+
+    let succeeded = 0;
+    let failed = 0;
+    for (const capture of pending) {
+      try {
+        await syncOneCapture(capture);
+        await markSynced(capture.id);
+        await deletePending(capture.id);
+        succeeded++;
+      } catch {
+        failed++;
+      }
+    }
+
+    syncStatusEl.textContent =
+      `Synced ${succeeded}` + (failed ? `, ${failed} failed (still queued).` : ".");
+    await refreshPendingCount();
+  } finally {
+    syncInFlight = false;
+    syncBtn.disabled = false;
   }
+}
 
   syncBtn.disabled = false;
   syncStatusEl.textContent =
