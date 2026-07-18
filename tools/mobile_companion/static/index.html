@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Musicality Field Capture</title>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#111111" />
+  <link rel="apple-touch-icon" href="/static/icon-192.png" />
+</head>
+<body>
+  <h1>Musicality Field Capture</h1>
+  <p>App shell installed. Recording and tap-tempo capture are coming in a later step.</p>
+  <script>
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js");
+    }
+  </script>
+</body>
+</html>
