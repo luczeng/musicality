@@ -1,8 +1,10 @@
 """Tests for tools.mobile_companion.server."""
 
 import io
+import re
 
 import numpy as np
+import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
