@@ -38,9 +38,9 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - Offline-first design (steps 7–10) is unaffected — recordings still queue locally on the phone regardless of connectivity, since even mobile data can be a dead zone at a venue. This step only changes *how the phone finds and trusts the laptop when it does have a connection*.
 - **Verified**: ran the server with `--ssl-keyfile`/`--ssl-certfile` pointed at the Tailscale cert, `curl -v https://ge-mb001.tail288fcf.ts.net:8443/health` came back with `SSL certificate verify ok`, issuer `Let's Encrypt`, and `{"status":"ok"}` — a real trusted cert, no custom CA needed, no phone-side trust setup required. Not yet tested from the phone's Tailscale/Safari app directly (should work identically since Tailscale + Let's Encrypt handle trust for any device on the tailnet), worth a quick manual check whenever convenient.
 
-### 3. Dataset listing endpoint — NOT STARTED
-- `GET /datasets` in `server.py`, reusing `list_datasets()` (`tools/annotator/data.py:226`) unchanged. Returns dataset names (+ track/annotation counts) for the frontend's dataset picker.
-- Test: `TestClient` call against a monkeypatched `tools.annotator.data.DATA_DIR` pointed at `tmp_path` with a fake dataset folder; assert the response reflects it.
+### 3. Dataset listing endpoint — ✅ DONE
+- `GET /datasets` in `server.py`, reusing `list_datasets()` (`tools/annotator/data.py:226`) unchanged. Returns each dataset's `name`, `n_tracks`, `n_annotations` for the frontend's dataset picker.
+- Test: `tests/test_mobile_companion_server.py::TestDatasets` — `TestClient` calls against a monkeypatched `tools.annotator.data.DATA_DIR` pointed at `tmp_path`, covering an empty data dir and a fake dataset folder with tracks + annotations. **Passing.**
 
 ### 4. Track naming helper (pure function) — NOT STARTED
 - Extract the sanitization regex already in `recorder.py:105` (`re.sub(r"[^\w\-]", "_", name.strip()) or "recording"`) into a shared pure function so both `recorder.py` and the new endpoint use identical logic — no duplicated regex.
