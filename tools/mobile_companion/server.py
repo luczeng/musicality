@@ -32,6 +32,23 @@ class TapAnnotation(BaseModel):
     tap_times: list[float]
 
 
+@app.get("/")
+def index() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "index.html")
+
+
+@app.get("/manifest.json")
+def manifest() -> FileResponse:
+    return FileResponse(
+        _STATIC_DIR / "manifest.json", media_type="application/manifest+json"
+    )
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(_STATIC_DIR / "sw.js", media_type="application/javascript")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
