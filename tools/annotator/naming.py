@@ -22,8 +22,11 @@ def sanitize_track_name(name: str) -> str:
 
 
 def generate_track_id() -> str:
-    """Timestamp-based fallback id, e.g. ``field_20260715_143201``.
+    """Timestamp-based fallback id, e.g. ``field_20260715_143201_482913``.
 
     For quick captures where typing a name is friction (e.g. on a phone).
+    Includes microseconds: two requests landing in the same second (e.g. a
+    sync retry racing the original) would otherwise get the identical id and
+    silently overwrite each other's file.
     """
-    return datetime.now().strftime("field_%Y%m%d_%H%M%S")
+    return datetime.now().strftime("field_%Y%m%d_%H%M%S_%f")
