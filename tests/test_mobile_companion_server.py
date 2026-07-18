@@ -130,3 +130,50 @@ class TestUploadTrack:
             files={"file": ("clip.wav", b"not audio data", "audio/wav")},
         )
         assert response.status_code == 400
+
+
+class TestUploadAnnotation:
+    def _upload_clip(self, dataset: str, track_id: str) -> None:
+        client.post(
+            f"/datasets/{dataset}/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": track_id},
+        )
+
+    def test_returns_200(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        response = client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
+        )
+        assert response.status_code == 200
+
+    def test_beat_times_round_trip_via_load_track(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
+        )
+        track = annotator_data.load_track("field_recordings", "take1")
+        np.testing.assert_allclose(track.beat_times, [0.5, 1.0, 1.5, 2.0])
+
+    def test_sorts_out_of_order_tap_times(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [1.5, 0.5, 1.0]},
+        )
+        track = annotator_data.load_track("field_recordings", "take1")
+        np.testing.assert_allclose(track.beat_times, [0.5, 1.0, 1.5])
+
+    def test_returns_tempo_estimated_from_taps(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        response = client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.0, 0.5, 1.0, 1.5]},
+        )
+        assert response.json()["tempo"] == pytest.approx(120.0)
