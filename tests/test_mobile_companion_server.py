@@ -109,7 +109,7 @@ class TestUploadTrack:
         )
         assert response.status_code == 200
         track_id = response.json()["track_id"]
-        assert re.fullmatch(r"field_\d{8}_\d{6}", track_id)
+        assert re.fullmatch(r"field_\d{8}_\d{6}_\d{6}", track_id)
         assert (tmp_path / "field_recordings" / "tracks" / f"{track_id}.wav").exists()
 
     def test_creates_tracks_dir_for_new_dataset(self, monkeypatch, tmp_path):
