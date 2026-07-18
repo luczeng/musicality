@@ -61,9 +61,10 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - `server.py`: mounts `static/` at `/static` (`StaticFiles`) for the icons, and serves `index.html`/`manifest.json`/`sw.js` each from their own root-scoped route (`sw.js` must be served from `/`, not `/static/sw.js`, so its default scope covers the whole app rather than just `/static/`).
 - **Verified on real hardware**: loaded the page in Safari on the iPhone over Tailscale HTTPS, waited for the service worker to register, switched to Airplane Mode, reloaded the same tab — page still loaded from cache instead of Safari's offline error. Confirms the core mechanism works. (Tested via reload-in-tab rather than full "Add to Home Screen" — that install step is decoupled from the caching behavior and can be revisited later if a real home-screen icon is wanted; not required for steps 8–10.)
 
-### 8. IndexedDB capture queue (JS module) — NOT STARTED
-- `static/queue.js`: `addPendingCapture(blob, tapTimes, dataset, trackName)`, `listPending()`, `markSynced(id)`, `deletePending(id)` — isolated from recording/network code.
-- No automated JS tests (no JS toolchain in this repo); verified manually alongside step 9.
+### 8. IndexedDB capture queue (JS module) — ✅ DONE
+- `static/queue.js`: `addPendingCapture(blob, tapTimes, dataset, trackName)`, `listPending()` (unsynced only, oldest first), `markSynced(id)`, `deletePending(id)` — isolated from recording/network code, single object store (`captures`, keyed by a `crypto.randomUUID()` id), Blobs stored directly (IndexedDB supports this natively).
+- No automated JS tests (no JS toolchain in this repo, per the project's stated approach) — checked with `node --check` for syntax only, and confirmed `server.py`'s static mount serves it (`GET /static/queue.js` → 200, `text/javascript`). Full functional verification (exercising it against real captures) deferred to step 9, once the recording UI actually imports and calls it — per plan.
+- **Note for step 9**: `queue.js` isn't referenced from `index.html` yet and isn't in `sw.js`'s `APP_SHELL` precache list — both need updating once `app.js` (step 9) imports it, so it's still available offline.
 
 ### 9. Recording + tap-tempo capture UI — NOT STARTED
 - `static/app.js`: dataset picker (fetches `/datasets`), record button (`MediaRecorder` → blob), tap-tempo button mirroring `tap_tempo_widget.py`'s stats (last / recent-8 / mean / median / std, `_RECENT_N = 8`, `_WARMUP = 4`). "Save" writes straight to the step 8 queue — never attempts a network call from here.
