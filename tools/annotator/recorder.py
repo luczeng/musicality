@@ -103,7 +103,7 @@ class Recorder:
             chunks = list(self._chunks)
             self._chunks = []
 
-        safe_name = re.sub(r"[^\w\-]", "_", name.strip()) or "recording"
+        safe_name = sanitize_track_name(name)
         save_dir.mkdir(parents=True, exist_ok=True)
         out_path = save_dir / f"{safe_name}.wav"
 
