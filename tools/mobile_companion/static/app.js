@@ -172,6 +172,75 @@ saveBtn.addEventListener("click", async () => {
   await refreshPendingCount();
 });
 
+async function syncOneCapture(capture) {
+  const uploadForm = new FormData();
+  uploadForm.append("file", capture.blob, "capture.audio");
+  if (capture.trackName) uploadForm.append("name", capture.trackName);
+
+  const uploadResponse = await fetch(
+    `/datasets/${encodeURIComponent(capture.dataset)}/tracks`,
+    { method: "POST", body: uploadForm }
+  );
+  if (!uploadResponse.ok) {
+    throw new Error(`upload failed (${uploadResponse.status})`);
+  }
+  const { track_id } = await uploadResponse.json();
+
+  const annotationResponse = await fetch(
+    `/datasets/${encodeURIComponent(capture.dataset)}/tracks/${encodeURIComponent(track_id)}/annotations`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tap_times: capture.tapTimes }),
+    }
+  );
+  if (!annotationResponse.ok) {
+    throw new Error(`annotation failed (${annotationResponse.status})`);
+  }
+}
+
+// Drains the queue.js queue into the steps 5–6 backend endpoints. Failures
+// (server unreachable, decode error, ...) leave the capture queued for a
+// later retry rather than losing it.
+async function syncPendingCaptures() {
+  const pending = await listPending();
+  if (pending.length === 0) {
+    syncStatusEl.textContent = "Nothing to sync.";
+    return;
+  }
+
+  syncBtn.disabled = true;
+  syncStatusEl.textContent = `Syncing ${pending.length} capture(s)…`;
+
+  let succeeded = 0;
+  let failed = 0;
+  for (const capture of pending) {
+    try {
+      await syncOneCapture(capture);
+      await markSynced(capture.id);
+      await deletePending(capture.id);
+      succeeded++;
+    } catch {
+      failed++;
+    }
+  }
+
+  syncBtn.disabled = false;
+  syncStatusEl.textContent =
+    `Synced ${succeeded}` + (failed ? `, ${failed} failed (still queued).` : ".");
+  await refreshPendingCount();
+}
+
+syncBtn.addEventListener("click", syncPendingCaptures);
+
 loadDatasetOptions();
 refreshPendingCount();
 renderTapStats();
+
+// Opportunistic sync on load — iOS Safari's Background Sync API is
+// unreliable, so a manual Sync button (above) has to remain the primary
+// trigger; this is just a convenience for the common case of opening the
+// app already back on WiFi with captures still queued from the venue.
+if (navigator.onLine) {
+  syncPendingCaptures();
+}
