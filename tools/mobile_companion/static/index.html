@@ -7,10 +7,105 @@
   <link rel="manifest" href="/manifest.json" />
   <meta name="theme-color" content="#111111" />
   <link rel="apple-touch-icon" href="/static/icon-192.png" />
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #111;
+      color: #eee;
+      margin: 0;
+      padding: 16px;
+      max-width: 480px;
+    }
+    h1 {
+      font-size: 1.3rem;
+    }
+    section {
+      margin-bottom: 20px;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: #aaa;
+      margin-bottom: 4px;
+    }
+    input {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 1rem;
+      padding: 8px;
+      background: #222;
+      border: 1px solid #444;
+      color: #eee;
+      border-radius: 6px;
+    }
+    button {
+      font-size: 1.1rem;
+      padding: 14px 20px;
+      border-radius: 8px;
+      border: none;
+      margin-right: 8px;
+      margin-bottom: 8px;
+    }
+    #record-btn {
+      background: #b33;
+      color: #fff;
+    }
+    #tap-btn {
+      background: #369;
+      color: #fff;
+    }
+    #save-btn {
+      background: #3a3;
+      color: #fff;
+    }
+    button:disabled {
+      background: #333;
+      color: #777;
+    }
+    #tap-stats p {
+      margin: 2px 0;
+      font-size: 0.95rem;
+    }
+    #status,
+    #pending-count {
+      font-size: 0.9rem;
+      color: #aaa;
+    }
+  </style>
 </head>
 <body>
   <h1>Musicality Field Capture</h1>
-  <p>App shell installed. Recording and tap-tempo capture are coming in a later step.</p>
+
+  <section>
+    <label for="dataset-input">Dataset</label>
+    <input id="dataset-input" list="dataset-options" placeholder="e.g. field_recordings" />
+    <datalist id="dataset-options"></datalist>
+  </section>
+
+  <section>
+    <label for="track-name-input">Track name (optional)</label>
+    <input id="track-name-input" placeholder="leave blank to auto-generate" />
+  </section>
+
+  <section>
+    <button id="record-btn" type="button">● Record</button>
+    <button id="tap-btn" type="button" disabled>Tap (beat)</button>
+  </section>
+
+  <section id="tap-stats">
+    <p id="tap-count">N: 0</p>
+    <p id="tap-last">Last: —</p>
+    <p id="tap-recent">Recent (8): —</p>
+    <p id="tap-all">All — Mean: —   Median: —   Std: —</p>
+  </section>
+
+  <section>
+    <button id="save-btn" type="button" disabled>Save</button>
+    <p id="status"></p>
+    <p id="pending-count"></p>
+  </section>
+
+  <script type="module" src="/static/app.js"></script>
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js");
