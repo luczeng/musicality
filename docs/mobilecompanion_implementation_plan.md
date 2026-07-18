@@ -52,9 +52,9 @@ This needs **true offline capture**: the phone must be usable with zero network 
 - Test: `tests/test_mobile_companion_server.py::TestUploadTrack` — `TestClient` posting synthetic WAV bytes (generated in-test with `soundfile`/`numpy`, at a different input sample rate to exercise resampling) against a tmp `DATA_DIR`; covers the exact output path, resampling to 44.1kHz, named vs. auto-generated ids, new-dataset creation, and the 400 error path. **Passing (6 tests).**
 - **Deferred to step 10**: real device recordings are webm/opus (Android) or mp4/aac (iOS), not WAV — decoding those depends on `ffmpeg` being installed on the machine running the server. Verify on real devices before trusting the pipeline end-to-end.
 
-### 6. Tap-annotation endpoint — NOT STARTED
-- `POST /datasets/{dataset}/tracks/{track_id}/annotations` — JSON body `{"tap_times": [...]}` (seconds, relative to recording start). Builds a `TrackData` and calls the existing `save_annotations(track, annotation_path(track))` (`data.py:341`, `data.py:188`) and `tempo_from_beats` (`data.py:51`) — zero changes to `data.py`.
-- Test: `TestClient` posting tap times, then reading back via `load_track()` and asserting `beat_times` round-trips.
+### 6. Tap-annotation endpoint — ✅ DONE
+- `POST /datasets/{dataset}/tracks/{track_id}/annotations` in `server.py` — JSON body `{"tap_times": [...]}` (seconds, relative to recording start), validated via a `TapAnnotation` pydantic model. Sorts the tap times (`np.sort`, matching `add_beat`'s convention that `beat_times` stays sorted ascending), builds a `TrackData`, and calls the existing `save_annotations(track, annotation_path(track))` (`data.py:341`, `data.py:188`) and `tempo_from_beats` (`data.py:51`) — zero changes to `data.py`. Returns the resulting `tempo`.
+- Test: `tests/test_mobile_companion_server.py::TestUploadAnnotation` — `TestClient` posts tap times (after uploading a clip via step 5's endpoint so `load_track()` can resolve the track), then reads back via `load_track()` asserting `beat_times` round-trips, out-of-order taps get sorted, and the returned tempo matches `tempo_from_beats`. **Passing (4 tests).**
 
 ### 7. PWA shell — NOT STARTED
 - `tools/mobile_companion/static/manifest.json` + a minimal service worker that precaches the app's own HTML/JS/CSS/icons, so the already-installed app opens with zero network. `server.py` mounts `static/` and serves `index.html` at `/`.
