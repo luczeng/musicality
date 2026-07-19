@@ -30,6 +30,8 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 class TapAnnotation(BaseModel):
     tap_times: list[float]
+    structure: str | None = None
+    device: str | None = None
 
 
 @app.get("/")
