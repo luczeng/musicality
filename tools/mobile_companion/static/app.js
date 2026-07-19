@@ -231,7 +231,11 @@ async function syncOneCapture(capture) {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tap_times: capture.tapTimes }),
+      body: JSON.stringify({
+        tap_times: capture.tapTimes,
+        structure: capture.structure,
+        device: capture.device,
+      }),
     }
   );
   if (!annotationResponse.ok) {
