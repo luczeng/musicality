@@ -299,6 +299,22 @@ async function syncPendingCaptures() {
 
 syncBtn.addEventListener("click", syncPendingCaptures);
 
+flushBtn.addEventListener("click", async () => {
+  const pending = await listPending();
+  if (pending.length === 0) {
+    syncStatusEl.textContent = "Queue already empty.";
+    return;
+  }
+  const ok = confirm(
+    `Discard ${pending.length} queued capture(s)? This cannot be undone.`
+  );
+  if (!ok) return;
+
+  await flushQueue();
+  syncStatusEl.textContent = `Discarded ${pending.length} capture(s).`;
+  await refreshPendingCount();
+});
+
 loadDatasetOptions();
 refreshPendingCount();
 renderTapStats();
