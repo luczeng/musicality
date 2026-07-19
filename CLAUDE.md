@@ -101,6 +101,10 @@ Hydra configs live in `configs/`:
 - `model/` — Per-model overrides: `tcn.yaml`, `beat.yaml`, `cnn.yaml`, `wav2vec2.yaml`.
 - `trainer/` — Lightning Trainer overrides.
 
+## Code Style
+
+- Use an aerated style: insert blank lines where it improves readability — e.g. between a docstring and the function body, and between logical blocks within a function. Avoid dense, run-on blocks of code.
+
 ## Git Commits
 
 - Only commit once a piece of work is actually done — don't create a commit for every small/incremental change.
