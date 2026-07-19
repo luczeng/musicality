@@ -4,7 +4,13 @@
  * capture, only (best-effort) to populate the dataset picker's suggestions.
  */
 
-import { addPendingCapture, listPending, markSynced, deletePending } from "./queue.js";
+import {
+  addPendingCapture,
+  listPending,
+  markSynced,
+  deletePending,
+  flushQueue,
+} from "./queue.js";
 
 // Mirrors tools/annotator/tap_tempo_widget.py's stats exactly (same
 // warmup/recent-window constants, same population std) so a phone capture
