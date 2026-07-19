@@ -30,6 +30,7 @@ const saveBtn = document.getElementById("save-btn");
 const statusEl = document.getElementById("status");
 const pendingCountEl = document.getElementById("pending-count");
 const syncBtn = document.getElementById("sync-btn");
+const flushBtn = document.getElementById("flush-btn");
 const syncStatusEl = document.getElementById("sync-status");
 const tapCountEl = document.getElementById("tap-count");
 const tapLastEl = document.getElementById("tap-last");
