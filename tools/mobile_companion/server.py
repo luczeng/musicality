@@ -32,6 +32,10 @@ class TapAnnotation(BaseModel):
     tap_times: list[float]
     structure: str | None = None
     device: str | None = None
+    duration_s: float | None = None
+    bpm_mean: float | None = None
+    bpm_median: float | None = None
+    bpm_std: float | None = None
 
 
 @app.get("/")
