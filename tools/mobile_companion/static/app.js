@@ -190,9 +190,19 @@ saveBtn.addEventListener("click", async () => {
     return;
   }
   const trackName = trackNameInput.value.trim();
+  const device = deviceInput.value.trim();
   const tapTimesS = tapTimestampsMs.map((t) => (t - recordStartTime) / 1000);
 
-  await addPendingCapture(recordedBlob, tapTimesS, dataset, trackName || null);
+  if (device) localStorage.setItem(DEVICE_STORAGE_KEY, device);
+
+  await addPendingCapture(
+    recordedBlob,
+    tapTimesS,
+    dataset,
+    trackName || null,
+    structure,
+    device || null
+  );
 
   recordedBlob = null;
   saveBtn.disabled = true;
