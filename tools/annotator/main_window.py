@@ -285,6 +285,19 @@ class MainWindow(QMainWindow):
             accent_bar.addWidget(btn)
         accent_bar.addStretch()
 
+        self._structure_group = QButtonGroup(self)
+        self._structure_group.setExclusive(True)
+        structure_bar = QHBoxLayout()
+        structure_bar.addWidget(QLabel("Structure:"))
+        for label in ("Swing", "Blues"):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setChecked(label == "Swing")
+            self._structure_group.addButton(btn)
+            structure_bar.addWidget(btn)
+        structure_bar.addStretch()
+
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
         self._tap_widget.layout().addWidget(self._save_btn)
