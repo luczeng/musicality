@@ -37,6 +37,33 @@ let recordedBlob = null;
 let recordStartTime = null;
 let tapTimestampsMs = [];
 
+// Browsers don't expose a real device name (privacy) the way a desktop OS
+// does — this guesses a rough label from the user agent as a starting
+// point, but the field stays a plain editable input, and whatever the user
+// types is remembered in localStorage so it only needs typing once.
+const DEVICE_STORAGE_KEY = "musicality-device-name";
+
+function guessDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/iPad/.test(ua)) return "iPad";
+  if (/Android/.test(ua)) return "Android phone";
+  return "";
+}
+
+deviceInput.value = localStorage.getItem(DEVICE_STORAGE_KEY) || guessDeviceName();
+
+let structure = "swing";
+
+function setStructure(value) {
+  structure = value;
+  structureSwingBtn.classList.toggle("active", value === "swing");
+  structureBluesBtn.classList.toggle("active", value === "blues");
+}
+
+structureSwingBtn.addEventListener("click", () => setStructure("swing"));
+structureBluesBtn.addEventListener("click", () => setStructure("blues"));
+
 async function loadDatasetOptions() {
   try {
     const response = await fetch("/datasets");
