@@ -51,7 +51,9 @@ export async function addPendingCapture(
   dataset,
   trackName,
   structure,
-  device
+  device,
+  durationS,
+  bpmStats
 ) {
   const store = await getStore("readwrite");
   const id = crypto.randomUUID();
@@ -63,6 +65,10 @@ export async function addPendingCapture(
       tapTimes,
       structure: structure || null,
       device: device || null,
+      durationS: durationS ?? null,
+      bpmMean: bpmStats?.mean ?? null,
+      bpmMedian: bpmStats?.median ?? null,
+      bpmStd: bpmStats?.std ?? null,
       blob,
       createdAt: Date.now(),
       synced: false,
