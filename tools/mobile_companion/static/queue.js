@@ -101,3 +101,12 @@ export async function deletePending(id) {
   const store = await getStore("readwrite");
   await promisifyRequest(store.delete(id));
 }
+
+/**
+ * Discard every capture in the queue, synced or not. For manually clearing
+ * out stuck/unwanted captures — irreversible, callers should confirm first.
+ */
+export async function flushQueue() {
+  const store = await getStore("readwrite");
+  await promisifyRequest(store.clear());
+}
