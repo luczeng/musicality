@@ -207,6 +207,7 @@ saveBtn.addEventListener("click", async () => {
   recordedBlob = null;
   saveBtn.disabled = true;
   trackNameInput.value = "";
+  setStructure("swing");
   resetTapState();
   statusEl.textContent = "Saved locally.";
   await refreshPendingCount();
