@@ -264,6 +264,10 @@ async function syncOneCapture(capture) {
         tap_times: capture.tapTimes,
         structure: capture.structure,
         device: capture.device,
+        duration_s: capture.durationS,
+        bpm_mean: capture.bpmMean,
+        bpm_median: capture.bpmMedian,
+        bpm_std: capture.bpmStd,
       }),
     }
   );
