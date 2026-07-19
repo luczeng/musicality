@@ -183,6 +183,7 @@ async function startRecording() {
 
 function stopRecording() {
   mediaRecorder.stop();
+  recordDurationS = (performance.now() - recordStartTime) / 1000;
   recordBtn.textContent = "● Record";
   tapBtn.disabled = true;
   statusEl.textContent = "Recording stopped. Review taps, then Save.";
