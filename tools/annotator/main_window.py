@@ -31,6 +31,7 @@ from .recorder import Recorder, _SR as _REC_SR
 from .data import (
     DATA_DIR,
     TrackData,
+    TrackMetadata,
     active_bar_index,
     active_beat_position,
     add_beat,
@@ -42,11 +43,13 @@ from .data import (
     is_accent_beat,
     list_datasets,
     load_dataset_tracks,
+    load_metadata,
     load_track,
     delete_track,
     remove_beat,
     rename_track,
     save_annotations,
+    save_metadata,
     tempo_from_beats,
 )
 from .metronome_widget import MetronomeWidget
