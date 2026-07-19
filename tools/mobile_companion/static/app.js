@@ -44,6 +44,7 @@ let mediaStream = null;
 let recordedChunks = [];
 let recordedBlob = null;
 let recordStartTime = null;
+let recordDurationS = null;
 let tapTimestampsMs = [];
 
 // Browsers don't expose a real device name (privacy) the way a desktop OS
