@@ -73,6 +73,11 @@ function setStructure(value) {
 structureSwingBtn.addEventListener("click", () => setStructure("swing"));
 structureBluesBtn.addEventListener("click", () => setStructure("blues"));
 
+structureHelpBtn.addEventListener("click", () => {
+  const expanded = structureHelpText.classList.toggle("hidden") === false;
+  structureHelpBtn.setAttribute("aria-expanded", String(expanded));
+});
+
 async function loadDatasetOptions() {
   try {
     const response = await fetch("/datasets");
