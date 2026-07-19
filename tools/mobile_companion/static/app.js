@@ -216,6 +216,7 @@ saveBtn.addEventListener("click", async () => {
   const trackName = trackNameInput.value.trim();
   const device = deviceInput.value.trim();
   const tapTimesS = tapTimestampsMs.map((t) => (t - recordStartTime) / 1000);
+  const bpmStats = tapBpmStats(tapTimestampsMs);
 
   if (device) localStorage.setItem(DEVICE_STORAGE_KEY, device);
 
@@ -225,10 +226,13 @@ saveBtn.addEventListener("click", async () => {
     dataset,
     trackName || null,
     structure,
-    device || null
+    device || null,
+    recordDurationS,
+    bpmStats
   );
 
   recordedBlob = null;
+  recordDurationS = null;
   saveBtn.disabled = true;
   trackNameInput.value = "";
   setStructure("swing");
