@@ -312,6 +312,7 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(sound_bar)
         right_layout.addLayout(speed_bar)
         right_layout.addLayout(accent_bar)
+        right_layout.addLayout(structure_bar)
         right_layout.addLayout(delete_bar)
         right_layout.addWidget(self._stats_label)
         right_layout.addWidget(self._waveform, stretch=1)
