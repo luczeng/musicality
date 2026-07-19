@@ -603,6 +603,11 @@ class MainWindow(QMainWindow):
             load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
         )
         metadata.structure = self._current_structure()
+        # Only fill in if unset — a track captured on the phone should keep
+        # reporting its actual recording device, not the laptop it happens
+        # to be annotated on.
+        if not metadata.device:
+            metadata.device = platform.node()
         save_metadata(self._dataset_name, self._track.track_id, metadata)
 
         self.statusBar().showMessage(f"Saved → {path}", 3000)
