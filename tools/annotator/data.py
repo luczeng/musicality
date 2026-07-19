@@ -55,6 +55,10 @@ class TrackMetadata:
     location: str | None = None
     device: str | None = None
     structure: str | None = None
+    duration_s: float | None = None
+    bpm_mean: float | None = None
+    bpm_median: float | None = None
+    bpm_std: float | None = None
 
 
 # ---------------------------------------------------------------------------
