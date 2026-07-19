@@ -380,6 +380,9 @@ class MainWindow(QMainWindow):
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._metronome.set_state(self._n_beats, None)
         self._tap_widget.reset()
+        self._set_structure(
+            (load_metadata(self._dataset_name, track_id) or TrackMetadata()).structure
+        )
 
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
