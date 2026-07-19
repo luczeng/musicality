@@ -2,7 +2,7 @@
 // small fixes, minor for new features, major for breaking/large changes).
 // This same string is shown on the homepage footer, so a stale page is
 // visibly out of sync with the version checked into this file.
-const APP_VERSION = "12.0.0";
+const APP_VERSION = "12.1.0";
 const CACHE_NAME = `musicality-mobile-companion-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
