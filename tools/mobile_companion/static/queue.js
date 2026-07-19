@@ -45,7 +45,14 @@ async function getStore(mode) {
 /**
  * Save a captured recording + tap times locally. Returns the generated id.
  */
-export async function addPendingCapture(blob, tapTimes, dataset, trackName) {
+export async function addPendingCapture(
+  blob,
+  tapTimes,
+  dataset,
+  trackName,
+  structure,
+  device
+) {
   const store = await getStore("readwrite");
   const id = crypto.randomUUID();
   await promisifyRequest(
@@ -54,6 +61,8 @@ export async function addPendingCapture(blob, tapTimes, dataset, trackName) {
       dataset,
       trackName: trackName || null,
       tapTimes,
+      structure: structure || null,
+      device: device || null,
       blob,
       createdAt: Date.now(),
       synced: false,
