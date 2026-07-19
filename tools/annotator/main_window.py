@@ -585,9 +585,25 @@ class MainWindow(QMainWindow):
         )
         self._refresh_beats()
 
+    def _set_structure(self, structure: str | None) -> None:
+        """Check the Swing/Blues button matching *structure* (Swing if unset/unknown)."""
+        for btn in self._structure_group.buttons():
+            btn.setChecked(btn.text() == (structure or "Swing").capitalize())
+
+    def _current_structure(self) -> str:
+        checked = self._structure_group.checkedButton()
+        return checked.text().lower() if checked is not None else "swing"
+
     def _on_save(self) -> None:
         path = annotation_path(self._track)
         save_annotations(self._track, path)
+
+        metadata = (
+            load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
+        )
+        metadata.structure = self._current_structure()
+        save_metadata(self._dataset_name, self._track.track_id, metadata)
+
         self.statusBar().showMessage(f"Saved → {path}", 3000)
         self._update_annotation_indicator()
 
