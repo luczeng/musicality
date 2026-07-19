@@ -110,33 +110,41 @@ function std(values, avg) {
   return Math.sqrt(mean(values.map((v) => (v - avg) ** 2)));
 }
 
-function renderTapStats() {
-  tapCountEl.textContent = `N: ${tapTimestampsMs.length}`;
-
+// Shared with the save handler below, so the mean/median/std persisted as
+// track metadata are exactly the "All" figures the user saw on screen.
+function tapBpmStats(timestampsMs) {
   const tempos = [];
-  for (let i = 1; i < tapTimestampsMs.length; i++) {
-    const intervalS = (tapTimestampsMs[i] - tapTimestampsMs[i - 1]) / 1000;
+  for (let i = 1; i < timestampsMs.length; i++) {
+    const intervalS = (timestampsMs[i] - timestampsMs[i - 1]) / 1000;
     tempos.push(60 / intervalS);
   }
   const valid = tempos.slice(WARMUP);
+  if (valid.length === 0) return null;
 
-  if (valid.length === 0) {
+  const avg = mean(valid);
+  return { valid, mean: avg, median: median(valid), std: std(valid, avg) };
+}
+
+function renderTapStats() {
+  tapCountEl.textContent = `N: ${tapTimestampsMs.length}`;
+
+  const stats = tapBpmStats(tapTimestampsMs);
+  if (!stats) {
     tapLastEl.textContent = "Last: —";
     tapRecentEl.textContent = `Recent (${RECENT_N}): —`;
     tapAllEl.textContent = "All — Mean: —   Median: —   Std: —";
     return;
   }
 
-  tapLastEl.textContent = `Last: ${valid[valid.length - 1].toFixed(1)} BPM`;
+  tapLastEl.textContent = `Last: ${stats.valid[stats.valid.length - 1].toFixed(1)} BPM`;
 
-  const recent = valid.slice(-RECENT_N);
+  const recent = stats.valid.slice(-RECENT_N);
   tapRecentEl.textContent = `Recent (${RECENT_N}): ${mean(recent).toFixed(1)} BPM`;
 
-  const allMean = mean(valid);
   tapAllEl.textContent =
-    `All — Mean: ${allMean.toFixed(1)}   ` +
-    `Median: ${median(valid).toFixed(1)}   ` +
-    `Std: ${std(valid, allMean).toFixed(2)}`;
+    `All — Mean: ${stats.mean.toFixed(1)}   ` +
+    `Median: ${stats.median.toFixed(1)}   ` +
+    `Std: ${stats.std.toFixed(2)}`;
 }
 
 function resetTapState() {
