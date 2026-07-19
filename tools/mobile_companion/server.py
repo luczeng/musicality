@@ -111,4 +111,15 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
     )
     annotator_data.save_annotations(track, annotator_data.annotation_path(track))
 
+    if body.structure is not None or body.device is not None:
+        metadata = (
+            annotator_data.load_metadata(dataset, track_id)
+            or annotator_data.TrackMetadata()
+        )
+        if body.structure is not None:
+            metadata.structure = body.structure
+        if body.device is not None:
+            metadata.device = body.device
+        annotator_data.save_metadata(dataset, track_id, metadata)
+
     return {"dataset": dataset, "track_id": track_id, "tempo": track.tempo}
