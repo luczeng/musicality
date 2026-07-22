@@ -12,11 +12,13 @@ from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSlider,
@@ -65,9 +67,10 @@ class MainWindow(QMainWindow):
 
     Layout
     ------
-    Toolbar : [◀ Prev]  [▶ Play]  [⏸ Pause]  [Next ▶]  [💾 Save]  [track info]
-    Center  : WaveformWidget  (resizable, takes remaining space)
-    Bottom  : MetronomeWidget (fixed height)
+    Top-left  : controls — playback, recording, speed, accent, structure, delete/rename
+    Top-right : read-only track info — beat analytics + captured metadata
+    Center    : WaveformWidget  (resizable, takes remaining space)
+    Bottom    : MetronomeWidget, then TapTempoWidget (fixed height)
 
     Keyboard shortcuts
     ------------------
@@ -222,6 +225,7 @@ class MainWindow(QMainWindow):
         play_bar.addWidget(self._play_btn)
         play_bar.addWidget(self._pause_btn)
         play_bar.addWidget(self._next_btn)
+        play_bar.addWidget(self._save_btn)
         play_bar.addStretch()
 
         rename_bar = QHBoxLayout()
@@ -301,21 +305,48 @@ class MainWindow(QMainWindow):
 
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
-        self._tap_widget.layout().addWidget(self._save_btn)
+
+        self._metadata_label = QLabel()
+        self._metadata_label.setStyleSheet("color: #aaaaaa;")
+        self._metadata_label.setWordWrap(True)
+
+        # Left: every button/slider/combo that changes something (playback,
+        # recording, speed, accents, structure, delete/rename). Right:
+        # read-only track info — beat-derived analytics (_stats_label) and
+        # captured metadata (_metadata_label, e.g. phone-recorded duration
+        # and tap-BPM stats). A vertical divider keeps the two visually apart.
+        controls_column = QVBoxLayout()
+        controls_column.setSpacing(4)
+        controls_column.addLayout(record_bar)
+        controls_column.addLayout(play_bar)
+        controls_column.addLayout(rename_bar)
+        controls_column.addLayout(sound_bar)
+        controls_column.addLayout(speed_bar)
+        controls_column.addLayout(accent_bar)
+        controls_column.addLayout(structure_bar)
+        controls_column.addLayout(delete_bar)
+        controls_column.addStretch()
+
+        info_column = QVBoxLayout()
+        info_column.setSpacing(4)
+        info_column.addWidget(self._track_label)
+        info_column.addWidget(self._stats_label)
+        info_column.addWidget(self._metadata_label)
+        info_column.addStretch()
+
+        divider = QFrame()
+        divider.setFrameShape(QFrame.Shape.VLine)
+        divider.setFrameShadow(QFrame.Shadow.Sunken)
+
+        top_row = QHBoxLayout()
+        top_row.addLayout(controls_column)
+        top_row.addWidget(divider)
+        top_row.addLayout(info_column, stretch=1)
 
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setSpacing(4)
-        right_layout.addLayout(record_bar)
-        right_layout.addWidget(self._track_label)
-        right_layout.addLayout(play_bar)
-        right_layout.addLayout(rename_bar)
-        right_layout.addLayout(sound_bar)
-        right_layout.addLayout(speed_bar)
-        right_layout.addLayout(accent_bar)
-        right_layout.addLayout(structure_bar)
-        right_layout.addLayout(delete_bar)
-        right_layout.addWidget(self._stats_label)
+        right_layout.addLayout(top_row)
         right_layout.addWidget(self._waveform, stretch=1)
         right_layout.addWidget(self._metronome)
         right_layout.addWidget(self._tap_widget)
@@ -343,6 +374,10 @@ class MainWindow(QMainWindow):
         )
         self._dataset_tree.itemExpanded.connect(self._on_item_expanded)
         self._dataset_tree.itemClicked.connect(self._on_item_clicked)
+        self._dataset_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._dataset_tree.customContextMenuRequested.connect(
+            self._on_tree_context_menu
+        )
         self._populate_dataset_list()
 
         left_panel = QWidget()
@@ -384,6 +419,7 @@ class MainWindow(QMainWindow):
         self._set_structure(
             (load_metadata(self._dataset_name, track_id) or TrackMetadata()).structure
         )
+        self._update_metadata_label()
 
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
@@ -395,7 +431,12 @@ class MainWindow(QMainWindow):
         self._waveform.set_waveform(audio, sr)
         self._update_engine_clicks()
 
-    def _populate_dataset_list(self) -> None:
+    def _populate_dataset_list(self, *, keep_selection: bool = False) -> None:
+        selected_dataset = self._dataset_name if keep_selection else None
+        selected_track = (
+            self._track.track_id if keep_selection and self._track else None
+        )
+
         self._dataset_tree.clear()
         bold = QFont()
         bold.setBold(True)
@@ -416,12 +457,26 @@ class MainWindow(QMainWindow):
             ds_item.addChild(placeholder)
             self._dataset_tree.addTopLevelItem(ds_item)
 
+            if info.name == selected_dataset:
+                ds_item.setExpanded(True)  # triggers lazy-load of children
+                if selected_track:
+                    for j in range(ds_item.childCount()):
+                        child = ds_item.child(j)
+                        if child.data(0, Qt.ItemDataRole.UserRole) == selected_track:
+                            self._dataset_tree.setCurrentItem(child)
+                            self._dataset_tree.scrollToItem(child)
+                            break
+
     def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
         if item.childCount() != 1:
             return
         if item.child(0).data(0, Qt.ItemDataRole.UserRole) != "__loading__":
             return
-        item.takeChild(0)
+        self._load_children(item)
+
+    def _load_children(self, item: QTreeWidgetItem) -> None:
+        """(Re)populate *item*'s track children from disk, replacing whatever is there."""
+        item.takeChildren()
         dataset_name = item.data(0, Qt.ItemDataRole.UserRole)
         for track_id in load_dataset_tracks(dataset_name):
             track_item = QTreeWidgetItem()
@@ -444,6 +499,32 @@ class MainWindow(QMainWindow):
             self._track_ids = load_dataset_tracks(dataset_name)
         if track_id in self._track_ids:
             self._load_track(self._track_ids.index(track_id))
+
+    def _on_tree_context_menu(self, pos) -> None:
+        item = self._dataset_tree.itemAt(pos)
+        if item is None or item.parent() is None:
+            return  # empty space or a dataset header — no menu
+
+        track_id = item.data(0, Qt.ItemDataRole.UserRole)
+        if track_id == "__loading__":
+            return
+
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename")
+        delete_action = menu.addAction("🗑  Delete track")
+        action = menu.exec(self._dataset_tree.viewport().mapToGlobal(pos))
+        if action is None:
+            return
+
+        # Rename/delete act on self._track, so make sure the right-clicked
+        # track is the one currently loaded before invoking them.
+        if self._track is None or track_id != self._track.track_id:
+            self._on_item_clicked(item, 0)
+
+        if action is rename_action:
+            self._on_rename()
+        elif action is delete_action:
+            self._on_delete_track()
 
     @staticmethod
     def _set_annotation_indicator(
@@ -537,7 +618,7 @@ class MainWindow(QMainWindow):
                     self._track.beat_times, self._track.beat_positions
                 )
             self.statusBar().showMessage(f"Recording saved → {path}", 4000)
-            self._populate_dataset_list()
+            self._populate_dataset_list(keep_selection=True)
             if dataset == self._dataset_name:
                 self._track_ids = load_dataset_tracks(dataset)
 
@@ -609,6 +690,7 @@ class MainWindow(QMainWindow):
         if not metadata.device:
             metadata.device = platform.node()
         save_metadata(self._dataset_name, self._track.track_id, metadata)
+        self._update_metadata_label()
 
         self.statusBar().showMessage(f"Saved → {path}", 3000)
         self._update_annotation_indicator()
@@ -659,7 +741,7 @@ class MainWindow(QMainWindow):
             self._waveform.set_beats(np.array([]), None)
             self._track_label.setText("")
             self._stats_label.setText("")
-        self._populate_dataset_list()
+        self._populate_dataset_list(keep_selection=True)
         self.statusBar().showMessage(f"Track deleted.", 3000)
 
     def _on_rename(self) -> None:
@@ -682,22 +764,20 @@ class MainWindow(QMainWindow):
         self._track_ids[self._index] = new_id
         self.setWindowTitle(f"{self._dataset_name}  /  {new_id}")
         self._update_info_label()
-        # Refresh tree row if the dataset is currently expanded
+        # Refresh tree row if the dataset is currently expanded, keeping it
+        # expanded and re-selecting the renamed track instead of collapsing.
         for i in range(self._dataset_tree.topLevelItemCount()):
             ds_item = self._dataset_tree.topLevelItem(i)
             if ds_item.data(0, Qt.ItemDataRole.UserRole) != self._dataset_name:
                 continue
-            for j in range(ds_item.childCount()):
-                child = ds_item.child(j)
-                if child.data(0, Qt.ItemDataRole.UserRole) == self._track.track_id:
-                    # Already updated — can't reach here before rename
-                    break
-                # Match by old id is impossible; rebuild from track_ids
-            ds_item.takeChildren()
-            placeholder = QTreeWidgetItem([""])
-            placeholder.setData(0, Qt.ItemDataRole.UserRole, "__loading__")
-            ds_item.addChild(placeholder)
-            ds_item.setExpanded(False)
+            if ds_item.isExpanded():
+                self._load_children(ds_item)
+                for j in range(ds_item.childCount()):
+                    child = ds_item.child(j)
+                    if child.data(0, Qt.ItemDataRole.UserRole) == new_id:
+                        self._dataset_tree.setCurrentItem(child)
+                        self._dataset_tree.scrollToItem(child)
+                        break
             break
         self.statusBar().showMessage(f"Renamed → {new_id}", 3000)
 
@@ -757,6 +837,34 @@ class MainWindow(QMainWindow):
             parts.append(f"ref {self._track.tempo:.1f} BPM")
         parts.append(beat_str)
         self._stats_label.setText("  •  ".join(parts))
+
+    def _update_metadata_label(self) -> None:
+        """Refresh the read-only metadata panel from the track's .meta.json, if any."""
+        if self._track is None:
+            self._metadata_label.setText("")
+            return
+        metadata = load_metadata(self._dataset_name, self._track.track_id)
+        if metadata is None:
+            self._metadata_label.setText("No metadata")
+            return
+
+        parts = []
+        if metadata.device:
+            parts.append(f"Device: {metadata.device}")
+        if metadata.location:
+            parts.append(f"Location: {metadata.location}")
+        if metadata.structure:
+            parts.append(f"Structure: {metadata.structure}")
+        if metadata.duration_s is not None:
+            m, s = divmod(int(metadata.duration_s), 60)
+            parts.append(f"Rec. duration: {m}:{s:02d}")
+        if metadata.bpm_mean is not None:
+            parts.append(f"Tap BPM mean: {metadata.bpm_mean:.1f}")
+        if metadata.bpm_median is not None:
+            parts.append(f"Tap BPM median: {metadata.bpm_median:.1f}")
+        if metadata.bpm_std is not None:
+            parts.append(f"Tap BPM std: {metadata.bpm_std:.2f}")
+        self._metadata_label.setText("\n".join(parts) if parts else "No metadata")
 
     # ------------------------------------------------------------------
     # Timer tick
