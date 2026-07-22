@@ -71,9 +71,28 @@
       background: #963;
       color: #fff;
     }
+    #flush-btn {
+      background: #400;
+      color: #daa;
+    }
     button:disabled {
       background: #333;
       color: #777;
+    }
+    .toggle-group {
+      display: flex;
+      gap: 8px;
+    }
+    .toggle-btn {
+      flex: 1;
+      background: #222;
+      color: #aaa;
+      border: 1px solid #444;
+    }
+    .toggle-btn.active {
+      background: #2a4a2a;
+      color: #fff;
+      border: 1px solid #4a8a4a;
     }
     #tap-stats p {
       margin: 2px 0;
@@ -83,6 +102,43 @@
     #pending-count {
       font-size: 0.9rem;
       color: #aaa;
+    }
+    .label-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .info-icon {
+      font-size: 0.85rem;
+      width: 20px;
+      height: 20px;
+      line-height: 18px;
+      padding: 0;
+      margin: 0 0 4px 0;
+      border-radius: 50%;
+      background: #222;
+      color: #aaa;
+      border: 1px solid #444;
+      text-align: center;
+    }
+    .info-icon[aria-expanded="true"] {
+      background: #2a4a2a;
+      color: #fff;
+      border-color: #4a8a4a;
+    }
+    .help-text {
+      font-size: 0.85rem;
+      color: #aaa;
+      margin: -2px 0 8px 0;
+    }
+    .help-text.hidden {
+      display: none;
+    }
+    #app-version {
+      font-size: 0.75rem;
+      color: #555;
+      text-align: center;
+      margin-top: 24px;
     }
   </style>
 </head>
@@ -98,6 +154,23 @@
   <section>
     <label for="track-name-input">Track name (optional)</label>
     <input id="track-name-input" placeholder="leave blank to auto-generate" />
+  </section>
+
+  <section>
+    <label for="device-input">Device</label>
+    <input id="device-input" placeholder="e.g. iPhone 13 mini" />
+  </section>
+
+  <section>
+    <div class="label-row">
+      <label style="margin-bottom: 0;">Structure</label>
+      <button id="structure-help-btn" type="button" class="info-icon" aria-expanded="false" aria-label="Tap instructions">ⓘ</button>
+    </div>
+    <p id="structure-help-text" class="help-text hidden">Start tapping on the 1 of the 4×8 (swing) or 6×8 (blues).</p>
+    <div class="toggle-group">
+      <button id="structure-swing-btn" type="button" class="toggle-btn active">Swing</button>
+      <button id="structure-blues-btn" type="button" class="toggle-btn">Blues</button>
+    </div>
   </section>
 
   <section>
@@ -123,8 +196,11 @@
 
   <section>
     <button id="sync-btn" type="button">Sync</button>
+    <button id="flush-btn" type="button">Flush queue</button>
     <p id="sync-status"></p>
   </section>
+
+  <p id="app-version">v12.1.0</p>
 
   <script type="module" src="/static/app.js"></script>
   <script>

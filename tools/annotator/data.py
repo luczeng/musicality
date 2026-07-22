@@ -7,7 +7,8 @@ so they can be tested without mirdata or a filesystem.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import json
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import mirdata
@@ -41,6 +42,23 @@ class TrackData:
     tempo: float | None
     beat_times: np.ndarray  # seconds, sorted ascending
     beat_positions: np.ndarray | None  # 1-indexed bar positions, or None
+
+
+@dataclass
+class TrackMetadata:
+    """Free-form descriptive info about a track, separate from its beats.
+
+    All fields optional — captured incrementally from either the desktop
+    annotator or the mobile companion, never required to save a recording.
+    """
+
+    location: str | None = None
+    device: str | None = None
+    structure: str | None = None
+    duration_s: float | None = None
+    bpm_mean: float | None = None
+    bpm_median: float | None = None
+    bpm_std: float | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +206,26 @@ def remove_beat(track: TrackData, time: float, tolerance: float = 0.1) -> TrackD
 def annotation_path(track: TrackData) -> Path:
     """Return the canonical save path for a track's annotations (.beats file)."""
     return DATA_DIR / track.dataset_name / "annotations" / f"{track.track_id}.beats"
+
+
+def metadata_path(dataset_name: str, track_id: str) -> Path:
+    """Return the canonical save path for a track's metadata (.meta.json file)."""
+    return DATA_DIR / dataset_name / "annotations" / f"{track_id}.meta.json"
+
+
+def save_metadata(dataset_name: str, track_id: str, metadata: TrackMetadata) -> None:
+    """Persist track metadata as JSON, next to that track's .beats file."""
+    path = metadata_path(dataset_name, track_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(asdict(metadata), indent=2))
+
+
+def load_metadata(dataset_name: str, track_id: str) -> TrackMetadata | None:
+    """Load a track's metadata, or None if it was never saved."""
+    path = metadata_path(dataset_name, track_id)
+    if not path.exists():
+        return None
+    return TrackMetadata(**json.loads(path.read_text()))
 
 
 # ---------------------------------------------------------------------------

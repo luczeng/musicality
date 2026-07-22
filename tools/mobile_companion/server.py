@@ -30,6 +30,12 @@ app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 
 class TapAnnotation(BaseModel):
     tap_times: list[float]
+    structure: str | None = None
+    device: str | None = None
+    duration_s: float | None = None
+    bpm_mean: float | None = None
+    bpm_median: float | None = None
+    bpm_std: float | None = None
 
 
 @app.get("/")
@@ -108,5 +114,32 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
         beat_positions=None,
     )
     annotator_data.save_annotations(track, annotator_data.annotation_path(track))
+
+    metadata_fields = (
+        body.structure,
+        body.device,
+        body.duration_s,
+        body.bpm_mean,
+        body.bpm_median,
+        body.bpm_std,
+    )
+    if any(field is not None for field in metadata_fields):
+        metadata = (
+            annotator_data.load_metadata(dataset, track_id)
+            or annotator_data.TrackMetadata()
+        )
+        if body.structure is not None:
+            metadata.structure = body.structure
+        if body.device is not None:
+            metadata.device = body.device
+        if body.duration_s is not None:
+            metadata.duration_s = body.duration_s
+        if body.bpm_mean is not None:
+            metadata.bpm_mean = body.bpm_mean
+        if body.bpm_median is not None:
+            metadata.bpm_median = body.bpm_median
+        if body.bpm_std is not None:
+            metadata.bpm_std = body.bpm_std
+        annotator_data.save_metadata(dataset, track_id, metadata)
 
     return {"dataset": dataset, "track_id": track_id, "tempo": track.tempo}

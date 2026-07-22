@@ -4,7 +4,13 @@
  * capture, only (best-effort) to populate the dataset picker's suggestions.
  */
 
-import { addPendingCapture, listPending, markSynced, deletePending } from "./queue.js";
+import {
+  addPendingCapture,
+  listPending,
+  markSynced,
+  deletePending,
+  flushQueue,
+} from "./queue.js";
 
 // Mirrors tools/annotator/tap_tempo_widget.py's stats exactly (same
 // warmup/recent-window constants, same population std) so a phone capture
@@ -15,12 +21,18 @@ const WARMUP = 4;
 const datasetInput = document.getElementById("dataset-input");
 const datasetOptions = document.getElementById("dataset-options");
 const trackNameInput = document.getElementById("track-name-input");
+const deviceInput = document.getElementById("device-input");
+const structureSwingBtn = document.getElementById("structure-swing-btn");
+const structureBluesBtn = document.getElementById("structure-blues-btn");
+const structureHelpBtn = document.getElementById("structure-help-btn");
+const structureHelpText = document.getElementById("structure-help-text");
 const recordBtn = document.getElementById("record-btn");
 const tapBtn = document.getElementById("tap-btn");
 const saveBtn = document.getElementById("save-btn");
 const statusEl = document.getElementById("status");
 const pendingCountEl = document.getElementById("pending-count");
 const syncBtn = document.getElementById("sync-btn");
+const flushBtn = document.getElementById("flush-btn");
 const syncStatusEl = document.getElementById("sync-status");
 const tapCountEl = document.getElementById("tap-count");
 const tapLastEl = document.getElementById("tap-last");
@@ -32,7 +44,40 @@ let mediaStream = null;
 let recordedChunks = [];
 let recordedBlob = null;
 let recordStartTime = null;
+let recordDurationS = null;
 let tapTimestampsMs = [];
+
+// Browsers don't expose a real device name (privacy) the way a desktop OS
+// does — this guesses a rough label from the user agent as a starting
+// point, but the field stays a plain editable input, and whatever the user
+// types is remembered in localStorage so it only needs typing once.
+const DEVICE_STORAGE_KEY = "musicality-device-name";
+
+function guessDeviceName() {
+  const ua = navigator.userAgent;
+  if (/iPhone/.test(ua)) return "iPhone";
+  if (/iPad/.test(ua)) return "iPad";
+  if (/Android/.test(ua)) return "Android phone";
+  return "";
+}
+
+deviceInput.value = localStorage.getItem(DEVICE_STORAGE_KEY) || guessDeviceName();
+
+let structure = "swing";
+
+function setStructure(value) {
+  structure = value;
+  structureSwingBtn.classList.toggle("active", value === "swing");
+  structureBluesBtn.classList.toggle("active", value === "blues");
+}
+
+structureSwingBtn.addEventListener("click", () => setStructure("swing"));
+structureBluesBtn.addEventListener("click", () => setStructure("blues"));
+
+structureHelpBtn.addEventListener("click", () => {
+  const expanded = structureHelpText.classList.toggle("hidden") === false;
+  structureHelpBtn.setAttribute("aria-expanded", String(expanded));
+});
 
 async function loadDatasetOptions() {
   try {
@@ -65,33 +110,41 @@ function std(values, avg) {
   return Math.sqrt(mean(values.map((v) => (v - avg) ** 2)));
 }
 
-function renderTapStats() {
-  tapCountEl.textContent = `N: ${tapTimestampsMs.length}`;
-
+// Shared with the save handler below, so the mean/median/std persisted as
+// track metadata are exactly the "All" figures the user saw on screen.
+function tapBpmStats(timestampsMs) {
   const tempos = [];
-  for (let i = 1; i < tapTimestampsMs.length; i++) {
-    const intervalS = (tapTimestampsMs[i] - tapTimestampsMs[i - 1]) / 1000;
+  for (let i = 1; i < timestampsMs.length; i++) {
+    const intervalS = (timestampsMs[i] - timestampsMs[i - 1]) / 1000;
     tempos.push(60 / intervalS);
   }
   const valid = tempos.slice(WARMUP);
+  if (valid.length === 0) return null;
 
-  if (valid.length === 0) {
+  const avg = mean(valid);
+  return { valid, mean: avg, median: median(valid), std: std(valid, avg) };
+}
+
+function renderTapStats() {
+  tapCountEl.textContent = `N: ${tapTimestampsMs.length}`;
+
+  const stats = tapBpmStats(tapTimestampsMs);
+  if (!stats) {
     tapLastEl.textContent = "Last: —";
     tapRecentEl.textContent = `Recent (${RECENT_N}): —`;
     tapAllEl.textContent = "All — Mean: —   Median: —   Std: —";
     return;
   }
 
-  tapLastEl.textContent = `Last: ${valid[valid.length - 1].toFixed(1)} BPM`;
+  tapLastEl.textContent = `Last: ${stats.valid[stats.valid.length - 1].toFixed(1)} BPM`;
 
-  const recent = valid.slice(-RECENT_N);
+  const recent = stats.valid.slice(-RECENT_N);
   tapRecentEl.textContent = `Recent (${RECENT_N}): ${mean(recent).toFixed(1)} BPM`;
 
-  const allMean = mean(valid);
   tapAllEl.textContent =
-    `All — Mean: ${allMean.toFixed(1)}   ` +
-    `Median: ${median(valid).toFixed(1)}   ` +
-    `Std: ${std(valid, allMean).toFixed(2)}`;
+    `All — Mean: ${stats.mean.toFixed(1)}   ` +
+    `Median: ${stats.median.toFixed(1)}   ` +
+    `Std: ${stats.std.toFixed(2)}`;
 }
 
 function resetTapState() {
@@ -130,6 +183,7 @@ async function startRecording() {
 
 function stopRecording() {
   mediaRecorder.stop();
+  recordDurationS = (performance.now() - recordStartTime) / 1000;
   recordBtn.textContent = "● Record";
   tapBtn.disabled = true;
   statusEl.textContent = "Recording stopped. Review taps, then Save.";
@@ -160,13 +214,28 @@ saveBtn.addEventListener("click", async () => {
     return;
   }
   const trackName = trackNameInput.value.trim();
+  const device = deviceInput.value.trim();
   const tapTimesS = tapTimestampsMs.map((t) => (t - recordStartTime) / 1000);
+  const bpmStats = tapBpmStats(tapTimestampsMs);
 
-  await addPendingCapture(recordedBlob, tapTimesS, dataset, trackName || null);
+  if (device) localStorage.setItem(DEVICE_STORAGE_KEY, device);
+
+  await addPendingCapture(
+    recordedBlob,
+    tapTimesS,
+    dataset,
+    trackName || null,
+    structure,
+    device || null,
+    recordDurationS,
+    bpmStats
+  );
 
   recordedBlob = null;
+  recordDurationS = null;
   saveBtn.disabled = true;
   trackNameInput.value = "";
+  setStructure("swing");
   resetTapState();
   statusEl.textContent = "Saved locally.";
   await refreshPendingCount();
@@ -191,7 +260,15 @@ async function syncOneCapture(capture) {
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tap_times: capture.tapTimes }),
+      body: JSON.stringify({
+        tap_times: capture.tapTimes,
+        structure: capture.structure,
+        device: capture.device,
+        duration_s: capture.durationS,
+        bpm_mean: capture.bpmMean,
+        bpm_median: capture.bpmMedian,
+        bpm_std: capture.bpmStd,
+      }),
     }
   );
   if (!annotationResponse.ok) {
@@ -246,6 +323,22 @@ async function syncPendingCaptures() {
 }
 
 syncBtn.addEventListener("click", syncPendingCaptures);
+
+flushBtn.addEventListener("click", async () => {
+  const pending = await listPending();
+  if (pending.length === 0) {
+    syncStatusEl.textContent = "Queue already empty.";
+    return;
+  }
+  const ok = confirm(
+    `Discard ${pending.length} queued capture(s)? This cannot be undone.`
+  );
+  if (!ok) return;
+
+  await flushQueue();
+  syncStatusEl.textContent = `Discarded ${pending.length} capture(s).`;
+  await refreshPendingCount();
+});
 
 loadDatasetOptions();
 refreshPendingCount();

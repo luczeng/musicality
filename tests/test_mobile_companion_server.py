@@ -177,3 +177,45 @@ class TestUploadAnnotation:
             json={"tap_times": [0.0, 0.5, 1.0, 1.5]},
         )
         assert response.json()["tempo"] == pytest.approx(120.0)
+
+    def test_saves_structure_and_device(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={
+                "tap_times": [0.5, 1.0, 1.5, 2.0],
+                "structure": "blues",
+                "device": "iPhone 13 mini",
+            },
+        )
+        metadata = annotator_data.load_metadata("field_recordings", "take1")
+        assert metadata.structure == "blues"
+        assert metadata.device == "iPhone 13 mini"
+
+    def test_omitting_structure_and_device_saves_no_metadata(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
+        )
+        assert annotator_data.load_metadata("field_recordings", "take1") is None
+
+    def test_preserves_existing_field_when_only_one_is_sent(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        annotator_data.save_metadata(
+            "field_recordings", "take1", annotator_data.TrackMetadata(device="iPhone")
+        )
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0], "structure": "swing"},
+        )
+        metadata = annotator_data.load_metadata("field_recordings", "take1")
+        assert metadata.structure == "swing"
+        assert metadata.device == "iPhone"
