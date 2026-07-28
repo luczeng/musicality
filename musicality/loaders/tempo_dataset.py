@@ -12,7 +12,7 @@ import musicality.dataformats as dataformats
 
 
 _fmt = dataformats.load()
-DATA_DIR = Path(__file__).parent.parent / _fmt.data_dir
+DATA_DIR = dataformats.ROOT / _fmt.data_dir
 
 
 class TempoDataset(Dataset):
