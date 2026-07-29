@@ -4,16 +4,26 @@ import torchaudio.transforms as T
 
 
 class TCNTempoNet(nn.Module):
-    """Dilated TCN for tempo regression (Davies & Böck, 2019).
+    """Dilated TCN for tempo regression (Davies & Böck, 2019), or per-frame beat-phase detection.
 
     Applies a log-mel transform, projects to the TCN channel width, then runs a
     stack of dilated 1D residual convolutions with exponentially growing dilation
-    (1, 2, 4, …, 2^(n_layers-1)). Globally pools over time before the regression head.
+    (1, 2, 4, …, 2^(n_layers-1)).
 
-    Receptive field ≈ kernel_size × (2^n_layers − 1) frames.
+    Two output modes, controlled by ``frame_level``:
 
-    Input:  (B, 1, T)
-    Output: (B,)
+    - ``frame_level=False`` (default): globally pools over time, then a small
+      FC head produces scalar/bin regression or classification logits.
+      Input: (B, 1, T) → Output: (B,) or (B, n_outputs).
+    - ``frame_level=True``: skips the pool; a 1x1 conv head produces
+      per-frame logits instead (e.g. beat/one/four for beat-phase detection).
+      Input: (B, 1, T) → Output: (B, n_outputs, T') or (B, T') if n_outputs == 1,
+      where T' is the mel transform's frame count. Sigmoid is *not* applied —
+      pair with ``BCEWithLogitsLoss`` downstream, matching the classification
+      mode's convention of returning raw logits.
+
+    Receptive field ≈ kernel_size × (2^n_layers − 1) frames — the same trunk is
+    shared between both modes, so this is unaffected by ``frame_level``.
 
     :param n_mels: Number of mel filterbanks.
     :param sample_rate: Audio sample rate used to build the mel transform.
@@ -22,9 +32,13 @@ class TCNTempoNet(nn.Module):
     :param channels: Channel width for the TCN.
     :param n_layers: Number of dilated layers. Keep receptive field
         (3 × (2^n_layers − 1) frames) within the input sequence length.
-    :param dropout: Dropout probability in the regression head.
-    :param n_outputs: Output dimension. ``1`` for scalar regression; > 1 for
-        classification over tempo bins (returns logits without softmax).
+    :param dropout: Dropout probability in the pooled regression head. Unused when
+        ``frame_level=True`` (the frame head is a single 1x1 conv, no dropout).
+    :param n_outputs: Output dimension. In pooled mode, ``1`` for scalar regression,
+        > 1 for classification over tempo bins. In frame-level mode, the number of
+        per-frame target channels (e.g. 3 for beat/one/four).
+    :param frame_level: If ``True``, produce per-frame outputs instead of pooling
+        over time.
     """
 
     def __init__(
@@ -36,9 +50,11 @@ class TCNTempoNet(nn.Module):
         n_layers: int = 8,
         dropout: float = 0.3,
         n_outputs: int = 1,
+        frame_level: bool = False,
     ):
         super().__init__()
         self.n_outputs = n_outputs
+        self.frame_level = frame_level
 
         self.mel = nn.Sequential(
             T.MelSpectrogram(
@@ -65,12 +81,15 @@ class TCNTempoNet(nn.Module):
             ]
         )
 
-        self.head = nn.Sequential(
-            nn.Linear(channels, 128),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(128, n_outputs),
-        )
+        if frame_level:
+            self.frame_head = nn.Conv1d(channels, n_outputs, kernel_size=1)
+        else:
+            self.head = nn.Sequential(
+                nn.Linear(channels, 128),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(128, n_outputs),
+            )
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
 
@@ -86,7 +105,12 @@ class TCNTempoNet(nn.Module):
         for layer in self.layers:
             x = x + layer(x)  # dilated residual
 
+        if self.frame_level:
+            out = self.frame_head(x)  # (B, n_outputs, T')
+            return out.squeeze(1) if self.n_outputs == 1 else out
+
         x = x.mean(dim=-1)  # (B, channels) — global average pool over time
 
         out = self.head(x)  # (B, n_outputs)
+
         return out.squeeze(-1) if self.n_outputs == 1 else out

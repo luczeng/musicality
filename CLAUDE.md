@@ -37,6 +37,9 @@ uv run python tools/inspect_track.py <path-to-audio>
 # Plot tempo histograms across datasets
 uv run python tools/plot_tempo_histograms.py
 
+# Visualize BeatDataset's smeared beat/one/four targets for one clip
+uv run python tools/plot_beat_targets.py --dataset ballroom
+
 # Add a dependency
 uv add <package>
 ```
