@@ -48,15 +48,19 @@ Nothing at the level of a new package — new pieces are all additions inside
 
 Implemented incrementally, one step per "next":
 
-1. **Dataset**: extend `BeatDataset` (or add `BeatPhaseDataset` alongside it) to emit `(wav, {beat, is_one, is_four}, mask)` with Gaussian-smeared targets from `times` + `positions`.
-2. **Model**: add the frame-level TCN variant (3-head sigmoid output) sharing the existing dilated conv trunk.
-3. **Loss**: masked multi-head frame-wise BCE in `losses.py`.
-4. **Lightning module**: `BeatPhaseModule` (mirrors `TempoModule`) with per-head loss logging and frame-level accuracy metrics.
+1. ✅ **Dataset**: extended `BeatDataset` to emit a `(4, n_frames)` target — `beat`/`one`/`four`/`mask` channels, Gaussian-smeared, built from mirdata's `times` + `positions` (`bar_index` unit). Tracks without position annotations get `mask=0`. Also fixed a pre-existing `DATA_DIR` bug (resolved to `musicality/data` instead of repo-root `data/`) in both `beat_dataset.py` and `tempo_dataset.py`.
+2. ✅ **Model**: `TCNTempoNet` gained a `frame_level: bool` flag on the same class (not a new class) — `False` keeps the original pooled scalar/classification behavior unchanged; `True` swaps the global-average-pool + FC head for a `Conv1d(channels → n_outputs, k=1)` head, returning raw per-frame logits `(B, n_outputs, T')` (no sigmoid — paired with `BCEWithLogitsLoss`). Same shared trunk either way, no duplicated code.
+   - **Known open issue**: the mel transform's `T'` (from `torchaudio.MelSpectrogram`, `center=True`) is not guaranteed to equal `BeatDataset`'s `n_frames = n_samples // hop_length` — confirmed off-by-one in practice (344 vs. 345 for an 8s/22050Hz/hop-512 clip). Not yet resolved; needs a crop/pad at the point logits and targets meet (step 4, the Lightning module's `_step`).
+3. ✅ **Loss**: `beat_phase_loss` in `losses.py` — sums three per-frame `BCEWithLogitsLoss` terms (beat/one/four); `beat` supervised on every frame, `one`/`four` gated by the target's `mask` channel and normalized by the count of masked-in frames (not total frame count), so an all-unmasked batch doesn't silently shrink toward zero loss. Default `pos_weight=8.0` shared across heads — a starting point, not tuned per dataset.
+   - **Follow-up worth doing once real training data is in the loop**: re-derive `pos_weight` per head from actual class balance (beat/one/four each have a different true positive-frame rate — one/four are ~1/4 the rate of beat within position-annotated tracks) rather than the flat default of 8 for all three.
+4. **Lightning module**: `BeatPhaseModule` (mirrors `TempoModule`) with per-head loss logging and frame-level accuracy metrics. Must resolve the step-2 frame-count mismatch here (crop the longer of {model output, target} to match).
 5. **Config + training entry**: `configs/model/tcn_frames.yaml`, a `configs/beat_train.yaml`, and `tools/train_beat.py` (or a branch in the existing `train.py`) wired through `musicality/trainers/train.py`-style dataloader/callback builders.
 6. **Augmentation fix**: make `TimeStretch`/`AugmentedDataset` target-aware for frame-level labels.
 7. **Postprocessing**: peak-picking + periodicity-gated event readout → labeled beat list.
 8. **Evaluation**: beat / "1" / "4" F-measure + 1-vs-3 confusion rate script.
 9. **(Optional, later)** particle-filter-style temporal smoothing across a full track, only if peak-picking proves too jittery in practice.
+
+Also built alongside these steps: `tools/plot_beat_targets.py`, a visualization CLI that plots one `BeatDataset` clip's waveform against its three smeared target curves — used to sanity-check step 1 against real data (correctly shows `four` empty on 3/4-time tracks, populated on 4/4 tracks).
 
 ## 5. Explicitly dropped or deferred from the original plan
 
