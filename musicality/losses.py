@@ -70,6 +70,58 @@ def gaussian_soft_target(
     return F.softmax(-((diff / sigma) ** 2) / 2, dim=-1)
 
 
+def beat_phase_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    pos_weight: torch.Tensor | float = 8.0,
+) -> torch.Tensor:
+    """Masked multi-head frame-wise BCE loss for beat-phase detection.
+
+    Sums three per-frame binary-cross-entropy terms (beat, one, four). ``beat``
+    is supervised on every frame; ``one``/``four`` are gated by the target's
+    ``mask`` channel, since not every dataset carries bar-position annotations
+    (see :class:`musicality.loaders.beat_dataset.BeatDataset`). Their terms are
+    normalized by the number of masked-in frames rather than the total frame
+    count, so a batch with few or no position-annotated tracks doesn't just
+    have its one/four loss silently shrink towards zero.
+
+    :param logits: Raw per-frame model output, shape ``(B, 3, T)`` — beat/one/four,
+        unactivated (see :class:`musicality.models.tcn.TCNTempoNet` with
+        ``frame_level=True``).
+    :param target: Ground-truth target, shape ``(B, 4, T)`` — beat/one/four/mask
+        channels.
+    :param pos_weight: Positive-class weight applied to every head's BCE term,
+        compensating for beat/one/four frames being a small fraction of all
+        frames. Scalar (shared across heads) or shape ``(3,)`` for a per-head
+        weight. Default ``8.0`` is a rough starting point, not tuned per dataset.
+    :returns: Scalar mean loss, shape ``()``.
+    """
+
+    beat_logits, one_logits, four_logits = logits[:, 0], logits[:, 1], logits[:, 2]
+    beat_y, one_y, four_y, mask = target[:, 0], target[:, 1], target[:, 2], target[:, 3]
+
+    pos_weight = torch.as_tensor(pos_weight, device=logits.device, dtype=logits.dtype)
+    pos_weight = pos_weight.expand(3) if pos_weight.ndim == 0 else pos_weight
+
+    beat_loss = F.binary_cross_entropy_with_logits(
+        beat_logits, beat_y, pos_weight=pos_weight[0], reduction="none"
+    )
+    one_loss = F.binary_cross_entropy_with_logits(
+        one_logits, one_y, pos_weight=pos_weight[1], reduction="none"
+    )
+    four_loss = F.binary_cross_entropy_with_logits(
+        four_logits, four_y, pos_weight=pos_weight[2], reduction="none"
+    )
+
+    n_masked = mask.sum().clamp(min=1.0)
+
+    beat_term = beat_loss.mean()
+    one_term = (one_loss * mask).sum() / n_masked
+    four_term = (four_loss * mask).sum() / n_masked
+
+    return beat_term + one_term + four_term
+
+
 def classification_tempo_loss(
     logits: torch.Tensor,
     tempo: torch.Tensor,
