@@ -4,12 +4,20 @@ import lightning as L
 
 
 _TRACKED_KEYS = (
-    "train/loss", "train/mae", "train/acc1",
-    "train/mae_argmax", "train/mae_expected",
-    "train/acc1_argmax", "train/acc1_expected",
-    "val/loss", "val/mae", "val/acc1",
-    "val/mae_argmax", "val/mae_expected",
-    "val/acc1_argmax", "val/acc1_expected",
+    "train/loss",
+    "train/mae",
+    "train/acc1",
+    "train/mae_argmax",
+    "train/mae_expected",
+    "train/acc1_argmax",
+    "train/acc1_expected",
+    "val/loss",
+    "val/mae",
+    "val/acc1",
+    "val/mae_argmax",
+    "val/mae_expected",
+    "val/acc1_argmax",
+    "val/acc1_expected",
 )
 _LOWER_BETTER = ("loss", "mae")  # substring match against the metric key
 
@@ -21,14 +29,20 @@ def _is_better(key: str, val: float, current_best: float) -> bool:
 
 
 class BestMetricsPrinter(L.Callback):
-    """Prints metrics to the terminal each epoch and summarises the best at the end."""
+    """Prints metrics to the terminal each epoch and summarises the best at the end.
 
-    def __init__(self):
+    :param keys: Metric keys to track. Defaults to the tempo-estimation metric
+        names; pass a different tuple (e.g. beat-phase's ``train/val`` × loss/acc
+        keys) for other training tasks.
+    """
+
+    def __init__(self, keys: tuple = _TRACKED_KEYS):
+        self.keys = keys
         self.best = {}
 
     def on_validation_epoch_end(self, trainer, pl_module):
         metrics = trainer.callback_metrics
-        for key in _TRACKED_KEYS:
+        for key in self.keys:
             if not key.startswith("val/"):
                 continue
             val = metrics.get(key)
@@ -44,7 +58,7 @@ class BestMetricsPrinter(L.Callback):
         metrics = trainer.callback_metrics
         epoch = trainer.current_epoch
         parts = [f"epoch {epoch:>3}"]
-        for key in _TRACKED_KEYS:
+        for key in self.keys:
             val = metrics.get(key)
             if val is not None:
                 parts.append(f"{key}: {val:.4f}")
