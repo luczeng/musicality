@@ -1,0 +1,33 @@
+defaults:
+  - model: tcn_frames
+  - _self_
+
+pos_weight: 8.0
+lr: 5e-4
+weight_decay: 0.0
+batch_size: 16
+n_mels: 128
+hop_length: 512
+sigma_frames: 1.5
+train_subsample: null
+checkpoint_dir: checkpoints_beat/
+trainer:
+  max_epochs: 100
+  accelerator: mps
+  devices: 1
+  log_every_n_steps: 10
+  check_val_every_n_epoch: 1
+data:
+  name: ballroom
+  data_home: ${hydra:runtime.cwd}/data/ballroom
+  sample_rate: 22050
+  duration: 10.0
+  val_split: 0.2
+  num_workers: 4
+# Augmentations are not yet wired in for beat-phase training: TimeStretch resamples
+# the waveform without resampling the frame-level target in step, which would
+# desync beat/one/four labels from the audio. See the beat-phase plan, step 6.
+wandb:
+  project: musicality-beat-phase
+  run_name: null
+  tags: []
