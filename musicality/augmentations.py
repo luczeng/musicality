@@ -19,6 +19,7 @@ from torch.utils.data import Dataset
 # Individual augmentations
 # ---------------------------------------------------------------------------
 
+
 class TimeStretch:
     """Randomly stretch or compress audio and scale the tempo label accordingly.
 
@@ -80,6 +81,7 @@ class AddNoise:
 # Composed augmenter
 # ---------------------------------------------------------------------------
 
+
 class TempoAugmenter:
     """Composes waveform augmentations and returns an updated (wav, tempo) pair.
 
@@ -123,6 +125,7 @@ class TempoAugmenter:
 # Dataset wrapper (train-only)
 # ---------------------------------------------------------------------------
 
+
 class AugmentedDataset(Dataset):
     """Wraps a Subset and applies :class:`TempoAugmenter` at item-access time.
 
@@ -152,13 +155,16 @@ class AugmentedDataset(Dataset):
 
     def __getitem__(self, idx: int):
         wav, label = self.subset[idx]
-        wav, new_tempo = self.augmenter(wav, label.item(), self.sample_rate, self.n_samples)
+        wav, new_tempo = self.augmenter(
+            wav, label.item(), self.sample_rate, self.n_samples
+        )
         return wav, torch.tensor(new_tempo, dtype=torch.float32)
 
 
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def build_augmenter(cfg: DictConfig) -> TempoAugmenter | None:
     """Build a :class:`TempoAugmenter` from a Hydra augmentations config section.
@@ -191,3 +197,170 @@ def build_augmenter(cfg: DictConfig) -> TempoAugmenter | None:
         return None
 
     return TempoAugmenter(time_stretch=time_stretch, gain=gain, noise=noise)
+
+
+# ---------------------------------------------------------------------------
+# Beat-phase augmentations (frame-level targets, not a scalar label)
+# ---------------------------------------------------------------------------
+
+
+class FrameTimeStretch:
+    """Randomly stretch or compress audio and resample the frame-level target to match.
+
+    Same resampling mechanism as :class:`TimeStretch` (treating the waveform as
+    recorded at ``sr * rate`` and resampling back to ``sr``), but instead of
+    rescaling a scalar label, resamples the target's time axis by the same
+    ``rate`` so beat/one/four/mask events stay aligned with the stretched
+    audio's frames. Frame count and sample count scale identically under a
+    constant hop length, so using one shared ``rate`` for both is what keeps
+    them in sync.
+
+    :param min_rate: Minimum speed multiplier (< 1 = slower, lower tempo).
+    :param max_rate: Maximum speed multiplier (> 1 = faster, higher tempo).
+    """
+
+    def __init__(self, min_rate: float = 0.85, max_rate: float = 1.15) -> None:
+        self.min_rate = min_rate
+        self.max_rate = max_rate
+
+    def __call__(
+        self, wav: torch.Tensor, target: torch.Tensor, sr: int
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        rate = random.uniform(self.min_rate, self.max_rate)
+
+        new_wav_len = int(wav.shape[-1] / rate)
+        stretched_wav = F.interpolate(
+            wav.unsqueeze(0), size=new_wav_len, mode="linear", align_corners=False
+        ).squeeze(0)
+
+        new_n_frames = int(target.shape[-1] / rate)
+        stretched_target = F.interpolate(
+            target.unsqueeze(0), size=new_n_frames, mode="linear", align_corners=False
+        ).squeeze(0)
+
+        return stretched_wav, stretched_target
+
+
+class BeatPhaseAugmenter:
+    """Composes waveform+target augmentations for beat-phase training.
+
+    Applied in order:
+    1. :class:`FrameTimeStretch` — changes length; re-crops/pads both the
+       waveform and the target back to their expected fixed lengths.
+    2. :class:`RandomGain`
+    3. :class:`AddNoise`
+    """
+
+    def __init__(
+        self,
+        time_stretch: FrameTimeStretch | None = None,
+        gain: RandomGain | None = None,
+        noise: AddNoise | None = None,
+    ) -> None:
+        self.time_stretch = time_stretch
+        self.gain = gain
+        self.noise = noise
+
+    def __call__(
+        self,
+        wav: torch.Tensor,
+        target: torch.Tensor,
+        sr: int,
+        n_samples: int,
+        n_frames: int,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        if self.time_stretch is not None:
+            wav, target = self.time_stretch(wav, target, sr)
+
+            if wav.shape[-1] >= n_samples:
+                wav = wav[..., :n_samples]
+            else:
+                wav = F.pad(wav, (0, n_samples - wav.shape[-1]))
+
+            if target.shape[-1] >= n_frames:
+                target = target[..., :n_frames]
+            else:
+                target = F.pad(target, (0, n_frames - target.shape[-1]))
+
+        if self.gain is not None:
+            wav = self.gain(wav)
+
+        if self.noise is not None:
+            wav = self.noise(wav)
+
+        return wav, target
+
+
+class AugmentedBeatDataset(Dataset):
+    """Wraps a Subset of :class:`~musicality.loaders.beat_dataset.BeatDataset` and
+    applies :class:`BeatPhaseAugmenter` at item-access time.
+
+    Use this to augment only the training split while leaving the validation
+    split unchanged, since both splits share the same underlying dataset object.
+
+    :param subset: A ``torch.utils.data.Subset`` of a ``BeatDataset``.
+    :param augmenter: The augmenter to apply.
+    :param sample_rate: Sample rate of the audio (passed to the augmenter).
+    :param n_samples: Fixed clip length in samples (passed to the augmenter).
+    :param n_frames: Fixed target length in frames (passed to the augmenter).
+    """
+
+    def __init__(
+        self,
+        subset,
+        augmenter: BeatPhaseAugmenter,
+        sample_rate: int,
+        n_samples: int,
+        n_frames: int,
+    ) -> None:
+        self.subset = subset
+        self.augmenter = augmenter
+        self.sample_rate = sample_rate
+        self.n_samples = n_samples
+        self.n_frames = n_frames
+
+    def __len__(self) -> int:
+        return len(self.subset)
+
+    def __getitem__(self, idx: int):
+        wav, target = self.subset[idx]
+        wav, target = self.augmenter(
+            wav, target, self.sample_rate, self.n_samples, self.n_frames
+        )
+        return wav, target
+
+
+def build_beat_phase_augmenter(cfg: DictConfig) -> BeatPhaseAugmenter | None:
+    """Build a :class:`BeatPhaseAugmenter` from a Hydra augmentations config section.
+
+    Mirrors :func:`build_augmenter`, using the frame-target-aware
+    :class:`FrameTimeStretch` in place of :class:`TimeStretch`.
+
+    Returns ``None`` if ``cfg.enabled`` is false or no individual augmentation
+    is enabled, so callers can skip wrapping altogether.
+    """
+    if not cfg.get("enabled", True):
+        return None
+
+    time_stretch = None
+    if cfg.time_stretch.get("enabled", False):
+        time_stretch = FrameTimeStretch(
+            min_rate=cfg.time_stretch.min_rate,
+            max_rate=cfg.time_stretch.max_rate,
+        )
+
+    gain = None
+    if cfg.gain.get("enabled", False):
+        gain = RandomGain(
+            min_db=cfg.gain.min_db,
+            max_db=cfg.gain.max_db,
+        )
+
+    noise = None
+    if cfg.noise.get("enabled", False):
+        noise = AddNoise(std=cfg.noise.std)
+
+    if time_stretch is None and gain is None and noise is None:
+        return None
+
+    return BeatPhaseAugmenter(time_stretch=time_stretch, gain=gain, noise=noise)
