@@ -13,6 +13,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
+from musicality.augmentations import AugmentedBeatDataset, build_beat_phase_augmenter
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.loaders.beat_dataset import BeatDataset
 from musicality.splits.splitter import Splitter
@@ -75,8 +76,17 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
         dataset, splits_dir, dataset_name, cfg.data.val_split
     ).run()
 
-    # No augmentation wrapping yet — TimeStretch would desync frame-level
-    # targets from the resampled waveform (see configs/beat_train.yaml).
+    augmenter = (
+        build_beat_phase_augmenter(cfg.augmentations)
+        if cfg.get("augmentations")
+        else None
+    )
+    if augmenter is not None:
+        n_samples = int(cfg.data.duration * cfg.data.sample_rate)
+        n_frames = n_samples // cfg.hop_length
+        train_ds = AugmentedBeatDataset(
+            train_ds, augmenter, cfg.data.sample_rate, n_samples, n_frames
+        )
 
     subsample = cfg.get("train_subsample", None)
     if subsample is not None:
