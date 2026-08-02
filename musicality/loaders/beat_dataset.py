@@ -15,7 +15,7 @@ import musicality.dataformats as dataformats
 _fmt = dataformats.load()
 DATA_DIR = dataformats.ROOT / _fmt.data_dir
 
-TARGET_CHANNELS = ("beat", "one", "four", "mask")
+TARGET_CHANNELS = ("beat", "one", "last", "mask")
 
 
 def gaussian_smear(spike: np.ndarray, sigma: float) -> np.ndarray:
@@ -52,13 +52,17 @@ class BeatDataset(Dataset):
     ``n_frames = n_samples // hop_length``:
 
     - ``beat`` — any beat.
-    - ``one``  — the downbeat (bar position 1).
-    - ``four`` — the last beat of a 4/4 bar (bar position 4).
-    - ``mask`` — constant 1.0 across all frames if this track carries bar-position
-      annotations (``mirdata``'s ``bar_index`` unit), else constant 0.0. Datasets
-      without position annotations (e.g. ``rwc_popular``) still contribute their
-      ``beat`` channel; the ``one``/``four`` channels should be excluded from the
-      loss for those tracks via this mask.
+    - ``one``  — position 1 of the group (the downbeat, for the default
+      ``group_size=4`` bar-position case).
+    - ``last`` — the last beat of the group (bar position 4 for
+      ``group_size=4``; e.g. phrase position 8 for a phrase-annotated dataset
+      with ``group_size=8``).
+    - ``mask`` — constant 1.0 across all frames if this track carries position
+      annotations (``mirdata``'s ``bar_index`` unit, or an equivalent field for
+      a custom phrase-annotated dataset), else constant 0.0. Datasets without
+      position annotations (e.g. ``rwc_popular``) still contribute their
+      ``beat`` channel; the ``one``/``last`` channels should be excluded from
+      the loss for those tracks via this mask.
 
     Each channel is Gaussian-smeared (see :func:`gaussian_smear`) rather than a
     hard 0/1 spike.
@@ -70,6 +74,10 @@ class BeatDataset(Dataset):
         shorter clips are zero-padded.
     :param hop_length: Frame hop size in samples used to build the frame targets.
     :param sigma_frames: Gaussian smearing width, in frames, applied to each target channel.
+    :param group_size: Number of beats per group that ``positions`` counts across —
+        ``4`` (default) for bar-position (1-4) datasets, ``8`` for a phrase-position
+        (1-8) dataset. Only affects which position value is read out as ``last``
+        (``positions == group_size``); ``one`` is always ``positions == 1``.
     """
 
     def __init__(
@@ -80,6 +88,7 @@ class BeatDataset(Dataset):
         duration: float = 10.0,
         hop_length: int = 512,
         sigma_frames: float = 1.5,
+        group_size: int = 4,
     ):
         if data_home is None:
             data_home = DATA_DIR / name
@@ -89,6 +98,7 @@ class BeatDataset(Dataset):
         self.hop_length = hop_length
         self.n_frames = self.n_samples // hop_length
         self.sigma_frames = sigma_frames
+        self.group_size = group_size
 
         ds = mirdata.initialize(name, data_home=str(data_home))
 
@@ -116,7 +126,7 @@ class BeatDataset(Dataset):
             )
         if n_no_positions:
             print(
-                f"[BeatDataset] {name}: {n_no_positions} track(s) have no bar-position annotation (one/four masked)"
+                f"[BeatDataset] {name}: {n_no_positions} track(s) have no position annotation (one/last masked)"
             )
 
     def __len__(self) -> int:
@@ -155,16 +165,16 @@ class BeatDataset(Dataset):
         if has_positions:
             positions = np.asarray(positions)
             one_times = beat_times[positions == 1]
-            four_times = beat_times[positions == 4]
+            last_times = beat_times[positions == self.group_size]
         else:
             one_times = np.array([])
-            four_times = np.array([])
+            last_times = np.array([])
 
         beat = gaussian_smear(self._times_to_spike(beat_times), self.sigma_frames)
         one = gaussian_smear(self._times_to_spike(one_times), self.sigma_frames)
-        four = gaussian_smear(self._times_to_spike(four_times), self.sigma_frames)
+        last = gaussian_smear(self._times_to_spike(last_times), self.sigma_frames)
         mask = np.full(self.n_frames, 1.0 if has_positions else 0.0, dtype=np.float32)
 
-        target = torch.from_numpy(np.stack([beat, one, four, mask]))
+        target = torch.from_numpy(np.stack([beat, one, last, mask]))
 
         return wav, target  # (1, T), (4, n_frames)

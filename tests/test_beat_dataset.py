@@ -12,7 +12,7 @@ HOP_LENGTH = 512
 N_SAMPLES = int(SAMPLE_RATE * DURATION)
 N_FRAMES = N_SAMPLES // HOP_LENGTH
 
-BEAT, ONE, FOUR, MASK = range(4)
+BEAT, ONE, LAST, MASK = range(4)
 
 
 def _make_track(tid="t1", beat_times=None, positions=None):
@@ -98,7 +98,7 @@ class TestBeatDataset:
         """Each item is a (waveform, target) pair with the expected fixed shapes.
 
         The waveform is (1, N_SAMPLES) — mono, fixed length.
-        The target is (4, N_FRAMES) — beat/one/four/mask channels, one value
+        The target is (4, N_FRAMES) — beat/one/last/mask channels, one value
         per hop-length frame.
         """
         tracks = [_make_track("t1", beat_times=[0.5, 1.0, 1.5], positions=[1, 2, 3])]
@@ -171,8 +171,8 @@ class TestBeatDataset:
 
         assert target[BEAT].sum().item() == pytest.approx(0.0)
 
-    def test_one_and_four_channels_from_positions(self):
-        """Bar positions 1 and 4 populate the one/four channels at the right frames."""
+    def test_one_and_last_channels_from_positions(self):
+        """Bar positions 1 and 4 populate the one/last channels at the right frames."""
         beat_times = [0.5, 1.0, 1.5, 2.0, 2.5]
         positions = [1, 2, 3, 4, 1]
         tracks = [_make_track("t1", beat_times=beat_times, positions=positions)]
@@ -193,7 +193,7 @@ class TestBeatDataset:
             for t, p in zip(beat_times, positions)
             if p == 1
         ]
-        four_frames = [
+        last_frames = [
             round(t * SAMPLE_RATE / HOP_LENGTH)
             for t, p in zip(beat_times, positions)
             if p == 4
@@ -201,13 +201,37 @@ class TestBeatDataset:
 
         for frame in one_frames:
             assert target[ONE, frame].item() == pytest.approx(1.0)
-        for frame in four_frames:
-            assert target[FOUR, frame].item() == pytest.approx(1.0)
+        for frame in last_frames:
+            assert target[LAST, frame].item() == pytest.approx(1.0)
 
         # Frame at beat position 2 (1.0s) must not register in either channel.
         mid_frame = round(1.0 * SAMPLE_RATE / HOP_LENGTH)
         assert target[ONE, mid_frame].item() == pytest.approx(0.0)
-        assert target[FOUR, mid_frame].item() == pytest.approx(0.0)
+        assert target[LAST, mid_frame].item() == pytest.approx(0.0)
+
+    def test_group_size_8_reads_phrase_position_from_positions(self):
+        """With group_size=8, `last` is populated from position==8, not position==4."""
+        beat_times = [0.5 * i for i in range(1, 9)]
+        positions = list(range(1, 9))  # a single 8-beat phrase, positions 1-8
+        tracks = [_make_track("t1", beat_times=beat_times, positions=positions)]
+        patches = _patch_loader(tracks)
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        with patches[0], patches[1], patches[2]:
+            ds = BeatDataset(
+                name="my_phrase_dataset",
+                sample_rate=SAMPLE_RATE,
+                duration=DURATION,
+                hop_length=HOP_LENGTH,
+                group_size=8,
+            )
+            _, target = ds[0]
+
+        frame_at_pos4 = round(beat_times[3] * SAMPLE_RATE / HOP_LENGTH)
+        frame_at_pos8 = round(beat_times[7] * SAMPLE_RATE / HOP_LENGTH)
+
+        assert target[LAST, frame_at_pos4].item() == pytest.approx(0.0)
+        assert target[LAST, frame_at_pos8].item() == pytest.approx(1.0)
 
     def test_mask_set_when_positions_present(self):
         """The mask channel is constant 1.0 when the track has bar-position annotations."""
@@ -224,7 +248,7 @@ class TestBeatDataset:
         assert torch.all(target[MASK] == 1.0)
 
     def test_mask_unset_when_positions_missing(self):
-        """The mask channel is constant 0.0, and one/four stay empty, without position annotations."""
+        """The mask channel is constant 0.0, and one/last stay empty, without position annotations."""
         tracks = [_make_track("t1", beat_times=[0.5, 1.0], positions=None)]
         patches = _patch_loader(tracks)
         from musicality.loaders.beat_dataset import BeatDataset
@@ -237,7 +261,7 @@ class TestBeatDataset:
 
         assert torch.all(target[MASK] == 0.0)
         assert torch.all(target[ONE] == 0.0)
-        assert torch.all(target[FOUR] == 0.0)
+        assert torch.all(target[LAST] == 0.0)
 
 
 class TestGaussianSmear:

@@ -48,7 +48,7 @@ class TestPooledMode:
 
 class TestFrameLevelMode:
     def test_output_shape_multi_channel(self):
-        """3-channel frame-level output (e.g. beat/one/four) keeps the time axis."""
+        """3-channel frame-level output (e.g. beat/one/last) keeps the time axis."""
         model = TCNTempoNet(
             n_mels=16, channels=8, n_layers=3, n_outputs=3, frame_level=True
         )

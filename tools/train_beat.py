@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch beat-phase (beat/one/four) training with Hydra config."""
+"""Launch beat-phase (beat/one/last) training with Hydra config."""
 
 import hydra
 from omegaconf import DictConfig

@@ -16,7 +16,7 @@ class TCNTempoNet(nn.Module):
       FC head produces scalar/bin regression or classification logits.
       Input: (B, 1, T) → Output: (B,) or (B, n_outputs).
     - ``frame_level=True``: skips the pool; a 1x1 conv head produces
-      per-frame logits instead (e.g. beat/one/four for beat-phase detection).
+      per-frame logits instead (e.g. beat/one/last for beat-phase detection).
       Input: (B, 1, T) → Output: (B, n_outputs, T') or (B, T') if n_outputs == 1,
       where T' is the mel transform's frame count. Sigmoid is *not* applied —
       pair with ``BCEWithLogitsLoss`` downstream, matching the classification
@@ -36,7 +36,7 @@ class TCNTempoNet(nn.Module):
         ``frame_level=True`` (the frame head is a single 1x1 conv, no dropout).
     :param n_outputs: Output dimension. In pooled mode, ``1`` for scalar regression,
         > 1 for classification over tempo bins. In frame-level mode, the number of
-        per-frame target channels (e.g. 3 for beat/one/four).
+        per-frame target channels (e.g. 3 for beat/one/last).
     :param frame_level: If ``True``, produce per-frame outputs instead of pooling
         over time.
     """
