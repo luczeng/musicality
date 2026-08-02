@@ -18,6 +18,10 @@ import musicality.dataformats as dataformats
 
 DATA_DIR = Path(__file__).parent.parent.parent / dataformats.load().data_dir
 
+# Tapping always starts on beat 1 of an N-count phrase ("sentence" in dance
+# terms — e.g. an 8-count in swing). 8 is the default phrase length.
+DEFAULT_N_BEATS = 8
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -75,20 +79,32 @@ def tempo_from_beats(beat_times: np.ndarray) -> float | None:
     return 60.0 / median_interval
 
 
-def beats_per_bar(beat_positions: np.ndarray | None) -> int:
+def beats_per_bar(
+    beat_positions: np.ndarray | None, default: int = DEFAULT_N_BEATS
+) -> int:
     """Return the number of beats per bar inferred from beat positions.
 
-    Falls back to 4 when positions are unavailable or empty.
+    Falls back to *default* when positions are unavailable or empty.
     """
     if beat_positions is None or len(beat_positions) == 0:
-        return 4
+        return default
     return int(max(beat_positions))
+
+
+def cycle_positions(n_total: int, n_beats: int) -> np.ndarray:
+    """Return *n_total* 1-indexed positions cycling 1..n_beats, starting at 1.
+
+    Matches the annotation convention that tapping always starts on beat 1
+    of an N-count phrase.
+    """
+    return np.array([(i % n_beats) + 1 for i in range(n_total)], dtype=int)
 
 
 def active_beat_position(
     beat_times: np.ndarray,
     beat_positions: np.ndarray | None,
     t: float,
+    default_n_beats: int = DEFAULT_N_BEATS,
 ) -> int | None:
     """Return the 1-indexed bar position of the most recent beat at time *t*.
 
@@ -101,11 +117,15 @@ def active_beat_position(
         return None
     if beat_positions is not None:
         return int(beat_positions[idx])
-    n = beats_per_bar(beat_positions)
+    n = beats_per_bar(beat_positions, default=default_n_beats)
     return (idx % n) + 1
 
 
-def bar_indices(beat_positions: np.ndarray | None, n_total: int) -> np.ndarray:
+def bar_indices(
+    beat_positions: np.ndarray | None,
+    n_total: int,
+    default_n_beats: int = DEFAULT_N_BEATS,
+) -> np.ndarray:
     """Return the 0-indexed bar number for each of *n_total* beats.
 
     Uses ``beat_positions`` (cumulative count of downbeats) when available,
@@ -115,7 +135,7 @@ def bar_indices(beat_positions: np.ndarray | None, n_total: int) -> np.ndarray:
         return np.array([], dtype=int)
     if beat_positions is not None:
         return np.cumsum(beat_positions == 1) - 1
-    n = beats_per_bar(beat_positions)
+    n = beats_per_bar(beat_positions, default=default_n_beats)
     return np.arange(n_total) // n
 
 
@@ -123,6 +143,7 @@ def active_bar_index(
     beat_times: np.ndarray,
     beat_positions: np.ndarray | None,
     t: float,
+    default_n_beats: int = DEFAULT_N_BEATS,
 ) -> int | None:
     """Return the 0-indexed bar number containing the most recent beat at time *t*.
 
@@ -133,7 +154,7 @@ def active_bar_index(
     idx = int(np.searchsorted(beat_times, t, side="right")) - 1
     if idx < 0:
         return None
-    return int(bar_indices(beat_positions, len(beat_times))[idx])
+    return int(bar_indices(beat_positions, len(beat_times), default_n_beats)[idx])
 
 
 def is_accent_beat(
@@ -155,18 +176,21 @@ def is_accent_beat(
     return position == 1 and bar_index % int(accent_bars) == 0
 
 
-def add_beat(track: TrackData, time: float) -> TrackData:
+def add_beat(
+    track: TrackData, time: float, n_beats: int = DEFAULT_N_BEATS
+) -> TrackData:
     """Return a new :class:`TrackData` with a beat inserted at *time*.
 
-    If the track has no bar positions (beats-only mode), positions stay None.
-    Otherwise positions are recomputed sequentially preserving beats-per-bar.
+    Positions always cycle 1..n_beats, starting at 1 on the very first
+    beat — the annotation convention that tapping begins on beat 1 of an
+    N-count phrase. *n_beats* is trusted as given rather than inferred from
+    the track's existing positions: inferring it from a still-partial tap
+    sequence (e.g. only 1 beat tapped so far) would underestimate the
+    intended count. Callers that want to preserve an already-known meter
+    (e.g. loaded from mirdata) should pass that meter's beat count.
     """
     times = np.sort(np.append(track.beat_times, time))
-    if track.beat_positions is None:
-        positions = None
-    else:
-        n = beats_per_bar(track.beat_positions)
-        positions = np.array([(i % n) + 1 for i in range(len(times))], dtype=int)
+    positions = cycle_positions(len(times), n_beats)
     return TrackData(
         dataset_name=track.dataset_name,
         track_id=track.track_id,
@@ -177,10 +201,16 @@ def add_beat(track: TrackData, time: float) -> TrackData:
     )
 
 
-def remove_beat(track: TrackData, time: float, tolerance: float = 0.1) -> TrackData:
+def remove_beat(
+    track: TrackData,
+    time: float,
+    tolerance: float = 0.1,
+    n_beats: int = DEFAULT_N_BEATS,
+) -> TrackData:
     """Return a new :class:`TrackData` with the beat nearest to *time* removed.
 
     Does nothing if no beat falls within *tolerance* seconds of *time*.
+    Remaining positions are recycled 1..n_beats, same rule as :func:`add_beat`.
     """
     if len(track.beat_times) == 0:
         return track
@@ -188,11 +218,7 @@ def remove_beat(track: TrackData, time: float, tolerance: float = 0.1) -> TrackD
     if abs(track.beat_times[idx] - time) > tolerance:
         return track
     times = np.delete(track.beat_times, idx)
-    if track.beat_positions is None:
-        positions = None
-    else:
-        n = beats_per_bar(track.beat_positions)
-        positions = np.array([(i % n) + 1 for i in range(len(times))], dtype=int)
+    positions = cycle_positions(len(times), n_beats)
     return TrackData(
         dataset_name=track.dataset_name,
         track_id=track.track_id,
@@ -235,12 +261,31 @@ def load_metadata(dataset_name: str, track_id: str) -> TrackMetadata | None:
 _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".aiff"}
 
 
-def _read_beats_file(path: Path) -> np.ndarray:
-    """Read a .beats text file (one timestamp per line) into a sorted array."""
-    return np.array(
-        [float(line) for line in path.read_text().splitlines() if line.strip()],
-        dtype=float,
-    )
+def _read_beats_file(path: Path) -> tuple[np.ndarray, np.ndarray | None]:
+    """Read a .beats file into ``(times, positions)``.
+
+    Uses mirdata's own format — ``<time> <position>`` per line (see e.g. the
+    ballroom dataset's raw annotation files). Falls back to bare timestamps
+    (one per line, no position) for files saved before position tracking was
+    added; in that case ``positions`` is ``None``.
+    """
+    times: list[float] = []
+    positions: list[int] = []
+    has_positions = True
+    for line in path.read_text().splitlines():
+        parts = line.split()
+        if not parts:
+            continue
+        times.append(float(parts[0]))
+        if len(parts) >= 2:
+            positions.append(int(parts[1]))
+        else:
+            has_positions = False
+
+    times_arr = np.array(times, dtype=float)
+    if has_positions and len(positions) == len(times):
+        return times_arr, np.array(positions, dtype=int)
+    return times_arr, None
 
 
 def _dataset_mtime(path: Path, tracks_dir: Path) -> float:
@@ -335,15 +380,16 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
         audio_path = tracks_dir / f"{track_id}.wav"
         ann_path = DATA_DIR / dataset_name / "annotations" / f"{track_id}.beats"
         beat_times: np.ndarray = np.array([])
+        beat_positions: np.ndarray | None = None
         if ann_path.exists():
-            beat_times = _read_beats_file(ann_path)
+            beat_times, beat_positions = _read_beats_file(ann_path)
         return TrackData(
             dataset_name=dataset_name,
             track_id=track_id,
             audio_path=str(audio_path),
             tempo=None,
             beat_times=beat_times,
-            beat_positions=None,
+            beat_positions=beat_positions,
         )
 
     ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
@@ -352,13 +398,14 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
     # Prefer our own saved annotation over the dataset's built-in beats
     ann_path = DATA_DIR / dataset_name / "annotations" / f"{track_id}.beats"
     if ann_path.exists():
+        beat_times, beat_positions = _read_beats_file(ann_path)
         return TrackData(
             dataset_name=dataset_name,
             track_id=track_id,
             audio_path=track.audio_path,
             tempo=None,
-            beat_times=_read_beats_file(ann_path),
-            beat_positions=None,
+            beat_times=beat_times,
+            beat_positions=beat_positions,
         )
 
     beat_times = np.array([])
@@ -377,10 +424,21 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
 
 
 def save_annotations(track: TrackData, path: Path) -> None:
-    """Persist beat times to a .beats file (one timestamp per line, in seconds)."""
+    """Persist beat annotations to a .beats file, mirdata's own format:
+    ``<time> <position>`` per line (seconds, 1-indexed bar/phrase position) —
+    see e.g. the ballroom dataset's raw annotation files.
+
+    Falls back to bare timestamps (no position column) if the track has no
+    positions.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(f"{t:.6f}" for t in track.beat_times))
+    positions = track.beat_positions
+    if positions is not None and len(positions) == len(track.beat_times):
+        lines = (f"{t:.6f} {p}" for t, p in zip(track.beat_times, positions))
+    else:
+        lines = (f"{t:.6f}" for t in track.beat_times)
+    path.write_text("\n".join(lines))
 
 
 def delete_track(track: TrackData) -> None:

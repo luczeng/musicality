@@ -4,11 +4,13 @@ import numpy as np
 import pytest
 
 from tools.annotator.data import (
+    DEFAULT_N_BEATS,
     TrackData,
+    _read_beats_file,
     active_beat_position,
     add_beat,
     beats_per_bar,
-    load_annotations,
+    cycle_positions,
     remove_beat,
     save_annotations,
 )
@@ -17,6 +19,7 @@ from tools.annotator.data import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _track(beat_times, beat_positions=None, tempo=120.0):
     return TrackData(
@@ -35,12 +38,16 @@ def _track(beat_times, beat_positions=None, tempo=120.0):
 # beats_per_bar
 # ---------------------------------------------------------------------------
 
-class TestBeatsPerBar:
-    def test_none_returns_4(self):
-        assert beats_per_bar(None) == 4
 
-    def test_empty_returns_4(self):
-        assert beats_per_bar(np.array([])) == 4
+class TestBeatsPerBar:
+    def test_none_returns_default(self):
+        assert beats_per_bar(None) == DEFAULT_N_BEATS
+
+    def test_empty_returns_default(self):
+        assert beats_per_bar(np.array([])) == DEFAULT_N_BEATS
+
+    def test_custom_default(self):
+        assert beats_per_bar(None, default=4) == 4
 
     def test_waltz_returns_3(self):
         assert beats_per_bar(np.array([1, 2, 3, 1, 2, 3])) == 3
@@ -50,8 +57,27 @@ class TestBeatsPerBar:
 
 
 # ---------------------------------------------------------------------------
+# cycle_positions
+# ---------------------------------------------------------------------------
+
+
+class TestCyclePositions:
+    def test_starts_at_1(self):
+        positions = cycle_positions(3, 8)
+        assert positions[0] == 1
+
+    def test_cycles(self):
+        positions = cycle_positions(10, 4)
+        assert list(positions) == [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]
+
+    def test_empty(self):
+        assert len(cycle_positions(0, 8)) == 0
+
+
+# ---------------------------------------------------------------------------
 # active_beat_position
 # ---------------------------------------------------------------------------
+
 
 class TestActiveBeatPosition:
     def test_before_first_beat_returns_none(self):
@@ -75,8 +101,13 @@ class TestActiveBeatPosition:
 
     def test_no_positions_returns_sequential(self):
         times = np.array([0.0, 0.5, 1.0, 1.5])
-        pos = active_beat_position(times, None, 1.0)
+        pos = active_beat_position(times, None, 1.0, default_n_beats=4)
         assert 1 <= pos <= 4
+
+    def test_no_positions_uses_default_n_beats(self):
+        times = np.array([0.0, 0.5, 1.0, 1.5])
+        pos = active_beat_position(times, None, 1.0)
+        assert 1 <= pos <= DEFAULT_N_BEATS
 
     def test_empty_beats_returns_none(self):
         assert active_beat_position(np.array([]), None, 1.0) is None
@@ -85,6 +116,7 @@ class TestActiveBeatPosition:
 # ---------------------------------------------------------------------------
 # add_beat
 # ---------------------------------------------------------------------------
+
 
 class TestAddBeat:
     def test_beat_is_inserted_sorted(self):
@@ -102,15 +134,35 @@ class TestAddBeat:
         _ = add_beat(track, 2.0)
         assert len(track.beat_times) == 2
 
-    def test_beats_per_bar_preserved(self):
+    def test_caller_supplied_n_beats_applied(self):
+        """add_beat trusts the caller's n_beats rather than inferring it from
+        the (possibly still-partial) existing positions."""
         track = _track([0.0, 0.33, 0.67], [1, 2, 3])
-        result = add_beat(track, 1.0)
+        result = add_beat(track, 1.0, n_beats=3)
         assert beats_per_bar(result.beat_positions) == 3
+
+    def test_first_tap_starts_at_position_1(self):
+        track = _track([])
+        result = add_beat(track, 0.5)
+        assert list(result.beat_positions) == [1]
+
+    def test_fresh_track_cycles_with_n_beats(self):
+        track = _track([])
+        for t in range(10):
+            track = add_beat(track, float(t), n_beats=4)
+        assert list(track.beat_positions) == [1, 2, 3, 4, 1, 2, 3, 4, 1, 2]
+
+    def test_default_n_beats_is_8(self):
+        track = _track([])
+        for t in range(9):
+            track = add_beat(track, float(t))
+        assert list(track.beat_positions) == [1, 2, 3, 4, 5, 6, 7, 8, 1]
 
 
 # ---------------------------------------------------------------------------
 # remove_beat
 # ---------------------------------------------------------------------------
+
 
 class TestRemoveBeat:
     def test_removes_nearest_within_tolerance(self):
@@ -134,36 +186,52 @@ class TestRemoveBeat:
         _ = remove_beat(track, 1.0)
         assert len(track.beat_times) == 3
 
+    def test_remaining_positions_recycled_from_1(self):
+        track = _track([1.0, 2.0, 3.0], [1, 2, 3])
+        result = remove_beat(track, 1.0, tolerance=0.1, n_beats=3)
+        assert list(result.beat_positions) == [1, 2]
+
 
 # ---------------------------------------------------------------------------
-# save / load annotations
+# save / load annotations (mirdata's "<time> <position>" format)
 # ---------------------------------------------------------------------------
+
 
 class TestSaveLoadAnnotations:
     def test_round_trip_with_positions(self, tmp_path):
         track = _track([1.0, 2.0, 3.0], [1, 2, 3])
-        path = tmp_path / "ann.json"
+        path = tmp_path / "t1.beats"
         save_annotations(track, path)
-        loaded = load_annotations(path)
-        np.testing.assert_array_almost_equal(loaded["beat_times"], track.beat_times)
-        np.testing.assert_array_equal(loaded["beat_positions"], track.beat_positions)
+        times, positions = _read_beats_file(path)
+        np.testing.assert_array_almost_equal(times, track.beat_times)
+        np.testing.assert_array_equal(positions, track.beat_positions)
 
     def test_round_trip_no_positions(self, tmp_path):
         track = _track([1.0, 2.0])
-        path = tmp_path / "ann.json"
+        path = tmp_path / "t1.beats"
         save_annotations(track, path)
-        loaded = load_annotations(path)
-        assert loaded["beat_positions"] is None
+        times, positions = _read_beats_file(path)
+        np.testing.assert_array_almost_equal(times, track.beat_times)
+        assert positions is None
 
     def test_creates_parent_dirs(self, tmp_path):
         track = _track([1.0])
-        path = tmp_path / "deep" / "dir" / "ann.json"
+        path = tmp_path / "deep" / "dir" / "t1.beats"
         save_annotations(track, path)
         assert path.exists()
 
-    def test_tempo_preserved(self, tmp_path):
-        track = _track([1.0], tempo=98.6)
-        path = tmp_path / "ann.json"
+    def test_file_format_matches_mirdata(self, tmp_path):
+        """One '<time> <position>' pair per line, e.g. ballroom's raw .beats files."""
+        track = _track([0.5, 1.25], [1, 2])
+        path = tmp_path / "t1.beats"
         save_annotations(track, path)
-        loaded = load_annotations(path)
-        assert loaded["tempo"] == pytest.approx(98.6)
+        lines = path.read_text().splitlines()
+        assert lines == ["0.500000 1", "1.250000 2"]
+
+    def test_reads_legacy_timestamp_only_file(self, tmp_path):
+        """Files saved before position tracking (bare timestamps) still load."""
+        path = tmp_path / "t1.beats"
+        path.write_text("1.000000\n2.000000\n3.000000")
+        times, positions = _read_beats_file(path)
+        np.testing.assert_array_almost_equal(times, [1.0, 2.0, 3.0])
+        assert positions is None

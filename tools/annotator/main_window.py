@@ -33,6 +33,7 @@ from .audio import AudioEngine
 from .recorder import Recorder, _SR as _REC_SR
 from .data import (
     DATA_DIR,
+    DEFAULT_N_BEATS,
     TrackData,
     TrackMetadata,
     active_bar_index,
@@ -41,6 +42,7 @@ from .data import (
     annotation_path,
     bar_indices,
     beats_per_bar,
+    cycle_positions,
     has_annotation,
     has_mirdata_annotation,
     is_accent_beat,
@@ -67,7 +69,7 @@ class MainWindow(QMainWindow):
 
     Layout
     ------
-    Top-left  : controls — playback, recording, speed, accent, structure, delete/rename
+    Top-left  : controls — playback, recording, speed, count, accent, structure, delete/rename
     Top-right : read-only track info — beat analytics + captured metadata
     Center    : WaveformWidget  (resizable, takes remaining space)
     Bottom    : MetronomeWidget, then TapTempoWidget (fixed height)
@@ -100,7 +102,7 @@ class MainWindow(QMainWindow):
         self._engine = AudioEngine()
         self._recorder = Recorder()
         self._timer = QTimer(self)
-        self._n_beats = 4
+        self._n_beats = DEFAULT_N_BEATS
         self._accent_bars: float = 1.0
         self._record_start: float = 0.0
         self._record_tick: int = 0
@@ -253,7 +255,7 @@ class MainWindow(QMainWindow):
         self._waveform.beat_removed.connect(self._on_beat_removed)
 
         self._metronome = MetronomeWidget()
-        self._metronome.set_state(4, None)
+        self._metronome.set_state(DEFAULT_N_BEATS, None)
 
         self._speed = 1.0
         self._speed_combo = QComboBox()
@@ -267,6 +269,23 @@ class MainWindow(QMainWindow):
         speed_bar.addWidget(QLabel("Speed:"))
         speed_bar.addWidget(self._speed_combo)
         speed_bar.addStretch()
+
+        # Count: length of the tap phrase in beats. Tapping always starts on
+        # beat 1 (e.g. an 8-count "sentence" in swing dancing).
+        self._count_group = QButtonGroup(self)
+        self._count_group.setExclusive(True)
+        count_bar = QHBoxLayout()
+        count_bar.addWidget(QLabel("Count:"))
+        for n_beats in (4, 8):
+            btn = QPushButton(str(n_beats))
+            btn.setCheckable(True)
+            btn.setFixedWidth(40)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setChecked(n_beats == self._n_beats)
+            btn.clicked.connect(lambda _checked, n=n_beats: self._on_count_changed(n))
+            self._count_group.addButton(btn)
+            count_bar.addWidget(btn)
+        count_bar.addStretch()
 
         self._accent_group = QButtonGroup(self)
         self._accent_group.setExclusive(True)
@@ -322,6 +341,7 @@ class MainWindow(QMainWindow):
         controls_column.addLayout(rename_bar)
         controls_column.addLayout(sound_bar)
         controls_column.addLayout(speed_bar)
+        controls_column.addLayout(count_bar)
         controls_column.addLayout(accent_bar)
         controls_column.addLayout(structure_bar)
         controls_column.addLayout(delete_bar)
@@ -408,7 +428,8 @@ class MainWindow(QMainWindow):
         self._index = index
         track_id = self._track_ids[index]
         self._track = load_track(self._dataset_name, track_id)
-        self._n_beats = beats_per_bar(self._track.beat_positions)
+        self._n_beats = beats_per_bar(self._track.beat_positions, default=self._n_beats)
+        self._sync_count_buttons()
 
         self._update_info_label()
         self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
@@ -573,6 +594,32 @@ class MainWindow(QMainWindow):
         self._waveform.set_accent_bars(accent_bars)
         self._update_engine_clicks()
 
+    def _sync_count_buttons(self) -> None:
+        """Check the Count button matching ``self._n_beats``, if any (e.g. a
+        loaded mirdata meter like 3/4 time has no matching quick-select button)."""
+        for btn in self._count_group.buttons():
+            btn.setChecked(btn.text() == str(self._n_beats))
+
+    def _on_count_changed(self, n_beats: int) -> None:
+        """Change the tap phrase length, re-tagging any already-tapped beats.
+
+        Existing taps are recycled 1..n_beats from the first beat, so
+        switching mid-annotation still guarantees tap 1 lands on position 1.
+        """
+        self._n_beats = n_beats
+        if self._track is not None and len(self._track.beat_times) > 0:
+            positions = cycle_positions(len(self._track.beat_times), n_beats)
+            self._track = TrackData(
+                dataset_name=self._track.dataset_name,
+                track_id=self._track.track_id,
+                audio_path=self._track.audio_path,
+                tempo=self._track.tempo,
+                beat_times=self._track.beat_times,
+                beat_positions=positions,
+            )
+        self._refresh_beats()
+        self._metronome.set_state(self._n_beats, None)
+
     # ------------------------------------------------------------------
     # Audio
     # ------------------------------------------------------------------
@@ -640,7 +687,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def _on_beat_added(self, t: float) -> None:
-        self._track = add_beat(self._track, t)
+        self._track = add_beat(self._track, t, n_beats=self._n_beats)
         self._refresh_beats()
         if self._click_btn.isChecked() and self._engine.is_playing:
             idx = int(np.searchsorted(self._track.beat_times, t))
@@ -651,7 +698,7 @@ class MainWindow(QMainWindow):
             self._engine.trigger_click_now(is_down)
 
     def _on_beat_removed(self, t: float) -> None:
-        self._track = remove_beat(self._track, t)
+        self._track = remove_beat(self._track, t, n_beats=self._n_beats)
         self._refresh_beats()
 
     def _on_reset_beats(self) -> None:
@@ -803,7 +850,9 @@ class MainWindow(QMainWindow):
         self._engine.set_clicks(beat_frames, beat_is_down, self._track_sr)
 
     def _refresh_beats(self) -> None:
-        self._n_beats = beats_per_bar(self._track.beat_positions)
+        """Refresh derived views after beats change. Does not touch
+        ``self._n_beats`` — that's owned by the Count selector (see
+        :meth:`_on_count_changed`), not re-derived from partial tap data."""
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._update_engine_clicks()
         self._update_info_label()
@@ -887,10 +936,10 @@ class MainWindow(QMainWindow):
         t = self._engine.position
         self._waveform.set_position(t)
         pos = active_beat_position(
-            self._track.beat_times, self._track.beat_positions, t
+            self._track.beat_times, self._track.beat_positions, t, self._n_beats
         )
         bar_index = active_bar_index(
-            self._track.beat_times, self._track.beat_positions, t
+            self._track.beat_times, self._track.beat_positions, t, self._n_beats
         )
         self._metronome.set_state(self._n_beats, pos, bar_index)
 
