@@ -1,4 +1,4 @@
-"""PyTorch Lightning module for frame-level beat-phase detection (beat/one/four)."""
+"""PyTorch Lightning module for frame-level beat-phase detection (beat/one/last)."""
 
 import torch
 import lightning as L
@@ -40,7 +40,7 @@ def frame_accuracy(
     at ``threshold`` and checks agreement. This is not the F-measure evaluation
     the project ultimately cares about (see the beat-phase plan's evaluation
     step) — it's a cheap per-epoch signal, dominated by the true-negative rate
-    since beat/one/four frames are a small minority.
+    since beat/one/last frames are a small minority.
 
     :param probs: Predicted probabilities (post-sigmoid), shape ``(B, T)``.
     :param target: Ground-truth (possibly smeared) target, shape ``(B, T)``.
@@ -61,7 +61,7 @@ def frame_accuracy(
 
 
 class BeatPhaseModule(L.LightningModule):
-    """LightningModule wrapping a frame-level beat-phase model (beat/one/four).
+    """LightningModule wrapping a frame-level beat-phase model (beat/one/last).
 
     The backbone is instantiated with ``frame_level=True`` and ``n_outputs=3``
     regardless of what the config says, mirroring how :class:`~musicality.trainers.tempo_module.TempoModule`
@@ -106,8 +106,8 @@ class BeatPhaseModule(L.LightningModule):
         loss = beat_phase_loss(logits, target, pos_weight=self.hparams.pos_weight)
         probs = torch.sigmoid(logits)
 
-        beat_p, one_p, four_p = probs[:, 0], probs[:, 1], probs[:, 2]
-        beat_y, one_y, four_y, mask = (
+        beat_p, one_p, last_p = probs[:, 0], probs[:, 1], probs[:, 2]
+        beat_y, one_y, last_y, mask = (
             target[:, 0],
             target[:, 1],
             target[:, 2],
@@ -128,8 +128,8 @@ class BeatPhaseModule(L.LightningModule):
             **log_kw,
         )
         self.log(
-            f"{stage}/acc_four",
-            frame_accuracy(four_p, four_y, mask=mask, threshold=threshold),
+            f"{stage}/acc_last",
+            frame_accuracy(last_p, last_y, mask=mask, threshold=threshold),
             **log_kw,
         )
 

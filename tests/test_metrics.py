@@ -1,5 +1,5 @@
 """Tests for musicality.metrics: beat_f_measure, downbeat_f_measures,
-confusion_1_vs_3_rate.
+confusion_half_cycle_rate.
 """
 
 import numpy as np
@@ -7,7 +7,7 @@ import pytest
 
 from musicality.metrics import (
     beat_f_measure,
-    confusion_1_vs_3_rate,
+    confusion_half_cycle_rate,
     downbeat_f_measures,
 )
 
@@ -60,57 +60,76 @@ class TestDownbeatFMeasures:
         ref_positions = np.tile([1, 2, 3, 4], 2)
         pred = _events(ref_times, ref_positions)
 
-        f_one, f_four = downbeat_f_measures(ref_times, ref_positions, pred)
+        f_one, f_last = downbeat_f_measures(ref_times, ref_positions, pred)
         assert f_one == pytest.approx(1.0)
-        assert f_four == pytest.approx(1.0)
+        assert f_last == pytest.approx(1.0)
 
     def test_no_predicted_downbeats_is_zero(self):
         ref_times = np.arange(6.0, 6.0 + 0.5 * 8, 0.5)
         ref_positions = np.tile([1, 2, 3, 4], 2)
         pred = _events(ref_times, [2, 2, 3, 3, 2, 2, 3, 3])  # never predicts 1 or 4
 
-        f_one, f_four = downbeat_f_measures(ref_times, ref_positions, pred)
+        f_one, f_last = downbeat_f_measures(ref_times, ref_positions, pred)
         assert f_one == 0.0
-        assert f_four == 0.0
+        assert f_last == 0.0
+
+    def test_group_size_8_uses_position_8_as_last(self):
+        # 2 phrases of 8 beats; position 4 must NOT count as "last" here.
+        ref_times = np.arange(6.0, 6.0 + 0.5 * 16, 0.5)
+        ref_positions = np.tile(np.arange(1, 9), 2)
+        pred = _events(ref_times, ref_positions)
+
+        f_one, f_last = downbeat_f_measures(
+            ref_times, ref_positions, pred, group_size=8
+        )
+        assert f_one == pytest.approx(1.0)
+        assert f_last == pytest.approx(1.0)
+
+        # predicting "4" instead of "8" should score zero on the last-position F-measure
+        wrong_pred = _events(ref_times, [4 if p == 8 else p for p in ref_positions])
+        _, f_last_wrong = downbeat_f_measures(
+            ref_times, ref_positions, wrong_pred, group_size=8
+        )
+        assert f_last_wrong == 0.0
 
 
 # ---------------------------------------------------------------------------
-# confusion_1_vs_3_rate
+# confusion_half_cycle_rate
 # ---------------------------------------------------------------------------
 
 
-class TestConfusion1v3Rate:
+class TestConfusionHalfCycleRate:
     def test_no_eligible_beats_returns_none(self):
         ref_times = np.array([0.0, 0.5])
         ref_positions = np.array([2, 4])  # no position-1 or -3 beats
         pred = _events(ref_times, [2, 4])
-        assert confusion_1_vs_3_rate(ref_times, ref_positions, pred) is None
+        assert confusion_half_cycle_rate(ref_times, ref_positions, pred) is None
 
     def test_no_predictions_returns_none(self):
         ref_times = np.array([0.0, 1.0])
         ref_positions = np.array([1, 3])
-        assert confusion_1_vs_3_rate(ref_times, ref_positions, []) is None
+        assert confusion_half_cycle_rate(ref_times, ref_positions, []) is None
 
     def test_correct_labels_zero_confusion(self):
         ref_times = np.array([0.0, 0.5, 1.0, 1.5])
         ref_positions = np.array([1, 2, 3, 4])
         pred = _events(ref_times, [1, 2, 3, 4])
-        assert confusion_1_vs_3_rate(ref_times, ref_positions, pred) == 0.0
+        assert confusion_half_cycle_rate(ref_times, ref_positions, pred) == 0.0
 
     def test_systematic_half_bar_swap_full_confusion(self):
         ref_times = np.array([0.0, 0.5, 1.0, 1.5])
         ref_positions = np.array([1, 2, 3, 4])
         pred = _events(ref_times, [3, 2, 1, 4])  # 1<->3 swapped, 2/4 untouched
-        assert confusion_1_vs_3_rate(ref_times, ref_positions, pred) == pytest.approx(
-            1.0
-        )
+        assert confusion_half_cycle_rate(
+            ref_times, ref_positions, pred
+        ) == pytest.approx(1.0)
 
     def test_unresolved_or_off_parity_labels_excluded_not_counted_as_correct(self):
         ref_times = np.array([0.0, 1.0])
         ref_positions = np.array([1, 3])
         # neither predicted label is 1 or 3 -> both excluded, nothing eligible left
         pred = _events(ref_times, [2, None])
-        assert confusion_1_vs_3_rate(ref_times, ref_positions, pred) is None
+        assert confusion_half_cycle_rate(ref_times, ref_positions, pred) is None
 
     def test_unmatched_beat_excluded(self):
         ref_times = np.array([0.0, 1.0])
@@ -118,5 +137,26 @@ class TestConfusion1v3Rate:
         pred = _events([0.0, 5.0], [1, 3])  # second prediction far outside tolerance
         # only the first beat is eligible+matched, and it's correct
         assert (
-            confusion_1_vs_3_rate(ref_times, ref_positions, pred, tolerance=0.07) == 0.0
+            confusion_half_cycle_rate(ref_times, ref_positions, pred, tolerance=0.07)
+            == 0.0
+        )
+
+    def test_group_size_8_swaps_1_vs_5(self):
+        # half of an 8-beat phrase is 4 beats away: opposite of position 1 is position 5.
+        ref_times = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5])
+        ref_positions = np.arange(1, 9)
+        pred = _events(
+            ref_times, [5 if p == 1 else (1 if p == 5 else p) for p in ref_positions]
+        )
+        assert confusion_half_cycle_rate(
+            ref_times, ref_positions, pred, group_size=8
+        ) == pytest.approx(1.0)
+
+    def test_group_size_8_no_confusion_when_correct(self):
+        ref_times = np.array([0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5])
+        ref_positions = np.arange(1, 9)
+        pred = _events(ref_times, ref_positions)
+        assert (
+            confusion_half_cycle_rate(ref_times, ref_positions, pred, group_size=8)
+            == 0.0
         )

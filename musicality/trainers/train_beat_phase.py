@@ -1,4 +1,4 @@
-"""Core training routine for frame-level beat-phase detection (beat/one/four)."""
+"""Core training routine for frame-level beat-phase detection (beat/one/last)."""
 
 import logging
 import random
@@ -24,11 +24,11 @@ _TRACKED_KEYS = (
     "train/loss",
     "train/acc_beat",
     "train/acc_one",
-    "train/acc_four",
+    "train/acc_last",
     "val/loss",
     "val/acc_beat",
     "val/acc_one",
-    "val/acc_four",
+    "val/acc_last",
 )
 
 
@@ -62,6 +62,7 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
         duration=cfg.data.duration,
         hop_length=cfg.hop_length,
         sigma_frames=cfg.sigma_frames,
+        group_size=cfg.get("group_size", 4),
     )
 
     _fmt = dataformats.load()
