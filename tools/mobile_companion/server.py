@@ -103,6 +103,9 @@ async def upload_track(
 @app.post("/datasets/{dataset}/tracks/{track_id}/annotations")
 def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
     beat_times = np.sort(np.array(body.tap_times, dtype=float))
+    beat_positions = annotator_data.cycle_positions(
+        len(beat_times), annotator_data.DEFAULT_N_BEATS
+    )
     track = annotator_data.TrackData(
         dataset_name=dataset,
         track_id=track_id,
@@ -111,7 +114,7 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
         ),
         tempo=annotator_data.tempo_from_beats(beat_times),
         beat_times=beat_times,
-        beat_positions=None,
+        beat_positions=beat_positions,
     )
     annotator_data.save_annotations(track, annotator_data.annotation_path(track))
 
