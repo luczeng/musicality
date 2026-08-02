@@ -9,6 +9,11 @@ batch_size: 16
 n_mels: 128
 hop_length: 512
 sigma_frames: 1.5
+# Beats per group that the dataset's position annotations count across: 4 for a
+# bar-position (1-4) dataset (e.g. ballroom), 8 for a phrase-position (1-8)
+# dataset. Only changes what the "last" target/head means (positions == group_size);
+# "one" is always position 1. Override on the CLI, e.g. `group_size=8 data.name=<phrase_dataset>`.
+group_size: 4
 train_subsample: null
 checkpoint_dir: checkpoints_beat/
 trainer:

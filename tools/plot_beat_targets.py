@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Visualize the frame-level beat/one/four targets produced by BeatDataset.
+"""Visualize the frame-level beat/one/last targets produced by BeatDataset.
 
 Plots the waveform of a single dataset clip alongside its three Gaussian-smeared
-target curves (beat, one, four), so the smearing width and bar-position
+target curves (beat, one, last), so the smearing width and position-annotation
 coverage can be sanity-checked by eye.
 
 Usage
 -----
-    # random clip from ballroom, default clip settings
+    # random clip from ballroom, default clip settings (bar position, 1-4)
     uv run python tools/plot_beat_targets.py --dataset ballroom
 
     # a specific dataset index, custom clip duration/hop/smear width
     uv run python tools/plot_beat_targets.py --dataset hainsworth --index 3 --duration 8 --sigma 2.0
+
+    # a phrase-position (1-8) dataset
+    uv run python tools/plot_beat_targets.py --dataset my_phrase_dataset --group-size 8
 """
 
 import argparse
@@ -25,7 +28,7 @@ from musicality.loaders.beat_dataset import BeatDataset
 
 def plot_targets(wav, target, sample_rate: int, hop_length: int, title: str):
 
-    beat, one, four, mask = target.numpy()
+    beat, one, last, mask = target.numpy()
 
     wav_times = np.arange(wav.shape[-1]) / sample_rate
     frame_times = np.arange(target.shape[-1]) * hop_length / sample_rate
@@ -40,7 +43,7 @@ def plot_targets(wav, target, sample_rate: int, hop_length: int, title: str):
 
     ax_targets.plot(frame_times, beat, color="#FFD700", label="beat", linewidth=1.2)
     ax_targets.plot(frame_times, one, color="#E74C3C", label="one", linewidth=1.4)
-    ax_targets.plot(frame_times, four, color="#44CC44", label="four", linewidth=1.4)
+    ax_targets.plot(frame_times, last, color="#44CC44", label="last", linewidth=1.4)
     ax_targets.set_ylim(-0.05, 1.05)
     ax_targets.set_xlabel("Time (s)")
     ax_targets.set_ylabel("Target amplitude")
@@ -82,6 +85,12 @@ def main():
     parser.add_argument(
         "--sigma", type=float, default=1.5, help="Gaussian smear width, in frames"
     )
+    parser.add_argument(
+        "--group-size",
+        type=int,
+        default=4,
+        help="Beats per group: 4 for bar position (default), 8 for phrase position",
+    )
     args = parser.parse_args()
 
     ds = BeatDataset(
@@ -89,6 +98,7 @@ def main():
         sample_rate=args.sample_rate,
         duration=args.duration,
         hop_length=args.hop_length,
+        group_size=args.group_size,
         sigma_frames=args.sigma,
     )
 

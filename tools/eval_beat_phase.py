@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Evaluate a trained beat-phase checkpoint: beat / "1" / "4" F-measure and the
-1-vs-3 phase-confusion rate, over full-length tracks (not the fixed-duration
-clips used during training).
+"""Evaluate a trained beat-phase checkpoint: beat / "1" / "last" F-measure and
+the half-cycle phase-confusion rate, over full-length tracks (not the
+fixed-duration clips used during training).
 
 Usage
 -----
@@ -11,6 +11,9 @@ Usage
 
     # evaluate the training split too, or just the first N tracks for a quick check
     uv run python tools/eval_beat_phase.py --checkpoint ... --dataset ballroom --split all --limit 20
+
+    # a phrase-position (1-8) dataset instead of the default bar-position (1-4) one
+    uv run python tools/eval_beat_phase.py --checkpoint ... --dataset my_phrase_dataset --group-size 8
 """
 
 import argparse
@@ -25,7 +28,7 @@ import musicality.dataformats as dataformats
 from musicality.loaders.beat_dataset import BeatDataset
 from musicality.metrics import (
     beat_f_measure,
-    confusion_1_vs_3_rate,
+    confusion_half_cycle_rate,
     downbeat_f_measures,
 )
 from musicality.postprocess import readout
@@ -84,6 +87,7 @@ def evaluate_track(
     min_distance_frames: int,
     gate_tolerance: float,
     anchor_threshold: float,
+    group_size: int,
 ) -> dict:
     """Run the model on one full track and score its readout against the reference."""
 
@@ -103,6 +107,7 @@ def evaluate_track(
         min_distance_frames=min_distance_frames,
         gate_tolerance=gate_tolerance,
         anchor_threshold=anchor_threshold,
+        group_size=group_size,
     )
     pred_times = [e["time"] for e in events]
 
@@ -111,19 +116,24 @@ def evaluate_track(
             beat_times, pred_times, tolerance=tolerance, trim=trim
         ),
         "f_one": None,
-        "f_four": None,
-        "confusion_1v3": None,
+        "f_last": None,
+        "confusion": None,
     }
 
     if has_positions:
         positions = np.asarray(positions)
-        f_one, f_four = downbeat_f_measures(
-            beat_times, positions, events, tolerance=tolerance, trim=trim
+        f_one, f_last = downbeat_f_measures(
+            beat_times,
+            positions,
+            events,
+            tolerance=tolerance,
+            trim=trim,
+            group_size=group_size,
         )
         result["f_one"] = f_one
-        result["f_four"] = f_four
-        result["confusion_1v3"] = confusion_1_vs_3_rate(
-            beat_times, positions, events, tolerance=tolerance
+        result["f_last"] = f_last
+        result["confusion"] = confusion_half_cycle_rate(
+            beat_times, positions, events, tolerance=tolerance, group_size=group_size
         )
 
     return result
@@ -151,6 +161,12 @@ def main():
     parser.add_argument("--val-split", type=float, default=0.2)
     parser.add_argument("--sample-rate", type=int, default=22050)
     parser.add_argument("--hop-length", type=int, default=512)
+    parser.add_argument(
+        "--group-size",
+        type=int,
+        default=4,
+        help="Beats per group: 4 for bar position (default), 8 for phrase position",
+    )
     parser.add_argument(
         "--tolerance",
         type=float,
@@ -181,6 +197,7 @@ def main():
         data_home=data_home,
         sample_rate=args.sample_rate,
         hop_length=args.hop_length,
+        group_size=args.group_size,
     )
 
     indices = select_indices(dataset, args.dataset, args.split, args.val_split)
@@ -194,7 +211,9 @@ def main():
     module.eval()
     module.to(device)
 
-    print(f"[eval] {len(indices)} track(s) from '{args.dataset}' (split={args.split})")
+    print(
+        f"[eval] {len(indices)} track(s) from '{args.dataset}' (split={args.split}, group_size={args.group_size})"
+    )
 
     results = []
     for i in indices:
@@ -215,21 +234,22 @@ def main():
             args.min_distance_frames,
             args.gate_tolerance,
             args.anchor_threshold,
+            args.group_size,
         )
         results.append(r)
 
         label = Path(audio_path).stem
         print(
             f"[{label:30s}] beat={_fmt(r['f_beat'])}  one={_fmt(r['f_one'])}  "
-            f"four={_fmt(r['f_four'])}  1v3_confusion={_fmt(r['confusion_1v3'])}"
+            f"last={_fmt(r['f_last'])}  confusion={_fmt(r['confusion'])}"
         )
 
     print("-" * 70)
     print(f"n_tracks={len(results)}")
-    print(f"mean beat F-measure:    {_fmt(_mean(results, 'f_beat'))}")
-    print(f"mean '1' F-measure:     {_fmt(_mean(results, 'f_one'))}")
-    print(f"mean '4' F-measure:     {_fmt(_mean(results, 'f_four'))}")
-    print(f"mean 1-vs-3 confusion:  {_fmt(_mean(results, 'confusion_1v3'))}")
+    print(f"mean beat F-measure:  {_fmt(_mean(results, 'f_beat'))}")
+    print(f"mean '1' F-measure:   {_fmt(_mean(results, 'f_one'))}")
+    print(f"mean 'last' F-measure: {_fmt(_mean(results, 'f_last'))}")
+    print(f"mean phase confusion:  {_fmt(_mean(results, 'confusion'))}")
 
 
 if __name__ == "__main__":

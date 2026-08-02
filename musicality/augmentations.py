@@ -210,7 +210,7 @@ class FrameTimeStretch:
     Same resampling mechanism as :class:`TimeStretch` (treating the waveform as
     recorded at ``sr * rate`` and resampling back to ``sr``), but instead of
     rescaling a scalar label, resamples the target's time axis by the same
-    ``rate`` so beat/one/four/mask events stay aligned with the stretched
+    ``rate`` so beat/one/last/mask events stay aligned with the stretched
     audio's frames. Frame count and sample count scale identically under a
     constant hop length, so using one shared ``rate`` for both is what keeps
     them in sync.

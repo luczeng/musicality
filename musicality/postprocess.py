@@ -1,4 +1,4 @@
-"""Turn per-frame beat/one/four probability curves into a labeled beat list.
+"""Turn per-frame beat/one/last probability curves into a labeled beat list.
 
 Pipeline: :func:`pick_peaks` (continuous curve -> discrete timestamps) ->
 :func:`gate_periodicity` (clean up the timestamp list using beat regularity) ->
@@ -156,31 +156,36 @@ def gate_periodicity(
 def label_bar_position(
     beat_times: np.ndarray,
     one_probs: np.ndarray,
-    four_probs: np.ndarray,
+    last_probs: np.ndarray,
     fps: float,
     anchor_threshold: float = 0.5,
+    group_size: int = 4,
 ) -> list[int | None]:
-    """Assign each gated beat time a bar position (1-4), or ``None`` if unresolved.
+    """Assign each gated beat time a group position (1-``group_size``), or ``None`` if unresolved.
 
-    Each beat casts an "anchor vote" by sampling ``one_probs``/``four_probs``
-    at its nearest frame: a confident vote for position 1 or 4 if the
-    corresponding probability clears ``anchor_threshold`` and beats the
-    other; no vote otherwise (expected for the majority of beats — 2 and 3
-    have no dedicated head). Positions are then assigned by counting forward
-    from confident votes (1, 2, 3, 4, 1, 2, ...), with every new confident
-    vote resyncing the count — so a stretch of ambiguous beats between two
-    anchors is still labeled by counting, but the moment a strong anchor
-    disagrees with where counting drifted to, the anchor wins. Beats before
-    the first confident anchor are left unresolved (``None``).
+    Each beat casts an "anchor vote" by sampling ``one_probs``/``last_probs``
+    at its nearest frame: a confident vote for position 1 or ``group_size`` if
+    the corresponding probability clears ``anchor_threshold`` and beats the
+    other; no vote otherwise (expected for the majority of beats — the
+    in-between positions have no dedicated head). Positions are then assigned
+    by counting forward from confident votes (1, 2, ..., ``group_size``, 1, 2,
+    ...), with every new confident vote resyncing the count — so a stretch of
+    ambiguous beats between two anchors is still labeled by counting, but the
+    moment a strong anchor disagrees with where counting drifted to, the
+    anchor wins. Beats before the first confident anchor are left unresolved
+    (``None``).
 
     :param beat_times: Gated beat timestamps (seconds), sorted.
     :param one_probs: Per-frame "one" probability curve, shape ``(T,)``.
-    :param four_probs: Per-frame "four" probability curve, shape ``(T,)``.
+    :param last_probs: Per-frame "last" (position ``group_size``) probability
+        curve, shape ``(T,)``.
     :param fps: Frames per second (``sample_rate / hop_length``), used to map
         a beat time to its nearest frame.
     :param anchor_threshold: Minimum probability for a beat to be trusted as
-        a confident 1/4 anchor.
-    :returns: One entry per beat time: ``1``/``2``/``3``/``4``, or ``None``.
+        a confident 1/``group_size`` anchor.
+    :param group_size: Number of positions per group — ``4`` for bar position
+        (default), ``8`` for phrase position.
+    :returns: One entry per beat time: ``1``..``group_size``, or ``None``.
     """
 
     n_frames = len(one_probs)
@@ -189,11 +194,11 @@ def label_bar_position(
     votes: list[int | None] = []
     for t in beat_times:
         frame = min(max(int(round(t * fps)), 0), n_frames - 1)
-        p_one, p_four = one_probs[frame], four_probs[frame]
-        if p_one > anchor_threshold and p_one >= p_four:
+        p_one, p_last = one_probs[frame], last_probs[frame]
+        if p_one > anchor_threshold and p_one >= p_last:
             votes.append(1)
-        elif p_four > anchor_threshold and p_four > p_one:
-            votes.append(4)
+        elif p_last > anchor_threshold and p_last > p_one:
+            votes.append(group_size)
         else:
             votes.append(None)
 
@@ -203,7 +208,7 @@ def label_bar_position(
             expected = vote
             labels[i] = expected
         elif expected is not None:
-            expected = expected % 4 + 1
+            expected = expected % group_size + 1
             labels[i] = expected
 
     return labels
@@ -212,27 +217,31 @@ def label_bar_position(
 def readout(
     beat_probs: np.ndarray,
     one_probs: np.ndarray,
-    four_probs: np.ndarray,
+    last_probs: np.ndarray,
     fps: float,
     beat_threshold: float = 0.3,
     min_distance_frames: int = 1,
     gate_tolerance: float = 0.2,
     anchor_threshold: float = 0.5,
+    group_size: int = 4,
 ) -> list[dict]:
     """End-to-end: per-frame probability curves -> a labeled beat list.
 
     Composes :func:`pick_peaks` on ``beat_probs``, :func:`gate_periodicity`
     on the resulting timestamps, then :func:`label_bar_position` using
-    ``one_probs``/``four_probs``.
+    ``one_probs``/``last_probs``.
 
     :param beat_probs: Per-frame beat probability curve, shape ``(T,)``.
     :param one_probs: Per-frame "one" probability curve, shape ``(T,)``.
-    :param four_probs: Per-frame "four" probability curve, shape ``(T,)``.
+    :param last_probs: Per-frame "last" (position ``group_size``) probability
+        curve, shape ``(T,)``.
     :param fps: Frames per second (``sample_rate / hop_length``).
     :param beat_threshold: Passed to :func:`pick_peaks`.
     :param min_distance_frames: Passed to :func:`pick_peaks`.
     :param gate_tolerance: Passed to :func:`gate_periodicity` as ``tolerance``.
     :param anchor_threshold: Passed to :func:`label_bar_position`.
+    :param group_size: Passed to :func:`label_bar_position` — ``4`` for bar
+        position (default), ``8`` for phrase position.
     :returns: One dict per detected beat, sorted by time:
         ``{"time": float, "beat_in_bar": int | None}``.
     """
@@ -245,7 +254,12 @@ def readout(
     beat_times = gate_periodicity(peak_times, tolerance=gate_tolerance)
 
     labels = label_bar_position(
-        beat_times, one_probs, four_probs, fps, anchor_threshold=anchor_threshold
+        beat_times,
+        one_probs,
+        last_probs,
+        fps,
+        anchor_threshold=anchor_threshold,
+        group_size=group_size,
     )
 
     return [

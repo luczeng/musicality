@@ -136,29 +136,29 @@ class TestLabelBarPosition:
     def test_confident_anchor_labeled_directly(self):
         beat_times = np.array([0.0])
         one_probs = _probs_at({0.0: 0.9}, 100)
-        four_probs = np.zeros(100)
-        labels = label_bar_position(beat_times, one_probs, four_probs, FPS)
+        last_probs = np.zeros(100)
+        labels = label_bar_position(beat_times, one_probs, last_probs, FPS)
         assert labels == [1]
 
     def test_counts_forward_from_one_anchor(self):
         beat_times = np.array([0.0, 0.5, 1.0, 1.5])
         one_probs = _probs_at({0.0: 0.9}, 200)
-        four_probs = np.zeros(200)
-        labels = label_bar_position(beat_times, one_probs, four_probs, FPS)
+        last_probs = np.zeros(200)
+        labels = label_bar_position(beat_times, one_probs, last_probs, FPS)
         assert labels == [1, 2, 3, 4]
 
-    def test_four_anchor_wraps_to_one(self):
+    def test_last_anchor_wraps_to_one(self):
         beat_times = np.array([0.0, 0.5])
         one_probs = np.zeros(200)
-        four_probs = _probs_at({0.0: 0.9}, 200)
-        labels = label_bar_position(beat_times, one_probs, four_probs, FPS)
+        last_probs = _probs_at({0.0: 0.9}, 200)
+        labels = label_bar_position(beat_times, one_probs, last_probs, FPS)
         assert labels == [4, 1]
 
     def test_unresolved_before_first_anchor(self):
         beat_times = np.array([0.0, 0.5, 1.0])
         one_probs = _probs_at({0.5: 0.9}, 200)
-        four_probs = np.zeros(200)
-        labels = label_bar_position(beat_times, one_probs, four_probs, FPS)
+        last_probs = np.zeros(200)
+        labels = label_bar_position(beat_times, one_probs, last_probs, FPS)
         assert labels == [None, 1, 2]
 
     def test_no_anchors_all_none(self):
@@ -171,9 +171,18 @@ class TestLabelBarPosition:
         # (should be 4 beats later in 4/4) — the later anchor must win over counting.
         beat_times = np.array([0.0, 0.5, 1.0, 1.5])
         one_probs = _probs_at({0.0: 0.9, 1.5: 0.9}, 200)
-        four_probs = np.zeros(200)
-        labels = label_bar_position(beat_times, one_probs, four_probs, FPS)
+        last_probs = np.zeros(200)
+        labels = label_bar_position(beat_times, one_probs, last_probs, FPS)
         assert labels == [1, 2, 3, 1]
+
+    def test_group_size_8_counts_to_eight_before_wrapping(self):
+        beat_times = np.arange(0, 4.0, 0.5)  # 8 beats
+        one_probs = _probs_at({0.0: 0.9}, 200)
+        last_probs = np.zeros(200)
+        labels = label_bar_position(
+            beat_times, one_probs, last_probs, FPS, group_size=8
+        )
+        assert labels == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 # ---------------------------------------------------------------------------
@@ -182,31 +191,58 @@ class TestLabelBarPosition:
 
 
 class TestReadout:
-    def test_clean_four_four_pattern(self):
-        """Synthetic beat/one/four curves for 8 beats at 120 BPM (0.5s/beat, 4/4)."""
+    def test_clean_four_beat_bar_pattern(self):
+        """Synthetic beat/one/last curves for 8 beats at 120 BPM (0.5s/beat, 4/4)."""
         fps = 100.0
         duration = 4.5
         n_frames = int(duration * fps)
 
         beat_times = np.arange(0, 4.0, 0.5)  # 0, 0.5, ..., 3.5 -> 8 beats
         one_times = beat_times[0::4]
-        four_times = beat_times[3::4]
+        last_times = beat_times[3::4]
 
         beat_spike = np.zeros(n_frames)
         beat_spike[(beat_times * fps).astype(int)] = 1.0
         one_spike = np.zeros(n_frames)
         one_spike[(one_times * fps).astype(int)] = 1.0
-        four_spike = np.zeros(n_frames)
-        four_spike[(four_times * fps).astype(int)] = 1.0
+        last_spike = np.zeros(n_frames)
+        last_spike[(last_times * fps).astype(int)] = 1.0
 
         beat_probs = gaussian_smear(beat_spike, sigma=1.0)
         one_probs = gaussian_smear(one_spike, sigma=1.0)
-        four_probs = gaussian_smear(four_spike, sigma=1.0)
+        last_probs = gaussian_smear(last_spike, sigma=1.0)
 
-        events = readout(beat_probs, one_probs, four_probs, fps=fps)
+        events = readout(beat_probs, one_probs, last_probs, fps=fps)
 
         assert len(events) == 8
         got_times = [e["time"] for e in events]
         assert got_times == pytest.approx(list(beat_times), abs=0.02)
         got_labels = [e["beat_in_bar"] for e in events]
         assert got_labels == [1, 2, 3, 4, 1, 2, 3, 4]
+
+    def test_group_size_8_phrase_pattern(self):
+        """Same pipeline, but one/last mark phrase positions 1 and 8 (group_size=8)."""
+        fps = 100.0
+        duration = 8.5
+        n_frames = int(duration * fps)
+
+        beat_times = np.arange(0, 8.0, 0.5)  # 16 beats -> two 8-beat phrases
+        one_times = beat_times[0::8]
+        last_times = beat_times[7::8]
+
+        beat_spike = np.zeros(n_frames)
+        beat_spike[(beat_times * fps).astype(int)] = 1.0
+        one_spike = np.zeros(n_frames)
+        one_spike[(one_times * fps).astype(int)] = 1.0
+        last_spike = np.zeros(n_frames)
+        last_spike[(last_times * fps).astype(int)] = 1.0
+
+        beat_probs = gaussian_smear(beat_spike, sigma=1.0)
+        one_probs = gaussian_smear(one_spike, sigma=1.0)
+        last_probs = gaussian_smear(last_spike, sigma=1.0)
+
+        events = readout(beat_probs, one_probs, last_probs, fps=fps, group_size=8)
+
+        assert len(events) == 16
+        got_labels = [e["beat_in_bar"] for e in events]
+        assert got_labels == [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]
