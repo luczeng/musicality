@@ -13,6 +13,7 @@ dependencies = [
     "librosa>=0.11.0",
     "lightning>=2.6.1",
     "matplotlib>=3.10.9",
+    "mir-eval>=0.8.2",
     "mirdata>=1.0.0",
     "numpy",
     "pyside6>=6.11.0",

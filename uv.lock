@@ -1790,6 +1790,20 @@ wheels = [
 ]
 
 [[package]]
+name = "mir-eval"
+version = "0.8.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "decorator" },
+    { name = "numpy" },
+    { name = "scipy" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/db/3bf39fc9ab0fb757f297f9a0da7207e823688291f9e61bb67b44fa17bc2f/mir_eval-0.8.2.tar.gz", hash = "sha256:141a3e1193276889fc32e911547e73dcb3e829ee8cfea60f7bbcd633c0792569", size = 117649, upload-time = "2025-02-25T18:09:57.505Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1b/5a/69ce896a32ebc8c75deae00b1fba9837567405fa6ef37b377f2e85b856ae/mir_eval-0.8.2-py3-none-any.whl", hash = "sha256:114cda33d8e17408c170598e0b36ed0d71ff4a2fee8eaf9e165b58ecf1c87170", size = 102794, upload-time = "2025-02-25T18:09:56.012Z" },
+]
+
+[[package]]
 name = "mirdata"
 version = "1.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1906,6 +1920,7 @@ dependencies = [
     { name = "librosa" },
     { name = "lightning" },
     { name = "matplotlib" },
+    { name = "mir-eval" },
     { name = "mirdata" },
     { name = "numpy" },
     { name = "pyside6" },
@@ -1946,6 +1961,7 @@ requires-dist = [
     { name = "librosa", specifier = ">=0.11.0" },
     { name = "lightning", specifier = ">=2.6.1" },
     { name = "matplotlib", specifier = ">=3.10.9" },
+    { name = "mir-eval", specifier = ">=0.8.2" },
     { name = "mirdata", specifier = ">=1.0.0" },
     { name = "numpy" },
     { name = "pyside6", specifier = ">=6.11.0" },
