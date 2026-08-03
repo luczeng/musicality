@@ -9,6 +9,39 @@ uv sync
 uv pip install -e .
 ```
 
+### Fresh machine / remote instance (e.g. vast.ai)
+
+Data is stored via [DVC](https://dvc.org) on a remote (S3-compatible) bucket. After cloning:
+
+```bash
+uv run dvc pull          # or: uv run dvc pull data/<name>.dvc for a single dataset
+```
+
+Credentials live in the gitignored `.dvc/config.local` — copy it from a machine that has
+it, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars before pulling.
+
+Training logs to Weights & Biases by default, so log in once per machine:
+
+```bash
+uv run wandb login       # or: export WANDB_API_KEY=<key>
+```
+
+`mirdata`'s dataset **index** (small metadata JSON, separate from the audio/annotations
+themselves) is normally fetched the first time `tools/download_dataset.py` runs. Since
+DVC pulls the audio directly and skips that step, training will fail with
+`FileNotFoundError: This dataset's index must be downloaded` the first time on a new
+machine. Fetch just the index (no re-download of audio) with:
+
+```bash
+uv run python -c "
+import mirdata
+ds = mirdata.initialize('ballroom', data_home='data/ballroom')
+ds.download(partial_download=['index'])
+"
+```
+
+Swap `'ballroom'` for whichever dataset(s) your config trains on.
+
 ## Project structure
 
 ```
