@@ -17,9 +17,14 @@ Usage
     # pass through any other Hydra override to every run in the sweep
     uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 \\
         --overrides trainer.max_epochs=5 train_subsample=0.2 data.name=ballroom
+
+    # save the comparison table to disk instead of only printing it
+    uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 """
 
 import argparse
+import csv
+from pathlib import Path
 
 import lightning as L
 import wandb
@@ -87,6 +92,25 @@ def run_one(
     return dict(printer.best)
 
 
+def _summary_lines(results: dict[float, dict], keys: list[str]) -> list[str]:
+    """Render the lr-vs-metric comparison table as plain-text lines (shared by
+    `print_summary` and `write_summary`'s non-CSV branch, so the two never drift)."""
+
+    lines = [f"{'lr':>10}  " + "  ".join(f"{k:>14}" for k in keys)]
+    for lr in sorted(results):
+        row = "  ".join(f"{results[lr].get(k, float('nan')):>14.4f}" for k in keys)
+        lines.append(f"{lr:>10.2e}  {row}")
+
+    if "val/loss" in keys:
+        best_lr = min(results, key=lambda lr: results[lr].get("val/loss", float("inf")))
+        lines.append("")
+        lines.append(
+            f"Best lr by val/loss: {best_lr:.2e} (val/loss={results[best_lr]['val/loss']:.4f})"
+        )
+
+    return lines
+
+
 def print_summary(results: dict[float, dict]) -> None:
 
     keys = sorted({k for best in results.values() for k in best})
@@ -94,16 +118,31 @@ def print_summary(results: dict[float, dict]) -> None:
         print("[sweep_lr] no metrics recorded — nothing to summarize")
         return
 
-    print(f"\n{'lr':>10}  " + "  ".join(f"{k:>14}" for k in keys))
-    for lr in sorted(results):
-        row = "  ".join(f"{results[lr].get(k, float('nan')):>14.4f}" for k in keys)
-        print(f"{lr:>10.2e}  {row}")
+    print("\n" + "\n".join(_summary_lines(results, keys)))
 
-    if "val/loss" in keys:
-        best_lr = min(results, key=lambda lr: results[lr].get("val/loss", float("inf")))
-        print(
-            f"\nBest lr by val/loss: {best_lr:.2e} (val/loss={results[best_lr]['val/loss']:.4f})"
-        )
+
+def write_summary(results: dict[float, dict], path: Path) -> None:
+    """Write the comparison table to disk: CSV if `path` ends in `.csv`
+    (one row per lr, one column per metric — easiest to load elsewhere for
+    plotting), otherwise the same plain-text table `print_summary` prints."""
+
+    keys = sorted({k for best in results.values() for k in best})
+    if not keys:
+        print("[sweep_lr] no metrics recorded — nothing to write")
+        return
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    if path.suffix.lower() == ".csv":
+        with path.open("w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["lr", *keys])
+            for lr in sorted(results):
+                writer.writerow([lr, *(results[lr].get(k, "") for k in keys)])
+    else:
+        path.write_text("\n".join(_summary_lines(results, keys)) + "\n")
+
+    print(f"[sweep_lr] summary written to {path}")
 
 
 def main():
@@ -122,6 +161,12 @@ def main():
         nargs="*",
         default=[],
         help="Extra Hydra overrides applied to every run, e.g. trainer.max_epochs=5 data.name=ballroom",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Write the comparison table to this path (.csv for a CSV file, any other extension for plain text)",
     )
     args = parser.parse_args()
 
@@ -152,6 +197,9 @@ def main():
 
     print(f"\n{'=' * 60}\n[sweep_lr] summary\n{'=' * 60}")
     print_summary(results)
+
+    if args.output is not None:
+        write_summary(results, args.output)
 
 
 if __name__ == "__main__":

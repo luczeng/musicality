@@ -144,11 +144,79 @@ uv run python tools/train.py model=cnn data.n_mels=64
 Hydra writes logs and run configs to `outputs/<date>/<time>/` by default.
 Checkpoints are saved to `checkpoints/` (top-3 by `val/loss`, with early stopping after 10 epochs without improvement).
 
+## Beat-phase detection
+
+A second pipeline, alongside tempo estimation, detects frame-level **beat** /
+**"one"** (downbeat) / **"last"** (last beat of the group — bar position 4 by
+default) events. It reuses the same dataset/training scaffolding as tempo
+estimation (`BeatDataset`, Hydra config, Lightning), configured through
+`configs/beat_train.yaml`.
+
+Key options in `configs/beat_train.yaml`:
+
+| Key | Default | Description |
+|---|---|---|
+| `lr` | `5e-4` | Learning rate |
+| `group_size` | `4` | Beats per group: `4` for bar position (1-4), `8` for phrase position (1-8) on a dataset with phrase annotations |
+| `pos_weight` | `8.0` | Positive-class weight for the one/last BCE heads |
+| `train_subsample` | `null` | Fraction of the training split to use (e.g. `0.2`), for quick smoke runs |
+| `data.name` | `ballroom` | mirdata dataset name |
+| `checkpoint_dir` | `checkpoints_beat/` | Where to save model checkpoints |
+
+### Run training
+
+```bash
+uv run python tools/train_beat.py
+
+# quick smoke test — a couple epochs on a fraction of the data
+WANDB_MODE=offline uv run python tools/train_beat.py \
+    trainer.max_epochs=2 train_subsample=0.2 checkpoint_dir=checkpoints_beat_test/
+
+# a phrase-position (1-8) dataset instead of the default bar-position (1-4) one
+uv run python tools/train_beat.py group_size=8 data.name=<phrase_dataset>
+```
+
+### Evaluate a checkpoint
+
+`tools/eval_beat_phase.py` scores a trained checkpoint on full-length tracks
+(not the fixed-duration training clips): beat / "1" / "last" F-measure, and
+the half-cycle phase-confusion rate (catches a model that's found the right
+periodicity but locked onto the wrong phase).
+
+```bash
+uv run python tools/eval_beat_phase.py \
+    --checkpoint checkpoints_beat/beat-phase-epoch=05-val_loss=0.1234.ckpt \
+    --dataset ballroom
+```
+
+### Sweep learning rates
+
+`tools/sweep_lr.py` batch-trains across a list of learning rates (reusing the
+same dataloaders and seed across runs, so lr is the only thing that varies)
+and prints a comparison table of best validation metrics.
+
+```bash
+uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
+
+# save the comparison table instead of only printing it (.csv or plain text)
+uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
+```
+
+### Visualize targets
+
+```bash
+uv run python tools/plot_beat_targets.py --dataset ballroom
+```
+
 ## Tools
 
 | Tool | Description |
 |---|---|
 | `tools/train.py` | Hydra entry point for training a tempo model |
+| `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
+| `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint: beat/"1"/"last" F-measure and phase-confusion rate |
+| `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
+| `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
 | `tools/summarize_datasets.py` | Print summary statistics (song count, annotation types) for all downloaded datasets |
 | `tools/inspect_track.py` | Print metadata and annotations for a single audio file |
@@ -157,6 +225,10 @@ Checkpoints are saved to `checkpoints/` (top-3 by `val/loss`, with early stoppin
 
 ```bash
 uv run python tools/train.py
+uv run python tools/train_beat.py
+uv run python tools/eval_beat_phase.py --checkpoint <path-to-ckpt> --dataset ballroom
+uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
+uv run python tools/plot_beat_targets.py --dataset ballroom
 uv run python tools/download_dataset.py
 uv run python tools/summarize_datasets.py
 uv run python tools/inspect_track.py path/to/audio.wav
