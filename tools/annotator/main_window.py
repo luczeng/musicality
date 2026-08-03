@@ -10,6 +10,7 @@ import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QComboBox,
     QFrame,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .audio import AudioEngine
+from .inference import checkpoint_label, infer_beats, list_checkpoints, load_module
 from .recorder import Recorder, _SR as _REC_SR
 from .data import (
     DATA_DIR,
@@ -69,10 +71,20 @@ class MainWindow(QMainWindow):
 
     Layout
     ------
-    Top-left  : controls — playback, recording, speed, count, accent, structure, delete/rename
+    Top-left  : controls — playback, recording, speed, count, accent, structure,
+                beat inference, delete/rename
     Top-right : read-only track info — beat analytics + captured metadata
     Center    : WaveformWidget  (resizable, takes remaining space)
     Bottom    : MetronomeWidget, then TapTempoWidget (fixed height)
+
+    Beat inference
+    --------------
+    "Infer Beats" runs a trained beat-phase checkpoint (picked from the
+    dropdown, scanned from ``checkpoints_beat/``) on the full currently-loaded
+    track and overlays the predicted beat times on the waveform in magenta,
+    separate from any manually annotated beats. Switching "Clicks" from
+    Manual to Inferred plays the audible click track against the inferred
+    beats instead, so the prediction can be heard against the audio.
 
     Keyboard shortcuts
     ------------------
@@ -99,6 +111,10 @@ class MainWindow(QMainWindow):
         self._track: TrackData | None = None
         self._track_audio: np.ndarray | None = None
         self._track_sr: int = 44100
+        self._inferred_beat_times: np.ndarray = np.array([])
+        self._inferred_beat_positions: np.ndarray | None = None
+        self._beat_module = None
+        self._beat_module_path = None
         self._engine = AudioEngine()
         self._recorder = Recorder()
         self._timer = QTimer(self)
@@ -208,6 +224,34 @@ class MainWindow(QMainWindow):
             lambda v: self._engine.set_click_volume(v / 100)
         )
 
+        self._click_source_group = QButtonGroup(self)
+        self._click_source_group.setExclusive(True)
+        self._click_source_buttons: list[QPushButton] = []
+        for label in ("Manual", "Inferred"):
+            btn = QPushButton(label)
+            btn.setFixedWidth(70)
+            btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setChecked(label == "Manual")
+            btn.clicked.connect(lambda _checked: self._update_engine_clicks())
+            self._click_source_group.addButton(btn)
+            self._click_source_buttons.append(btn)
+
+        self._checkpoint_combo = QComboBox()
+        self._checkpoint_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._checkpoint_combo.setFixedWidth(260)
+        checkpoints = list_checkpoints()
+        for path in checkpoints:
+            self._checkpoint_combo.addItem(checkpoint_label(path), path)
+        if not checkpoints:
+            self._checkpoint_combo.addItem("(no checkpoints found)", None)
+            self._checkpoint_combo.setEnabled(False)
+
+        self._infer_btn = QPushButton("🔮  Infer Beats")
+        self._infer_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._infer_btn.setEnabled(bool(checkpoints))
+        self._infer_btn.clicked.connect(self._on_infer_beats)
+
         self._track_label = QLabel()
         self._track_label.setStyleSheet("font-weight: bold;")
 
@@ -242,7 +286,17 @@ class MainWindow(QMainWindow):
         sound_bar.addSpacing(4)
         sound_bar.addWidget(QLabel("🔊"))
         sound_bar.addWidget(self._click_volume_slider)
+        sound_bar.addSpacing(16)
+        sound_bar.addWidget(QLabel("Clicks:"))
+        for btn in self._click_source_buttons:
+            sound_bar.addWidget(btn)
         sound_bar.addStretch()
+
+        infer_bar = QHBoxLayout()
+        infer_bar.addWidget(QLabel("Beat model:"))
+        infer_bar.addWidget(self._checkpoint_combo)
+        infer_bar.addWidget(self._infer_btn)
+        infer_bar.addStretch()
 
         delete_bar = QHBoxLayout()
         delete_bar.addWidget(self._delete_btn)
@@ -340,6 +394,7 @@ class MainWindow(QMainWindow):
         controls_column.addLayout(play_bar)
         controls_column.addLayout(rename_bar)
         controls_column.addLayout(sound_bar)
+        controls_column.addLayout(infer_bar)
         controls_column.addLayout(speed_bar)
         controls_column.addLayout(count_bar)
         controls_column.addLayout(accent_bar)
@@ -433,6 +488,11 @@ class MainWindow(QMainWindow):
 
         self._update_info_label()
         self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
+
+        # Inferred beats belong to the previous track's audio — clear them.
+        self._inferred_beat_times = np.array([])
+        self._inferred_beat_positions = None
+        self._waveform.set_inferred_beats(self._inferred_beat_times)
 
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._metronome.set_state(self._n_beats, None)
@@ -642,6 +702,40 @@ class MainWindow(QMainWindow):
         else:
             self._on_play()
 
+    def _on_infer_beats(self) -> None:
+        if self._track_audio is None:
+            return
+        checkpoint_path = self._checkpoint_combo.currentData()
+        if checkpoint_path is None:
+            self.statusBar().showMessage(
+                "No checkpoint found under checkpoints_beat/.", 4000
+            )
+            return
+
+        self._infer_btn.setEnabled(False)
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        self.statusBar().showMessage("Running beat inference…")
+        QApplication.processEvents()
+        try:
+            if checkpoint_path != self._beat_module_path:
+                self._beat_module = load_module(checkpoint_path)
+                self._beat_module_path = checkpoint_path
+            beat_times, beat_positions = infer_beats(
+                self._beat_module, self._track_audio, self._track_sr
+            )
+        finally:
+            QApplication.restoreOverrideCursor()
+            self._infer_btn.setEnabled(True)
+
+        self._inferred_beat_times = beat_times
+        self._inferred_beat_positions = beat_positions
+        self._waveform.set_inferred_beats(beat_times)
+        self._update_engine_clicks()
+        self.statusBar().showMessage(
+            f"Inferred {len(beat_times)} beats ({checkpoint_label(checkpoint_path)}).",
+            5000,
+        )
+
     def _on_record_toggle(self, checked: bool) -> None:
         if checked:
             self._recorder.start()
@@ -828,11 +922,19 @@ class MainWindow(QMainWindow):
             break
         self.statusBar().showMessage(f"Renamed → {new_id}", 3000)
 
+    def _click_source(self) -> str:
+        checked = self._click_source_group.checkedButton()
+        return checked.text().lower() if checked is not None else "manual"
+
     def _update_engine_clicks(self) -> None:
         if self._track is None:
             return
-        beat_times = self._track.beat_times
-        beat_positions = self._track.beat_positions
+        if self._click_source() == "inferred":
+            beat_times = self._inferred_beat_times
+            beat_positions = self._inferred_beat_positions
+        else:
+            beat_times = self._track.beat_times
+            beat_positions = self._track.beat_positions
         beat_frames = (beat_times * self._track_sr).astype(int)
         n = len(beat_times)
         if beat_positions is not None:
