@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Launch beat-phase (beat/one/last) training with Hydra config."""
 
+import musicality._hydra_compat  # noqa: F401
+
 import hydra
 from omegaconf import DictConfig
 

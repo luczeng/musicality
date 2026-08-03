@@ -1909,7 +1909,7 @@ wheels = [
 [[package]]
 name = "musicality"
 version = "1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "chardet" },
     { name = "click" },
