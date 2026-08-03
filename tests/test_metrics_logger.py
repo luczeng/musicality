@@ -7,9 +7,12 @@ from musicality.callbacks.metrics_logger import BestMetricsPrinter
 
 
 class _FakeTrainer:
-    def __init__(self, metrics: dict, current_epoch: int = 0):
+    def __init__(
+        self, metrics: dict, current_epoch: int = 0, sanity_checking: bool = False
+    ):
         self.callback_metrics = {k: torch.tensor(v) for k, v in metrics.items()}
         self.current_epoch = current_epoch
+        self.sanity_checking = sanity_checking
 
 
 class TestBestMetricsPrinter:
@@ -40,3 +43,16 @@ class TestBestMetricsPrinter:
         cb = BestMetricsPrinter(keys=("val/loss", "val/does_not_exist"))
         cb.on_validation_epoch_end(_FakeTrainer({"val/loss": 1.0}), None)
         assert "val/does_not_exist" not in cb.best
+
+    def test_sanity_check_pass_is_ignored(self):
+        """The pre-training sanity-check validation pass must not seed `best`
+        with untrained-model metrics that real training may never beat."""
+
+        cb = BestMetricsPrinter(keys=("val/loss",))
+        cb.on_validation_epoch_end(
+            _FakeTrainer({"val/loss": 0.01}, sanity_checking=True), None
+        )
+        assert cb.best == {}
+
+        cb.on_validation_epoch_end(_FakeTrainer({"val/loss": 5.0}), None)
+        assert cb.best["val/loss"] == pytest.approx(5.0)
