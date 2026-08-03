@@ -41,6 +41,9 @@ class BestMetricsPrinter(L.Callback):
         self.best = {}
 
     def on_validation_epoch_end(self, trainer, pl_module):
+        if trainer.sanity_checking:
+            return  # untrained-model metrics from Lightning's pre-training sanity check
+
         metrics = trainer.callback_metrics
         for key in self.keys:
             if not key.startswith("val/"):
