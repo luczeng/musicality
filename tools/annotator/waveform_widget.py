@@ -86,7 +86,6 @@ class WaveformWidget(QWidget):
         self._env_max: np.ndarray | None = None
         self._beat_times: np.ndarray = np.array([])
         self._beat_positions: np.ndarray | None = None
-        self._inferred_beat_times: np.ndarray = np.array([])
         self._accent_bars: float = 1.0
         self._position: float = 0.0
         self._duration: float = 0.0
@@ -111,16 +110,6 @@ class WaveformWidget(QWidget):
         """Update the beat markers."""
         self._beat_times = beat_times
         self._beat_positions = beat_positions
-        self.update()
-
-    def set_inferred_beats(self, beat_times: np.ndarray) -> None:
-        """Update the model-inferred beat overlay.
-
-        Drawn as short bottom-third markers in a distinct color, separate
-        from the manually annotated beat markers, so the two can be visually
-        compared.
-        """
-        self._inferred_beat_times = beat_times
         self.update()
 
     def set_accent_bars(self, accent_bars: float) -> None:
@@ -174,15 +163,6 @@ class WaveformWidget(QWidget):
             color = "#44cc44" if accented else "#cc7700"
             painter.setPen(QPen(QColor(color), 1))
             painter.drawLine(x, 0, x, h)
-
-        # Inferred beat overlay — bottom third only, so it stays visually
-        # distinct from (and comparable against) the manual markers above.
-        if len(self._inferred_beat_times) > 0:
-            painter.setPen(QPen(QColor("#ff44cc"), 1))
-            y0 = int(h * 2 / 3)
-            for t in self._inferred_beat_times:
-                x = int(t / self._duration * w)
-                painter.drawLine(x, y0, x, h)
 
         # Playback cursor
         x = int(self._position / self._duration * w)
