@@ -1,6 +1,6 @@
 # musicality
 
-A Python library for working with music datasets, featuring a tempo estimation pipeline built on [mirdata](https://mirdata.readthedocs.io), PyTorch, PyTorch Lightning, and Hydra.
+A Python library for tempo and beat estimation from audio, built on [mirdata](https://mirdata.readthedocs.io), PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.
 
 ## Setup
 
@@ -42,31 +42,20 @@ ds.download(partial_download=['index'])
 
 Swap `'ballroom'` for whichever dataset(s) your config trains on.
 
-## Project structure
-
-```
-configs/             Hydra configuration files
-  train.yaml         Top-level config (composes model, data, trainer)
-  model/cnn.yaml     TempoNet CNN architecture
-  data/brid.yaml     BRID dataset and dataloader settings
-  trainer/default.yaml  Lightning trainer settings
-
-musicality/
-  loader.py          PyTorch Dataset and DataLoader for the BRID dataset
-
-trainers/
-  model.py           TempoNet — a lightweight CNN for tempo regression
-  tempo_module.py    LightningModule (loss, metrics, optimizer)
-
-tools/
-  download_dataset.py  Download a mirdata dataset into data/
-  summarize_datasets.py  List datasets with song counts and annotation types
-  train.py           Launch tempo estimation training
-```
-
 ## Datasets
 
-### Download a dataset
+Training data comes from two sources, both read identically by every loader/tool in
+this repo:
+
+- **mirdata datasets** — publicly available beat/tempo-annotated datasets (ballroom,
+  brid, hainsworth, rwc_classical, rwc_jazz, rwc_popular, groove_midi, guitarset),
+  fetched via [mirdata](https://mirdata.readthedocs.io).
+- **Homemade datasets** — audio recorded and beat-tapped by hand with the annotation
+  apps below (e.g. a `swing` dataset of hand-recorded dance tracks). These live under
+  `data/<name>/tracks/` (audio) and `data/<name>/annotations/*.beats` (tapped beats),
+  a plain directory layout rather than a mirdata dataset definition.
+
+### Download a mirdata dataset
 
 ```bash
 uv run python tools/download_dataset.py <mirdata-name>
@@ -88,71 +77,101 @@ Dataset    Songs  Annotations
 brid         367  beats, tempo
 ```
 
-## DataLoader
+## Annotation apps
 
-`musicality/loader.py` provides a `BRIDDataset` and a `get_loader` factory.
+Two apps produce homemade datasets — audio plus hand-tapped beat annotations, saved
+in the same format the mirdata datasets use.
 
-Each item is a `(mel, tempo)` pair:
+### Desktop annotator
 
-- `mel` — log-mel spectrogram of shape `(1, n_mels, T)`, computed with `torchaudio`
-- `tempo` — BPM label as a scalar `float32` tensor
+`tools/annotator/` — a PySide6 GUI for browsing datasets, tapping beat annotations by
+ear, and recording new tracks from a microphone.
 
-```python
-from musicality.loader import get_loader
+- Waveform display with beat markers and a playback cursor; click to seek,
+  Ctrl+click to add a beat, Ctrl+right-click to remove one
+- Tap-tempo widget and metronome for annotating a track by ear, with a configurable
+  count (4/8) and accent pattern
+- Audible click track synced to the annotated beats, with its own volume control
+- Record new tracks straight from the microphone into a named dataset folder
+- Run inference with a trained beat-phase checkpoint and preview the model's
+  predicted beats on a second waveform strip above the track, with an optional click
+  track against the prediction instead of the manual annotation
+- Per-track metadata (recording device, location, structure) plus a dataset browser
+  showing per-track annotation status
 
-loader = get_loader(
-    data_home="data/brid",
-    batch_size=32,
-    sample_rate=22050,
-    n_mels=128,
-    duration=10.0,  # seconds — clips are truncated or zero-padded to this length
-)
-
-for mel, tempo in loader:
-    # mel:   (B, 1, 128, T)
-    # tempo: (B,)
-    ...
+```bash
+uv run python -m tools.annotator --dataset ballroom
+uv run python -m tools.annotator --dataset ballroom --track Media-105901
 ```
+
+### Mobile companion
+
+`tools/mobile_companion/` — an offline-first PWA + FastAPI backend for recording
+audio and tapping tempo from a phone, syncing captures into the same
+`data/<dataset>/tracks/` + `annotations/*.beats` structure the desktop annotator
+reads. Useful for field recordings (e.g. live dancing) away from a laptop. See
+`tools/mobile_companion/README.md` for setup, including remote HTTPS access via
+Tailscale.
+
+## Loaders
+
+`musicality/loaders/tempo_dataset.py` — `TempoDataset`, returns `(waveform, tempo)`
+pairs for any mirdata dataset exposing a `tempo` attribute per track.
+
+`musicality/loaders/beat_dataset.py` — `BeatDataset`, returns `(waveform, target)`
+pairs for any mirdata (or homemade) dataset exposing `beats` per track, where
+`target` is a 4-channel `(beat, one, last, mask)` frame-level tensor (see
+[Beat-phase detection](#beat-phase-detection) below).
+
+Both resample to a target sample rate and pad/truncate to a fixed clip duration.
+Mel-spectrogram extraction happens inside the model, not the loader.
 
 ## Training
 
 ### Model
 
-`trainers/model.py` defines `TempoNet`, a three-block CNN that takes a log-mel spectrogram and regresses a single BPM value.
+`musicality/models/tcn.py` defines `TCNTempoNet`, a dilated TCN (Davies & Böck,
+2019) — the default architecture for both tempo estimation and beat-phase detection:
 
 ```
-Input  (B, 1, n_mels, T)
-  → Conv 1×16 → BN → ReLU → MaxPool
-  → Conv 16×32 → BN → ReLU → MaxPool
-  → Conv 32×64 → BN → ReLU → AdaptiveAvgPool(4×4)
-  → Linear 1024→128 → ReLU → Dropout
-  → Linear 128→1
-Output (B,)
+log-mel spectrogram → per-clip normalization
+  → 1×1 channel projection
+  → N dilated residual Conv1d blocks (dilation 1, 2, 4, ..., 2^(N-1))
+  → global average pool → FC head            (tempo: scalar / classification bins)
+  → or: 1×1 conv head, no pooling            (beat-phase: per-frame beat/one/last)
 ```
+
+Alternate backbones: `musicality/models/tempo_net.py` (a simpler CNN),
+`musicality/models/huggingface.py` (wraps HuggingFace `transformers` models, e.g.
+wav2vec2/BEaT), `musicality/models/torch_audio.py` (wraps pretrained `torchaudio`
+models).
 
 ### LightningModule
 
-`trainers/tempo_module.py` wraps `TempoNet`:
+`musicality/trainers/tempo_module.py` wraps the model as `TempoModule`:
 
-- Loss: MSE
-- Metric: MSE (logged as `train/mse` and `val/mse`)
-- Optimizer: Adam with `ReduceLROnPlateau` scheduler
+- Loss: `absolute` (MAE), `relative` (octave-invariant MAE), or `classification`
+  (softmax over BPM bins with a Gaussian soft target)
+- Metric: MIREX Accuracy 1 (`acc1`), logged alongside MAE
+- Optimizer: Adam with a `ReduceLROnPlateau` scheduler
 
 ### Configuration
 
-Training is configured with [Hydra](https://hydra.cc). Config files live in `configs/` and can be overridden on the command line.
+Training is configured with [Hydra](https://hydra.cc). Config files live in
+`configs/` and can be overridden on the command line.
 
 Key options in `configs/train.yaml`:
 
 | Key | Default | Description |
 |---|---|---|
-| `lr` | `1e-3` | Learning rate |
-| `weight_decay` | `1e-4` | L2 regularisation |
+| `loss` | `classification` | `absolute`, `relative`, or `classification` |
+| `lr` | `5e-4` | Learning rate |
+| `weight_decay` | `0.0` | L2 regularisation |
 | `checkpoint_dir` | `checkpoints/` | Where to save model checkpoints |
-| `data.batch_size` | `32` | Batch size |
+| `batch_size` | `32` | Batch size |
 | `data.val_split` | `0.2` | Fraction of data held out for validation |
-| `data.duration` | `10.0` | Audio clip length in seconds |
-| `trainer.max_epochs` | `50` | Maximum training epochs |
+| `data.duration` | `15.0` | Audio clip length in seconds |
+| `trainer.max_epochs` | `100` | Maximum training epochs |
 | `trainer.accelerator` | `auto` | `cpu`, `gpu`, or `auto` |
 
 ### Run training
@@ -165,17 +184,18 @@ Override any value on the command line:
 
 ```bash
 # Change batch size and learning rate
-uv run python tools/train.py data.batch_size=16 lr=3e-4
+uv run python tools/train.py batch_size=16 lr=3e-4
 
 # Train for more epochs on GPU
-uv run python tools/train.py trainer.max_epochs=100 trainer.accelerator=gpu
+uv run python tools/train.py trainer.max_epochs=200 trainer.accelerator=gpu
 
 # Use a different model config
-uv run python tools/train.py model=cnn data.n_mels=64
+uv run python tools/train.py model=cnn n_mels=64
 ```
 
 Hydra writes logs and run configs to `outputs/<date>/<time>/` by default.
-Checkpoints are saved to `checkpoints/` (top-3 by `val/loss`, with early stopping after 10 epochs without improvement).
+Checkpoints are saved to `checkpoint_dir` (top-3 by `val/loss`, with early stopping
+after 10 epochs without improvement).
 
 ## Beat-phase detection
 
@@ -254,7 +274,9 @@ uv run python tools/plot_beat_targets.py --dataset ballroom
 | `tools/summarize_datasets.py` | Print summary statistics (song count, annotation types) for all downloaded datasets |
 | `tools/inspect_track.py` | Print metadata and annotations for a single audio file |
 | `tools/plot_tempo_histograms.py` | Plot BPM distributions across datasets |
-| `tools/annotator/` | PySide6 GUI for manual beat/tempo annotation (waveform display, playback, tap-tempo, metronome) |
+
+See [Annotation apps](#annotation-apps) above for `tools/annotator/` and
+`tools/mobile_companion/`.
 
 ```bash
 uv run python tools/train.py
@@ -266,7 +288,6 @@ uv run python tools/download_dataset.py
 uv run python tools/summarize_datasets.py
 uv run python tools/inspect_track.py path/to/audio.wav
 uv run python tools/plot_tempo_histograms.py
-uv run python -m tools.annotator
 ```
 
 ## Tests
