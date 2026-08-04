@@ -74,17 +74,20 @@ class MainWindow(QMainWindow):
     Top-left  : controls — playback, recording, speed, count, accent, structure,
                 beat inference, delete/rename
     Top-right : read-only track info — beat analytics + captured metadata
-    Center    : WaveformWidget  (resizable, takes remaining space)
+    Center    : inferred-beats WaveformWidget strip (hidden until "Infer Beats"
+                is run), then the main WaveformWidget (resizable, takes
+                remaining space)
     Bottom    : MetronomeWidget, then TapTempoWidget (fixed height)
 
     Beat inference
     --------------
     "Infer Beats" runs a trained beat-phase checkpoint (picked from the
     dropdown, scanned from ``checkpoints_beat/``) on the full currently-loaded
-    track and overlays the predicted beat times on the waveform in magenta,
-    separate from any manually annotated beats. Switching "Clicks" from
-    Manual to Inferred plays the audible click track against the inferred
-    beats instead, so the prediction can be heard against the audio.
+    track and shows the predicted beat times on a second waveform strip above
+    the main one, so they never overlap the manually annotated beats below.
+    Switching "Clicks" from Manual to Inferred plays the audible click track
+    against the inferred beats instead, so the prediction can be heard
+    against the audio.
 
     Keyboard shortcuts
     ------------------
@@ -308,6 +311,23 @@ class MainWindow(QMainWindow):
         self._waveform.beat_added.connect(self._on_beat_added)
         self._waveform.beat_removed.connect(self._on_beat_removed)
 
+        # Inferred-beats strip: a second waveform view stacked above the
+        # main one, so model predictions never overlap the manual beat
+        # markers — only visible once "Infer Beats" has produced a result.
+        self._inferred_label = QLabel("🔮  Inferred beats")
+        self._inferred_label.setStyleSheet("color: #ff44cc; font-weight: bold;")
+        self._inferred_waveform = WaveformWidget()
+        self._inferred_waveform.setMaximumHeight(45)
+        self._inferred_waveform.seek_requested.connect(self._on_seek)
+
+        self._inferred_container = QWidget()
+        inferred_layout = QVBoxLayout(self._inferred_container)
+        inferred_layout.setContentsMargins(0, 0, 0, 0)
+        inferred_layout.setSpacing(2)
+        inferred_layout.addWidget(self._inferred_label)
+        inferred_layout.addWidget(self._inferred_waveform)
+        self._inferred_container.setVisible(False)
+
         self._metronome = MetronomeWidget()
         self._metronome.set_state(DEFAULT_N_BEATS, None)
 
@@ -422,6 +442,7 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setSpacing(4)
         right_layout.addLayout(top_row)
+        right_layout.addWidget(self._inferred_container)
         right_layout.addWidget(self._waveform, stretch=1)
         right_layout.addWidget(self._metronome)
         right_layout.addWidget(self._tap_widget)
@@ -492,7 +513,8 @@ class MainWindow(QMainWindow):
         # Inferred beats belong to the previous track's audio — clear them.
         self._inferred_beat_times = np.array([])
         self._inferred_beat_positions = None
-        self._waveform.set_inferred_beats(self._inferred_beat_times)
+        self._inferred_waveform.set_beats(np.array([]), None)
+        self._inferred_container.setVisible(False)
 
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._metronome.set_state(self._n_beats, None)
@@ -510,6 +532,7 @@ class MainWindow(QMainWindow):
         self._track_sr = sr
         self._engine.load(audio, sr)
         self._waveform.set_waveform(audio, sr)
+        self._inferred_waveform.set_waveform(audio, sr)
         self._update_engine_clicks()
 
     def _populate_dataset_list(self, *, keep_selection: bool = False) -> None:
@@ -652,6 +675,7 @@ class MainWindow(QMainWindow):
         self._accent_bars = accent_bars
         self._metronome.set_accent_bars(accent_bars)
         self._waveform.set_accent_bars(accent_bars)
+        self._inferred_waveform.set_accent_bars(accent_bars)
         self._update_engine_clicks()
 
     def _sync_count_buttons(self) -> None:
@@ -729,7 +753,10 @@ class MainWindow(QMainWindow):
 
         self._inferred_beat_times = beat_times
         self._inferred_beat_positions = beat_positions
-        self._waveform.set_inferred_beats(beat_times)
+        self._inferred_waveform.set_accent_bars(self._accent_bars)
+        self._inferred_waveform.set_beats(beat_times, beat_positions)
+        self._inferred_waveform.set_position(self._engine.position)
+        self._inferred_container.setVisible(True)
         self._update_engine_clicks()
         self.statusBar().showMessage(
             f"Inferred {len(beat_times)} beats ({checkpoint_label(checkpoint_path)}).",
@@ -745,6 +772,7 @@ class MainWindow(QMainWindow):
             self._elapsed_label.setText("● 0:00")
             self._elapsed_label.setVisible(True)
             self._waveform.set_beats(np.array([]), None)
+            self._inferred_container.setVisible(False)
         else:
             dataset = self._record_dataset_edit.text().strip() or "swing"
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -758,6 +786,9 @@ class MainWindow(QMainWindow):
                 self._waveform.set_beats(
                     self._track.beat_times, self._track.beat_positions
                 )
+            if len(self._inferred_beat_times) > 0:
+                self._inferred_waveform.set_waveform(self._track_audio, self._track_sr)
+                self._inferred_container.setVisible(True)
             self.statusBar().showMessage(f"Recording saved → {path}", 4000)
             self._populate_dataset_list(keep_selection=True)
             if dataset == self._dataset_name:
@@ -766,12 +797,14 @@ class MainWindow(QMainWindow):
     def _on_restart(self) -> None:
         self._engine.seek(0.0)
         self._waveform.set_position(0.0)
+        self._inferred_waveform.set_position(0.0)
         if not self._engine.is_playing:
             self._engine.play()
 
     def _on_seek(self, t: float) -> None:
         self._engine.seek(t)
         self._waveform.set_position(t)
+        self._inferred_waveform.set_position(t)
 
     def _on_playback_finished(self) -> None:
         """Called on the main thread when playback reaches the end."""
@@ -880,6 +913,10 @@ class MainWindow(QMainWindow):
             self._engine.stop()
             self._waveform.set_waveform(np.array([]), 44100)
             self._waveform.set_beats(np.array([]), None)
+            self._inferred_beat_times = np.array([])
+            self._inferred_beat_positions = None
+            self._inferred_waveform.set_beats(np.array([]), None)
+            self._inferred_container.setVisible(False)
             self._track_label.setText("")
             self._stats_label.setText("")
         self._populate_dataset_list(keep_selection=True)
@@ -1037,6 +1074,7 @@ class MainWindow(QMainWindow):
 
         t = self._engine.position
         self._waveform.set_position(t)
+        self._inferred_waveform.set_position(t)
         pos = active_beat_position(
             self._track.beat_times, self._track.beat_positions, t, self._n_beats
         )
