@@ -55,6 +55,8 @@ def train(cfg: DictConfig) -> None:
 
 def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
 
+    binary_only = cfg.get("binary_only", False)
+
     dataset = BeatDataset(
         name=cfg.data.name,
         data_home=cfg.data.data_home,
@@ -63,6 +65,7 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
         hop_length=cfg.hop_length,
         sigma_frames=cfg.sigma_frames,
         group_size=cfg.get("group_size", 4),
+        binary_only=binary_only,
     )
 
     _fmt = dataformats.load()
@@ -70,8 +73,10 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
     # Namespaced separately from TempoDataset's splits/<name>/ cache: BeatDataset
     # filters tracks differently (by beat annotation, not tempo) and can have a
     # different length for the same mirdata dataset name, so the two must never
-    # share a split-index cache.
-    dataset_name = f"beat_phase-{cfg.data.name}"
+    # share a split-index cache. The -binary suffix keeps the same guarantee
+    # against the unfiltered beat-phase split, since binary_only changes the
+    # dataset length too.
+    dataset_name = f"beat_phase-{cfg.data.name}" + ("-binary" if binary_only else "")
 
     train_ds, val_ds = Splitter(
         dataset, splits_dir, dataset_name, cfg.data.val_split

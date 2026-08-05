@@ -77,6 +77,65 @@ Dataset    Songs  Annotations
 brid         367  beats, tempo
 ```
 
+## Splits
+
+Train/val splits are precomputed and stored as plain index lists under
+`data/splits/<name>/{train,val}.txt`, read by `Splitter.run()` at train/eval time.
+It never generates a split itself — if `data/splits/<name>/` is missing, training
+crashes with `FileNotFoundError` rather than silently creating a new (and possibly
+different) one. That's what makes a split reproducible across machines: version the
+files under `data/splits/` (e.g. via DVC, same as the audio) and pull them rather than
+regenerating locally, where a different `mirdata` version or an incomplete download
+could silently produce a different split.
+
+### Create a split
+
+```bash
+uv run python tools/create_splits.py                          # every dataset in data/
+uv run python tools/create_splits.py --datasets ballroom brid  # just these
+uv run python tools/create_splits.py --val-split 0.15 --force  # custom split, overwrite
+```
+
+Creates two splits per dataset: a tempo split (`data/splits/<name>`, from
+`TempoDataset`) and a beat-phase split (`data/splits/beat_phase-<name>`, from
+`BeatDataset`). Whichever has no samples for a given dataset (e.g. no tempo
+annotations) is skipped. Existing splits are left untouched unless `--force` is passed.
+
+### Binary-meter-only beat-phase splits
+
+Some datasets mix meters — ballroom's waltz/Viennese waltz tracks are annotated with a
+triple-meter bar-position cycle (`1, 2, 3, 1, 2, 3, ...`) instead of the binary meter
+(beats-per-bar a multiple of 2, e.g. `1, 2, 3, 4, ...`) the beat-phase `one`/`last`
+targets assume. Pass `--binary-only` to drop those tracks — and any track with no
+position annotation at all, since its meter can't be confirmed — when building the
+beat-phase split:
+
+```bash
+uv run python tools/create_splits.py --datasets ballroom --binary-only
+```
+
+This saves to a separate `data/splits/beat_phase-<name>-binary` split, since it's a
+different-length dataset than the unfiltered one. Training/eval must set the matching
+flag so they load the split that actually corresponds to the dataset they build:
+
+```bash
+uv run python tools/train_beat.py binary_only=true
+uv run python tools/eval_beat_phase.py --checkpoint <path> --dataset ballroom --binary-only
+```
+
+### Version splits with DVC
+
+```bash
+uv run dvc add data/splits
+git add data/splits.dvc data/.gitignore
+git commit -m "Version train/val splits"
+uv run dvc push
+```
+
+On another machine, `dvc pull` (see [Fresh machine](#fresh-machine--remote-instance-eg-vastai)
+above) fetches the exact same split files, so training and evaluation line up across
+machines instead of each generating its own split locally.
+
 ## Annotation apps
 
 Two apps produce homemade datasets — audio plus hand-tapped beat annotations, saved
@@ -211,6 +270,7 @@ Key options in `configs/beat_train.yaml`:
 |---|---|---|
 | `lr` | `5e-4` | Learning rate |
 | `group_size` | `4` | Beats per group: `4` for bar position (1-4), `8` for phrase position (1-8) on a dataset with phrase annotations |
+| `binary_only` | `false` | Train on the binary-meter-only split (see [Splits](#splits)); must match how the split was created |
 | `pos_weight` | `8.0` | Positive-class weight for the one/last BCE heads |
 | `train_subsample` | `null` | Fraction of the training split to use (e.g. `0.2`), for quick smoke runs |
 | `data.name` | `ballroom` | mirdata dataset name |
@@ -267,6 +327,7 @@ uv run python tools/plot_beat_targets.py --dataset ballroom
 |---|---|
 | `tools/train.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
+| `tools/create_splits.py` | Create the train/val splits under `data/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
 | `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint: beat/"1"/"last" F-measure and phase-confusion rate |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
@@ -281,6 +342,7 @@ See [Annotation apps](#annotation-apps) above for `tools/annotator/` and
 ```bash
 uv run python tools/train.py
 uv run python tools/train_beat.py
+uv run python tools/create_splits.py
 uv run python tools/eval_beat_phase.py --checkpoint <path-to-ckpt> --dataset ballroom
 uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
 uv run python tools/plot_beat_targets.py --dataset ballroom
