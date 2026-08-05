@@ -53,7 +53,11 @@ def load_track_waveform(audio_path: str, sample_rate: int) -> torch.Tensor:
 
 
 def select_indices(
-    dataset: BeatDataset, dataset_name: str, split: str, val_split: float
+    dataset: BeatDataset,
+    dataset_name: str,
+    split: str,
+    val_split: float,
+    binary_only: bool = False,
 ) -> list[int]:
     """Return dataset indices for ``split``, reusing the training run's cached
     train/val split so "val" means genuinely held-out tracks."""
@@ -63,9 +67,10 @@ def select_indices(
 
     _fmt = dataformats.load()
     splits_dir = dataformats.ROOT / _fmt.splits_dir
+    suffix = "-binary" if binary_only else ""
 
     train_ds, val_ds = Splitter(
-        dataset, splits_dir, f"beat_phase-{dataset_name}", val_split
+        dataset, splits_dir, f"beat_phase-{dataset_name}{suffix}", val_split
     ).run()
 
     return list((val_ds if split == "val" else train_ds).indices)
@@ -168,6 +173,14 @@ def main():
         help="Beats per group: 4 for bar position (default), 8 for phrase position",
     )
     parser.add_argument(
+        "--binary-only",
+        action="store_true",
+        help=(
+            "Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. "
+            "ballroom's waltz tracks). Must match how the split was created."
+        ),
+    )
+    parser.add_argument(
         "--tolerance",
         type=float,
         default=0.07,
@@ -198,9 +211,12 @@ def main():
         sample_rate=args.sample_rate,
         hop_length=args.hop_length,
         group_size=args.group_size,
+        binary_only=args.binary_only,
     )
 
-    indices = select_indices(dataset, args.dataset, args.split, args.val_split)
+    indices = select_indices(
+        dataset, args.dataset, args.split, args.val_split, args.binary_only
+    )
     if args.limit is not None:
         indices = indices[: args.limit]
 

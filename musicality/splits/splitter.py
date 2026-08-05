@@ -4,11 +4,13 @@ from torch.utils.data import Dataset, Subset, random_split
 
 
 class Splitter:
-    """Manages persistent train/val splits for a dataset.
+    """Loads persistent train/val splits for a dataset.
 
     Splits are stored under ``splits_dir/<name>/train.txt`` and ``val.txt``.
-    On the first run the split is created and saved; on subsequent runs it is
-    reloaded from disk so the split is identical.
+    ``run()`` only ever reads these files — it never generates a split, so the
+    same files (typically version-controlled via DVC) produce the same split
+    on every machine. Use ``create()`` (or ``tools/create_splits.py``) to
+    generate the files in the first place.
 
     :param dataset: The dataset to split.
     :param splits_dir: Root directory where split subfolders are stored.
@@ -24,20 +26,33 @@ class Splitter:
         self.val_split = val_split
 
     def run(self) -> tuple[Subset, Subset]:
-        """Return (train_ds, val_ds), loading from disk or creating a new split.
+        """Return (train_ds, val_ds) loaded from disk.
 
+        :raises FileNotFoundError: If no split has been generated for ``name`` yet.
         :returns: Tuple of (train_ds, val_ds).
         :rtype: tuple[Subset, Subset]
         """
 
         existing = self._load()
 
-        if existing is not None:
-            train_indices, val_indices = existing
-            print(f"[Splitter] Loaded existing split '{self.name}' ({len(train_indices)} train, {len(val_indices)} val)")
-            return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
+        if existing is None:
+            raise FileNotFoundError(
+                f"No split found for '{self.name}' in {self.splits_dir}. "
+                f"Run `uv run python tools/create_splits.py` to generate it."
+            )
 
-        print(f"[Splitter] No split found for '{self.name}', creating a new one...")
+        train_indices, val_indices = existing
+        print(
+            f"[Splitter] Loaded existing split '{self.name}' ({len(train_indices)} train, {len(val_indices)} val)"
+        )
+        return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
+
+    def create(self) -> tuple[Subset, Subset]:
+        """Generate a new split and persist it to disk, overwriting any existing one.
+
+        :returns: Tuple of (train_ds, val_ds).
+        :rtype: tuple[Subset, Subset]
+        """
 
         n_val = int(len(self.dataset) * self.val_split)
         n_train = len(self.dataset) - n_val
@@ -45,7 +60,9 @@ class Splitter:
 
         self._save(list(train_ds.indices), list(val_ds.indices))
 
-        print(f"[Splitter] Split saved to {self.splits_dir / self.name} ({n_train} train, {n_val} val)")
+        print(
+            f"[Splitter] Split saved to {self.splits_dir / self.name} ({n_train} train, {n_val} val)"
+        )
 
         return train_ds, val_ds
 

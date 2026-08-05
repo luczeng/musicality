@@ -1,2 +1,2 @@
 data_dir: data
-splits_dir: splits
+splits_dir: data/splits

@@ -78,6 +78,13 @@ class BeatDataset(Dataset):
         ``4`` (default) for bar-position (1-4) datasets, ``8`` for a phrase-position
         (1-8) dataset. Only affects which position value is read out as ``last``
         (``positions == group_size``); ``one`` is always ``positions == 1``.
+    :param binary_only: If ``True``, drop tracks whose beats-per-bar (the
+        annotated position cycle length) isn't a multiple of 2 — e.g.
+        ballroom's waltz/Viennese waltz tracks, which cycle ``1, 2, 3`` in
+        triple meter — as well as tracks with no position annotation at all,
+        since their meter can't be confirmed. Independent of ``group_size``:
+        a track only needs an even beats-per-bar count, not one equal to
+        ``group_size``.
     """
 
     def __init__(
@@ -89,6 +96,7 @@ class BeatDataset(Dataset):
         hop_length: int = 512,
         sigma_frames: float = 1.5,
         group_size: int = 4,
+        binary_only: bool = False,
     ):
         if data_home is None:
             data_home = DATA_DIR / name
@@ -105,6 +113,7 @@ class BeatDataset(Dataset):
         self.samples = []
         n_skipped = 0
         n_no_positions = 0
+        n_non_binary = 0
         for tid in ds.track_ids:
             track = ds.track(tid)
             if track.beats is None or not Path(track.audio_path).exists():
@@ -113,6 +122,13 @@ class BeatDataset(Dataset):
 
             positions = track.beats.positions
             has_positions = positions is not None and np.any(np.asarray(positions) > 0)
+
+            if binary_only and (
+                not has_positions or int(np.max(np.asarray(positions))) % 2 != 0
+            ):
+                n_non_binary += 1
+                continue
+
             if not has_positions:
                 n_no_positions += 1
 
@@ -123,6 +139,10 @@ class BeatDataset(Dataset):
         if n_skipped:
             print(
                 f"[BeatDataset] {name}: skipped {n_skipped} track(s) with no beat annotation or missing audio"
+            )
+        if n_non_binary:
+            print(
+                f"[BeatDataset] {name}: skipped {n_non_binary} non-binary-meter track(s) (binary_only=True)"
             )
         if n_no_positions:
             print(

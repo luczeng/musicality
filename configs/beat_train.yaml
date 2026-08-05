@@ -14,6 +14,11 @@ sigma_frames: 1.5
 # dataset. Only changes what the "last" target/head means (positions == group_size);
 # "one" is always position 1. Override on the CLI, e.g. `group_size=8 data.name=<phrase_dataset>`.
 group_size: 4
+# Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. ballroom's
+# waltz/Viennese waltz tracks, which are in triple meter — 1, 2, 3 — rather
+# than binary meter). Must match whatever the split was built with (see
+# `--binary-only` on tools/create_splits.py), since it changes dataset length.
+binary_only: false
 train_subsample: null
 checkpoint_dir: checkpoints_beat/
 trainer:
