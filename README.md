@@ -11,36 +11,39 @@ uv pip install -e .
 
 ### Fresh machine / remote instance (e.g. vast.ai)
 
-Data is stored via [DVC](https://dvc.org) on a remote (S3-compatible) bucket. After cloning:
+After cloning, with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `WANDB_API_KEY`
+set in the environment:
 
 ```bash
-uv run dvc pull          # or: uv run dvc pull data/<name>.dvc for a single dataset
+bash tools/setup_remote.sh
 ```
 
-Credentials live in the gitignored `.dvc/config.local` — copy it from a machine that has
-it, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars before pulling.
+This installs `uv` if missing, syncs dependencies, pulls data from Backblaze via
+[DVC](https://dvc.org), logs in to Weights & Biases, and fetches the `mirdata` index
+for any DVC-pulled dataset (see below for why that last step is needed). Re-running it
+on the same machine is safe.
 
-Training logs to Weights & Biases by default, so log in once per machine:
+Under the hood:
 
-```bash
-uv run wandb login       # or: export WANDB_API_KEY=<key>
-```
+- Data is stored via DVC on a remote (S3-compatible, Backblaze-hosted) bucket. DVC's S3
+  backend reads `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` directly from the
+  environment (`uv run dvc pull`, or `uv run dvc pull data/<name>.dvc` for a single
+  dataset).
+- Training logs to Weights & Biases by default (`uv run wandb login "$WANDB_API_KEY"`).
+- `mirdata`'s dataset **index** (small metadata JSON, separate from the audio/annotations
+  themselves) is normally fetched the first time `tools/download_dataset.py` runs. Since
+  DVC pulls the audio directly and skips that step, training would otherwise fail with
+  `FileNotFoundError: This dataset's index must be downloaded` the first time on a new
+  machine.
 
-`mirdata`'s dataset **index** (small metadata JSON, separate from the audio/annotations
-themselves) is normally fetched the first time `tools/download_dataset.py` runs. Since
-DVC pulls the audio directly and skips that step, training will fail with
-`FileNotFoundError: This dataset's index must be downloaded` the first time on a new
-machine. Fetch just the index (no re-download of audio) with:
+### Vast.ai instance template
 
-```bash
-uv run python -c "
-import mirdata
-ds = mirdata.initialize('ballroom', data_home='data/ballroom')
-ds.download(partial_download=['index'])
-"
-```
+To make a rented instance training-ready with no manual steps, set these once in a
+reusable vast.ai instance template:
 
-Swap `'ballroom'` for whichever dataset(s) your config trains on.
+- Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `WANDB_API_KEY`.
+- On-start script: clone the repo and run the setup script, e.g.
+  `git clone <repo-url> musicality && cd musicality && bash tools/setup_remote.sh`.
 
 ## Datasets
 
