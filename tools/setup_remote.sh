@@ -18,7 +18,11 @@ fi
 echo "Installing Python 3.14..."
 uv python install 3.14
 
-uv sync
+# Ignore any pre-activated venv from the base image (e.g. /venv/main on vast.ai) —
+# it's typically pinned to an older Python than we require.
+unset VIRTUAL_ENV
+
+uv sync --python 3.14
 uv pip install -e .
 
 : "${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID (Backblaze B2 key id) before running this script}"
