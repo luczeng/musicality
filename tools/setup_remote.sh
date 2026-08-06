@@ -15,6 +15,9 @@ if ! command -v uv &>/dev/null; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
+echo "Installing Python 3.14..."
+uv python install 3.14
+
 uv sync
 uv pip install -e .
 
