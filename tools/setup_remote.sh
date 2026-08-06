@@ -18,9 +18,11 @@ fi
 echo "Installing Python 3.14..."
 uv python install 3.14
 
-# Ignore any pre-activated venv from the base image (e.g. /venv/main on vast.ai) —
-# it's typically pinned to an older Python than we require.
+# Ignore any pre-activated venv from the base image (e.g. /venv/main on vast.ai,
+# pinned via VIRTUAL_ENV/UV_PROJECT_ENVIRONMENT) — it's typically an older Python
+# than we require, and takes precedence over --python if left set.
 unset VIRTUAL_ENV
+export UV_PROJECT_ENVIRONMENT=.venv
 
 uv sync --python 3.14
 uv pip install -e .
