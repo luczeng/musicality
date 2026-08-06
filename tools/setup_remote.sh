@@ -15,16 +15,7 @@ if ! command -v uv &>/dev/null; then
     export PATH="$HOME/.local/bin:$PATH"
 fi
 
-echo "Installing Python 3.14..."
-uv python install 3.14
-
-# Ignore any pre-activated venv from the base image (e.g. /venv/main on vast.ai,
-# pinned via VIRTUAL_ENV/UV_PROJECT_ENVIRONMENT) — it's typically an older Python
-# than we require, and takes precedence over --python if left set.
-unset VIRTUAL_ENV
-export UV_PROJECT_ENVIRONMENT=.venv
-
-uv sync --python 3.14
+uv sync
 uv pip install -e .
 
 : "${AWS_ACCESS_KEY_ID:?Set AWS_ACCESS_KEY_ID (Backblaze B2 key id) before running this script}"
