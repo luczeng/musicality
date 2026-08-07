@@ -16,7 +16,12 @@ import numpy as np
 
 import musicality.dataformats as dataformats
 
-DATA_DIR = Path(__file__).parent.parent.parent / dataformats.load().data_dir
+_fmt = dataformats.load()
+DATA_DIR = Path(__file__).parent.parent.parent / _fmt.data_dir
+TRACKS_DIRNAME = _fmt.tracks_dirname
+ANNOTATIONS_DIRNAME = _fmt.annotations_dirname
+BEATS_SUFFIX = _fmt.beats_suffix
+METADATA_SUFFIX = _fmt.metadata_suffix
 
 # Tapping always starts on beat 1 of an N-count phrase ("sentence" in dance
 # terms — e.g. an 8-count in swing). 8 is the default phrase length.
@@ -231,12 +236,19 @@ def remove_beat(
 
 def annotation_path(track: TrackData) -> Path:
     """Return the canonical save path for a track's annotations (.beats file)."""
-    return DATA_DIR / track.dataset_name / "annotations" / f"{track.track_id}.beats"
+    return (
+        DATA_DIR
+        / track.dataset_name
+        / ANNOTATIONS_DIRNAME
+        / f"{track.track_id}{BEATS_SUFFIX}"
+    )
 
 
 def metadata_path(dataset_name: str, track_id: str) -> Path:
     """Return the canonical save path for a track's metadata (.meta.json file)."""
-    return DATA_DIR / dataset_name / "annotations" / f"{track_id}.meta.json"
+    return (
+        DATA_DIR / dataset_name / ANNOTATIONS_DIRNAME / f"{track_id}{METADATA_SUFFIX}"
+    )
 
 
 def save_metadata(dataset_name: str, track_id: str, metadata: TrackMetadata) -> None:
@@ -318,7 +330,7 @@ def list_datasets() -> list[DatasetInfo]:
         if not path.is_dir():
             continue
         name = path.name
-        tracks_dir = path / "tracks"
+        tracks_dir = path / TRACKS_DIRNAME
         if tracks_dir.is_dir():
             n_tracks = sum(
                 1 for f in tracks_dir.iterdir() if f.suffix.lower() in _AUDIO_EXTENSIONS
@@ -329,8 +341,8 @@ def list_datasets() -> list[DatasetInfo]:
                 n_tracks = len(ds.track_ids)
             except Exception:
                 continue
-        ann_dir = path / "annotations"
-        n_ann = len(list(ann_dir.glob("*.beats"))) if ann_dir.is_dir() else 0
+        ann_dir = path / ANNOTATIONS_DIRNAME
+        n_ann = len(list(ann_dir.glob(f"*{BEATS_SUFFIX}"))) if ann_dir.is_dir() else 0
         mtime = _dataset_mtime(path, tracks_dir)
         infos.append(
             DatasetInfo(name=name, n_tracks=n_tracks, n_annotations=n_ann, mtime=mtime)
@@ -340,12 +352,14 @@ def list_datasets() -> list[DatasetInfo]:
 
 def has_annotation(dataset_name: str, track_id: str) -> bool:
     """Return True if a saved .beats annotation file exists for this track."""
-    return (DATA_DIR / dataset_name / "annotations" / f"{track_id}.beats").exists()
+    return (
+        DATA_DIR / dataset_name / ANNOTATIONS_DIRNAME / f"{track_id}{BEATS_SUFFIX}"
+    ).exists()
 
 
 def has_mirdata_annotation(dataset_name: str, track_id: str) -> bool:
     """Return True if the mirdata dataset has built-in beat annotations for this track."""
-    if (DATA_DIR / dataset_name / "tracks").is_dir():
+    if (DATA_DIR / dataset_name / TRACKS_DIRNAME).is_dir():
         return False
     try:
         ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
@@ -357,7 +371,7 @@ def has_mirdata_annotation(dataset_name: str, track_id: str) -> bool:
 
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
-    tracks_dir = DATA_DIR / dataset_name / "tracks"
+    tracks_dir = DATA_DIR / dataset_name / TRACKS_DIRNAME
     if tracks_dir.is_dir():
         return [
             f.stem
@@ -375,10 +389,12 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
     For mirdata datasets checks for a saved ``.beats`` file first, then
     falls back to the dataset's own annotations.
     """
-    tracks_dir = DATA_DIR / dataset_name / "tracks"
+    tracks_dir = DATA_DIR / dataset_name / TRACKS_DIRNAME
     if tracks_dir.is_dir():
         audio_path = tracks_dir / f"{track_id}.wav"
-        ann_path = DATA_DIR / dataset_name / "annotations" / f"{track_id}.beats"
+        ann_path = (
+            DATA_DIR / dataset_name / ANNOTATIONS_DIRNAME / f"{track_id}{BEATS_SUFFIX}"
+        )
         beat_times: np.ndarray = np.array([])
         beat_positions: np.ndarray | None = None
         if ann_path.exists():
@@ -396,7 +412,9 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
     track = ds.track(track_id)
 
     # Prefer our own saved annotation over the dataset's built-in beats
-    ann_path = DATA_DIR / dataset_name / "annotations" / f"{track_id}.beats"
+    ann_path = (
+        DATA_DIR / dataset_name / ANNOTATIONS_DIRNAME / f"{track_id}{BEATS_SUFFIX}"
+    )
     if ann_path.exists():
         beat_times, beat_positions = _read_beats_file(ann_path)
         return TrackData(
@@ -446,7 +464,7 @@ def delete_track(track: TrackData) -> None:
 
     Raises ValueError for mirdata datasets.
     """
-    tracks_dir = DATA_DIR / track.dataset_name / "tracks"
+    tracks_dir = DATA_DIR / track.dataset_name / TRACKS_DIRNAME
     if not tracks_dir.is_dir():
         raise ValueError("Cannot delete tracks from a mirdata dataset.")
     audio = Path(track.audio_path)
@@ -463,7 +481,7 @@ def rename_track(track: TrackData, new_id: str) -> TrackData:
     Renames the audio file and the annotation file (if present).
     Raises ValueError for mirdata datasets or if *new_id* is already taken.
     """
-    tracks_dir = DATA_DIR / track.dataset_name / "tracks"
+    tracks_dir = DATA_DIR / track.dataset_name / TRACKS_DIRNAME
     if not tracks_dir.is_dir():
         raise ValueError("Cannot rename tracks from a mirdata dataset.")
     old_audio = Path(track.audio_path)

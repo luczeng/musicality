@@ -3,12 +3,14 @@
 import numpy as np
 import pytest
 
+import tools.annotator.data as annotator_data
 from tools.annotator.data import (
     DEFAULT_N_BEATS,
     TrackData,
     _read_beats_file,
     active_beat_position,
     add_beat,
+    annotation_path,
     beats_per_bar,
     cycle_positions,
     remove_beat,
@@ -235,3 +237,18 @@ class TestSaveLoadAnnotations:
         times, positions = _read_beats_file(path)
         np.testing.assert_array_almost_equal(times, [1.0, 2.0, 3.0])
         assert positions is None
+
+
+# ---------------------------------------------------------------------------
+# annotation_path
+# ---------------------------------------------------------------------------
+
+
+class TestAnnotationPathUsesConfig:
+    def test_path_uses_configured_dirname_and_suffix(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(annotator_data, "ANNOTATIONS_DIRNAME", "notes")
+        monkeypatch.setattr(annotator_data, "BEATS_SUFFIX", ".taps")
+        track = _track([1.0])
+        path = annotation_path(track)
+        assert path == tmp_path / "test" / "notes" / "t1.taps"

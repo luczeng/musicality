@@ -39,3 +39,12 @@ class TestSaveLoadMetadata:
     def test_missing_metadata_returns_none(self, monkeypatch, tmp_path):
         monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
         assert load_metadata("swing", "never_saved") is None
+
+
+class TestMetadataPathUsesConfig:
+    def test_path_uses_configured_dirname_and_suffix(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(annotator_data, "ANNOTATIONS_DIRNAME", "notes")
+        monkeypatch.setattr(annotator_data, "METADATA_SUFFIX", ".info.json")
+        path = metadata_path("swing", "take1")
+        assert path == tmp_path / "swing" / "notes" / "take1.info.json"
