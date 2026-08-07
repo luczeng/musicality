@@ -13,6 +13,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync
 uv pip install -e .
 
+# Bootstrap a fresh remote instance (e.g. vast.ai): uv, Backblaze data via DVC, W&B login
+bash tools/setup_remote.sh
+
 # Run tests
 uv run pytest tests/
 
