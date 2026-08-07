@@ -42,3 +42,11 @@ def load() -> DataFormat:
         raw = yaml.safe_load(f)
 
     return DataFormat(**raw)
+
+
+# The canonical, load-once config. Other modules should read FORMAT/DATA_DIR
+# directly rather than calling load() again or re-exporting their own copies
+# of individual fields, so there's exactly one place the on-disk layout is
+# defined.
+FORMAT = load()
+DATA_DIR = ROOT / FORMAT.data_dir

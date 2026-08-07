@@ -1,5 +1,6 @@
 """Tests for tools.annotator.data's track metadata persistence."""
 
+import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
 from tools.annotator.data import (
     TrackMetadata,
@@ -44,8 +45,8 @@ class TestSaveLoadMetadata:
 class TestMetadataPathUsesConfig:
     def test_path_uses_configured_dirname_and_suffix(self, monkeypatch, tmp_path):
         monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
-        monkeypatch.setattr(annotator_data, "ANNOTATIONS_DIRNAME", "notes")
-        monkeypatch.setattr(annotator_data, "METADATA_SUFFIX", ".info.json")
+        monkeypatch.setattr(dataformats.FORMAT, "annotations_dirname", "notes")
+        monkeypatch.setattr(dataformats.FORMAT, "metadata_suffix", ".info.json")
         path = metadata_path("swing", "take1")
         assert path == tmp_path / "swing" / "notes" / "take1.info.json"
 
