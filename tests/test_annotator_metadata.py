@@ -48,3 +48,24 @@ class TestMetadataPathUsesConfig:
         monkeypatch.setattr(annotator_data, "METADATA_SUFFIX", ".info.json")
         path = metadata_path("swing", "take1")
         assert path == tmp_path / "swing" / "notes" / "take1.info.json"
+
+
+class TestSchemaVersion:
+    def test_new_metadata_defaults_to_version_1(self):
+        assert TrackMetadata().schema_version == 1
+
+    def test_save_stamps_current_version(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        metadata = TrackMetadata(structure="swing")
+        save_metadata("swing", "take1", metadata)
+        assert metadata.schema_version == annotator_data.METADATA_SCHEMA_VERSION
+        assert load_metadata("swing", "take1").schema_version == (
+            annotator_data.METADATA_SCHEMA_VERSION
+        )
+
+    def test_pre_versioning_file_loads_as_version_1(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        path = metadata_path("swing", "legacy")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"structure": "blues"}')
+        assert load_metadata("swing", "legacy").schema_version == 1

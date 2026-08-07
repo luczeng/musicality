@@ -27,6 +27,12 @@ METADATA_SUFFIX = _fmt.metadata_suffix
 # terms — e.g. an 8-count in swing). 8 is the default phrase length.
 DEFAULT_N_BEATS = 8
 
+# Bumped whenever TrackMetadata's on-disk shape changes. save_metadata always
+# stamps this value; TrackMetadata.schema_version defaults to 1 (the implicit
+# version of every file saved before this field existed), so a file missing
+# the key on load is correctly read as version 1 rather than "current".
+METADATA_SCHEMA_VERSION = 1
+
 
 # ---------------------------------------------------------------------------
 # Data model
@@ -68,6 +74,7 @@ class TrackMetadata:
     bpm_mean: float | None = None
     bpm_median: float | None = None
     bpm_std: float | None = None
+    schema_version: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +262,7 @@ def save_metadata(dataset_name: str, track_id: str, metadata: TrackMetadata) -> 
     """Persist track metadata as JSON, next to that track's .beats file."""
     path = metadata_path(dataset_name, track_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    metadata.schema_version = METADATA_SCHEMA_VERSION
     path.write_text(json.dumps(asdict(metadata), indent=2))
 
 
