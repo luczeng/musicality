@@ -18,6 +18,10 @@ import {
 const RECENT_N = 8;
 const WARMUP = 4;
 
+// Mirrors tools/annotator/data.py's DEFAULT_N_BEATS — tapping always starts
+// on beat 1 of an 8-count phrase, so playback clicks cycle 1..8 the same way.
+const BEATS_PER_CYCLE = 8;
+
 const datasetInput = document.getElementById("dataset-input");
 const datasetOptions = document.getElementById("dataset-options");
 const trackNameInput = document.getElementById("track-name-input");
@@ -28,6 +32,7 @@ const structureHelpBtn = document.getElementById("structure-help-btn");
 const structureHelpText = document.getElementById("structure-help-text");
 const recordBtn = document.getElementById("record-btn");
 const tapBtn = document.getElementById("tap-btn");
+const listenBtn = document.getElementById("listen-btn");
 const saveBtn = document.getElementById("save-btn");
 const statusEl = document.getElementById("status");
 const pendingCountEl = document.getElementById("pending-count");
@@ -46,6 +51,10 @@ let recordedBlob = null;
 let recordStartTime = null;
 let recordDurationS = null;
 let tapTimestampsMs = [];
+
+let audioCtx = null;
+let listenSourceNodes = [];
+let listening = false;
 
 // Browsers don't expose a real device name (privacy) the way a desktop OS
 // does — this guesses a rough label from the user agent as a starting
@@ -167,13 +176,16 @@ async function startRecording() {
   mediaRecorder.onstop = () => {
     recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
     saveBtn.disabled = false;
+    listenBtn.disabled = false;
     mediaStream.getTracks().forEach((track) => track.stop());
   };
 
+  if (listening) stopListening();
   recordStartTime = performance.now();
   resetTapState();
   recordedBlob = null;
   saveBtn.disabled = true;
+  listenBtn.disabled = true;
 
   mediaRecorder.start();
   recordBtn.textContent = "■ Stop";
@@ -206,6 +218,144 @@ tapBtn.addEventListener("click", () => {
   renderTapStats();
 });
 
+function getAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return audioCtx;
+}
+
+// Synthesizes a short decaying sine "tick" rather than shipping a click
+// sample, so the accented (beat 1) and regular clicks are just two
+// parameter sets away from each other. Peak-normalized to 1.0 — actual
+// loudness is applied afterwards via a GainNode, scaled to the recording.
+function makeClickBuffer(ctx, { freqHz, durationS }) {
+  const length = Math.ceil(ctx.sampleRate * durationS);
+  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+
+  for (let i = 0; i < length; i++) {
+    const t = i / ctx.sampleRate;
+    const envelope = Math.exp(-t / (durationS / 6));
+    data[i] = Math.sin(2 * Math.PI * freqHz * t) * envelope;
+  }
+
+  return buffer;
+}
+
+function rms(audioBuffer) {
+  let sumSquares = 0;
+  let sampleCount = 0;
+
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i++) sumSquares += data[i] * data[i];
+    sampleCount += data.length;
+  }
+
+  return Math.sqrt(sumSquares / sampleCount);
+}
+
+function clamp(value, lo, hi) {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+function stopListening() {
+  for (const node of listenSourceNodes) {
+    try {
+      node.onended = null;
+      node.stop();
+    } catch {
+      // Already stopped/ended — fine.
+    }
+  }
+  listenSourceNodes = [];
+  listening = false;
+  listenBtn.textContent = "▶ Listen (with clicks)";
+}
+
+// Plays the just-recorded take back with a synthesized click overlaid on
+// every tap, cycling 1..8 with beat 1 accented — no visualization, audio
+// only, so the annotator can check taps landed on the beat by ear.
+async function startListening() {
+  if (!recordedBlob) return;
+
+  const ctx = getAudioContext();
+  await ctx.resume();
+
+  const audioBuffer = await ctx.decodeAudioData(await recordedBlob.arrayBuffer());
+  const accentClick = makeClickBuffer(ctx, { freqHz: 1800, durationS: 0.07 });
+  const regularClick = makeClickBuffer(ctx, { freqHz: 1000, durationS: 0.05 });
+
+  // Click loudness is scaled off the recording's own RMS rather than a
+  // fixed gain, so it stays proportionate whether the take was captured
+  // quiet (far mic, soft venue) or hot — clamped so a near-silent or very
+  // loud take still gets an audible-but-not-overpowering click.
+  const trackRms = rms(audioBuffer);
+  const accentGain = clamp(trackRms * 4.0, 0.12, 0.9);
+  const regularGain = clamp(trackRms * 2.5, 0.06, 0.5);
+
+  // Limiter on the mix bus, not the track itself — only clamps the rare
+  // moment a click lands on an already-loud passage, instead of altering
+  // the recording's own dynamics.
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -3;
+  limiter.knee.value = 0;
+  limiter.ratio.value = 20;
+  limiter.attack.value = 0.001;
+  limiter.release.value = 0.1;
+  limiter.connect(ctx.destination);
+
+  const accentGainNode = ctx.createGain();
+  accentGainNode.gain.value = accentGain;
+  accentGainNode.connect(limiter);
+
+  const regularGainNode = ctx.createGain();
+  regularGainNode.gain.value = regularGain;
+  regularGainNode.connect(limiter);
+
+  const startAt = ctx.currentTime + 0.15;
+  listenSourceNodes = [];
+
+  const trackSource = ctx.createBufferSource();
+  trackSource.buffer = audioBuffer;
+  trackSource.connect(limiter);
+  trackSource.start(startAt);
+  trackSource.onended = () => {
+    if (listening) stopListening();
+  };
+  listenSourceNodes.push(trackSource);
+
+  tapTimestampsMs.forEach((tsMs, i) => {
+    const offsetS = (tsMs - recordStartTime) / 1000;
+    if (offsetS < 0) return;
+
+    const position = (i % BEATS_PER_CYCLE) + 1;
+    const clickSource = ctx.createBufferSource();
+    clickSource.buffer = position === 1 ? accentClick : regularClick;
+    clickSource.connect(position === 1 ? accentGainNode : regularGainNode);
+    clickSource.start(startAt + offsetS);
+    listenSourceNodes.push(clickSource);
+  });
+
+  listening = true;
+  listenBtn.textContent = "■ Stop";
+}
+
+listenBtn.addEventListener("click", async () => {
+  if (listening) {
+    stopListening();
+    return;
+  }
+  try {
+    statusEl.textContent = "Loading playback…";
+    await startListening();
+    statusEl.textContent = "Listening…";
+  } catch (err) {
+    statusEl.textContent = `Could not play back: ${err.message}`;
+  }
+});
+
 saveBtn.addEventListener("click", async () => {
   if (!recordedBlob) return;
   const dataset = datasetInput.value.trim();
@@ -231,9 +381,11 @@ saveBtn.addEventListener("click", async () => {
     bpmStats
   );
 
+  if (listening) stopListening();
   recordedBlob = null;
   recordDurationS = null;
   saveBtn.disabled = true;
+  listenBtn.disabled = true;
   trackNameInput.value = "";
   setStructure("swing");
   resetTapState();
