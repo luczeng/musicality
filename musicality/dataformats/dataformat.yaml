@@ -1,2 +1,6 @@
 data_dir: data
 splits_dir: data/splits
+tracks_dirname: tracks
+annotations_dirname: annotations
+beats_suffix: .beats
+metadata_suffix: .meta.json
