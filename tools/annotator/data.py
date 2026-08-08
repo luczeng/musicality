@@ -16,6 +16,8 @@ import numpy as np
 
 import musicality.dataformats as dataformats
 
+from .naming import sanitize_track_name
+
 DATA_DIR = dataformats.DATA_DIR
 
 # Tapping always starts on beat 1 of an N-count phrase ("sentence" in dance
@@ -26,7 +28,8 @@ DEFAULT_N_BEATS = 8
 # stamps this value; TrackMetadata.schema_version defaults to 1 (the implicit
 # version of every file saved before this field existed), so a file missing
 # the key on load is correctly read as version 1 rather than "current".
-METADATA_SCHEMA_VERSION = 1
+# v2 adds annotator_id and section_aligned.
+METADATA_SCHEMA_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +55,7 @@ class TrackData:
     tempo: float | None
     beat_times: np.ndarray  # seconds, sorted ascending
     beat_positions: np.ndarray | None  # 1-indexed bar positions, or None
+    annotator_id: str | None = None  # None = the default/legacy annotation slot
 
 
 @dataclass
@@ -69,6 +73,13 @@ class TrackMetadata:
     bpm_mean: float | None = None
     bpm_median: float | None = None
     bpm_std: float | None = None
+    annotator_id: str | None = None  # who made this annotation, if known
+    # Tapping always starts at count position 1 (see cycle_positions) — that
+    # part is guaranteed, not something to confirm. section_aligned instead
+    # records whether that first tap also happens to be the true start of a
+    # section, vs. landing mid-section. True/False = confirmed either way,
+    # None = not recorded.
+    section_aligned: bool | None = None
     schema_version: int = 1
 
 
@@ -205,6 +216,7 @@ def add_beat(
         tempo=track.tempo,
         beat_times=times,
         beat_positions=positions,
+        annotator_id=track.annotator_id,
     )
 
 
@@ -233,40 +245,64 @@ def remove_beat(
         tempo=track.tempo,
         beat_times=times,
         beat_positions=positions,
+        annotator_id=track.annotator_id,
     )
 
 
+def _annotations_slot_dir(dataset_name: str, annotator_id: str | None) -> Path:
+    """Return the annotations directory for one annotator's slot.
+
+    ``annotator_id=None`` is the original, unsuffixed default slot, so every
+    file saved before multi-annotator support existed keeps resolving to the
+    same path. A non-None id is sanitized the same way track ids are, since
+    it can come from free-form input (e.g. the mobile companion).
+    """
+    base = DATA_DIR / dataset_name / dataformats.FORMAT.annotations_dirname
+    if annotator_id:
+        return base / sanitize_track_name(annotator_id)
+    return base
+
+
 def annotation_path(track: TrackData) -> Path:
-    """Return the canonical save path for a track's annotations (.beats file)."""
+    """Return the canonical save path for a track's annotations (.beats file).
+
+    Nested under ``track.annotator_id``'s slot; ``None`` is the default slot.
+    """
     return (
-        DATA_DIR
-        / track.dataset_name
-        / dataformats.FORMAT.annotations_dirname
+        _annotations_slot_dir(track.dataset_name, track.annotator_id)
         / f"{track.track_id}{dataformats.FORMAT.beats_suffix}"
     )
 
 
-def metadata_path(dataset_name: str, track_id: str) -> Path:
-    """Return the canonical save path for a track's metadata (.meta.json file)."""
+def metadata_path(
+    dataset_name: str, track_id: str, annotator_id: str | None = None
+) -> Path:
+    """Return the canonical save path for a track's metadata (.meta.json file).
+
+    Nested under *annotator_id*'s slot; ``None`` is the default slot.
+    """
     return (
-        DATA_DIR
-        / dataset_name
-        / dataformats.FORMAT.annotations_dirname
+        _annotations_slot_dir(dataset_name, annotator_id)
         / f"{track_id}{dataformats.FORMAT.metadata_suffix}"
     )
 
 
 def save_metadata(dataset_name: str, track_id: str, metadata: TrackMetadata) -> None:
-    """Persist track metadata as JSON, next to that track's .beats file."""
-    path = metadata_path(dataset_name, track_id)
+    """Persist track metadata as JSON, next to that track's .beats file.
+
+    Saved under ``metadata.annotator_id``'s slot; ``None`` is the default slot.
+    """
+    path = metadata_path(dataset_name, track_id, metadata.annotator_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     metadata.schema_version = METADATA_SCHEMA_VERSION
     path.write_text(json.dumps(asdict(metadata), indent=2))
 
 
-def load_metadata(dataset_name: str, track_id: str) -> TrackMetadata | None:
-    """Load a track's metadata, or None if it was never saved."""
-    path = metadata_path(dataset_name, track_id)
+def load_metadata(
+    dataset_name: str, track_id: str, annotator_id: str | None = None
+) -> TrackMetadata | None:
+    """Load a track's metadata for *annotator_id*'s slot, or None if unsaved."""
+    path = metadata_path(dataset_name, track_id, annotator_id)
     if not path.exists():
         return None
     return TrackMetadata(**json.loads(path.read_text()))
@@ -395,20 +431,21 @@ def load_dataset_tracks(dataset_name: str) -> list[str]:
     return list(ds.track_ids)
 
 
-def load_track(dataset_name: str, track_id: str) -> TrackData:
+def load_track(
+    dataset_name: str, track_id: str, annotator_id: str | None = None
+) -> TrackData:
     """Load track audio path and beat annotations.
 
     For custom datasets reads from ``tracks/`` and ``annotations/``.
     For mirdata datasets checks for a saved ``.beats`` file first, then
-    falls back to the dataset's own annotations.
+    falls back to the dataset's own annotations. *annotator_id* selects
+    which annotator's saved slot to read; ``None`` is the default/legacy slot.
     """
     tracks_dir = DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
     if tracks_dir.is_dir():
         audio_path = tracks_dir / f"{track_id}.wav"
         ann_path = (
-            DATA_DIR
-            / dataset_name
-            / dataformats.FORMAT.annotations_dirname
+            _annotations_slot_dir(dataset_name, annotator_id)
             / f"{track_id}{dataformats.FORMAT.beats_suffix}"
         )
         beat_times: np.ndarray = np.array([])
@@ -422,6 +459,7 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
             tempo=None,
             beat_times=beat_times,
             beat_positions=beat_positions,
+            annotator_id=annotator_id,
         )
 
     ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
@@ -429,9 +467,7 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
 
     # Prefer our own saved annotation over the dataset's built-in beats
     ann_path = (
-        DATA_DIR
-        / dataset_name
-        / dataformats.FORMAT.annotations_dirname
+        _annotations_slot_dir(dataset_name, annotator_id)
         / f"{track_id}{dataformats.FORMAT.beats_suffix}"
     )
     if ann_path.exists():
@@ -443,6 +479,7 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
             tempo=None,
             beat_times=beat_times,
             beat_positions=beat_positions,
+            annotator_id=annotator_id,
         )
 
     beat_times = np.array([])
@@ -457,6 +494,7 @@ def load_track(dataset_name: str, track_id: str) -> TrackData:
         tempo=track.tempo,
         beat_times=beat_times,
         beat_positions=beat_positions,
+        annotator_id=annotator_id,
     )
 
 
@@ -478,8 +516,51 @@ def save_annotations(track: TrackData, path: Path) -> None:
     path.write_text("\n".join(lines))
 
 
+def list_annotators(dataset_name: str, track_id: str) -> list[str | None]:
+    """Return every annotator slot with a saved annotation for this track.
+
+    ``None`` (the default/legacy slot) is listed first if present, followed
+    by each annotator subdirectory that has a saved ``.beats`` file, sorted
+    by name.
+    """
+    suffix = dataformats.FORMAT.beats_suffix
+    default_dir = _annotations_slot_dir(dataset_name, None)
+    annotators: list[str | None] = []
+    if (default_dir / f"{track_id}{suffix}").exists():
+        annotators.append(None)
+    if default_dir.is_dir():
+        for sub in sorted(default_dir.iterdir()):
+            if sub.is_dir() and (sub / f"{track_id}{suffix}").exists():
+                annotators.append(sub.name)
+    return annotators
+
+
+def _delete_annotation_files(
+    dataset_name: str, track_id: str, annotator_id: str | None
+) -> None:
+    """Remove one annotator slot's saved .beats + .meta.json, if present."""
+    ann = (
+        _annotations_slot_dir(dataset_name, annotator_id)
+        / f"{track_id}{dataformats.FORMAT.beats_suffix}"
+    )
+    if ann.exists():
+        ann.unlink()
+    meta = metadata_path(dataset_name, track_id, annotator_id)
+    if meta.exists():
+        meta.unlink()
+
+
+def delete_annotation(track: TrackData) -> None:
+    """Delete this annotator's saved annotation + metadata for *track*.
+
+    Leaves the shared audio file and any other annotator's data untouched.
+    """
+    _delete_annotation_files(track.dataset_name, track.track_id, track.annotator_id)
+
+
 def delete_track(track: TrackData) -> None:
-    """Delete a custom-dataset track (audio file + annotation) from disk.
+    """Delete a custom-dataset track: its audio file plus every annotator's
+    saved annotation and metadata for it.
 
     Raises ValueError for mirdata datasets.
     """
@@ -489,15 +570,17 @@ def delete_track(track: TrackData) -> None:
     audio = Path(track.audio_path)
     if audio.exists():
         audio.unlink()
-    ann = annotation_path(track)
-    if ann.exists():
-        ann.unlink()
+    for annotator_id in list_annotators(track.dataset_name, track.track_id):
+        _delete_annotation_files(track.dataset_name, track.track_id, annotator_id)
 
 
 def rename_track(track: TrackData, new_id: str) -> TrackData:
     """Rename a custom-dataset track on disk and return an updated TrackData.
 
-    Renames the audio file and the annotation file (if present).
+    Renames the shared audio file and this annotator's saved ``.beats`` file
+    (if present). The audio is shared across every annotator, but only the
+    caller's own slot is renamed to match — any other annotator's saved
+    ``.beats``/``.meta.json`` still reference the old track_id afterward.
     Raises ValueError for mirdata datasets or if *new_id* is already taken.
     """
     tracks_dir = DATA_DIR / track.dataset_name / dataformats.FORMAT.tracks_dirname
@@ -518,4 +601,5 @@ def rename_track(track: TrackData, new_id: str) -> TrackData:
         tempo=track.tempo,
         beat_times=track.beat_times,
         beat_positions=track.beat_positions,
+        annotator_id=track.annotator_id,
     )

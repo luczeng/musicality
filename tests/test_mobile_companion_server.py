@@ -219,3 +219,32 @@ class TestUploadAnnotation:
         metadata = annotator_data.load_metadata("field_recordings", "take1")
         assert metadata.structure == "swing"
         assert metadata.device == "iPhone"
+
+    def test_saves_section_aligned_true(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0], "section_aligned": True},
+        )
+        metadata = annotator_data.load_metadata("field_recordings", "take1")
+        assert metadata.section_aligned is True
+
+    def test_saves_section_aligned_false(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0], "section_aligned": False},
+        )
+        metadata = annotator_data.load_metadata("field_recordings", "take1")
+        assert metadata.section_aligned is False
+
+    def test_omitting_section_aligned_saves_no_metadata(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
+        )
+        assert annotator_data.load_metadata("field_recordings", "take1") is None

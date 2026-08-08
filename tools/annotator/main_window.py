@@ -187,6 +187,15 @@ class MainWindow(QMainWindow):
         self._record_dataset_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._record_dataset_edit.setPlaceholderText("dataset")
 
+        # Optional — who annotated this track. Purely descriptive metadata,
+        # like Device/Location: doesn't affect where the annotation is saved
+        # (that's TrackData.annotator_id, the multi-annotator slot selector,
+        # left alone here).
+        self._author_edit = QLineEdit()
+        self._author_edit.setFixedWidth(140)
+        self._author_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._author_edit.setPlaceholderText("e.g. luc")
+
         self._record_btn = QPushButton("⏺  Record new track")
         self._record_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._record_btn.setCheckable(True)
@@ -396,6 +405,29 @@ class MainWindow(QMainWindow):
             structure_bar.addWidget(btn)
         structure_bar.addStretch()
 
+        # Tapping always starts on count position 1 — that's guaranteed, not
+        # something to confirm. This instead tracks whether that first tap
+        # also happens to be the true start of a section, vs. landing
+        # mid-section — mirrors the mobile companion's "Section alignment"
+        # toggle exactly (same two labels).
+        self._section_group = QButtonGroup(self)
+        self._section_group.setExclusive(True)
+        section_bar = QHBoxLayout()
+        section_bar.addWidget(QLabel("Section:"))
+        for label in ("Section start", "Mid-section"):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            btn.setChecked(label == "Section start")
+            self._section_group.addButton(btn)
+            section_bar.addWidget(btn)
+        section_bar.addStretch()
+
+        author_bar = QHBoxLayout()
+        author_bar.addWidget(QLabel("Author:"))
+        author_bar.addWidget(self._author_edit)
+        author_bar.addStretch()
+
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
 
@@ -419,6 +451,8 @@ class MainWindow(QMainWindow):
         controls_column.addLayout(count_bar)
         controls_column.addLayout(accent_bar)
         controls_column.addLayout(structure_bar)
+        controls_column.addLayout(section_bar)
+        controls_column.addLayout(author_bar)
         controls_column.addLayout(delete_bar)
         controls_column.addStretch()
 
@@ -519,9 +553,10 @@ class MainWindow(QMainWindow):
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
         self._metronome.set_state(self._n_beats, None)
         self._tap_widget.reset()
-        self._set_structure(
-            (load_metadata(self._dataset_name, track_id) or TrackMetadata()).structure
-        )
+        metadata = load_metadata(self._dataset_name, track_id) or TrackMetadata()
+        self._set_structure(metadata.structure)
+        self._set_section_aligned(metadata.section_aligned)
+        self._author_edit.setText(metadata.annotator_id or "")
         self._update_metadata_label()
 
         self._prev_btn.setEnabled(index > 0)
@@ -850,6 +885,17 @@ class MainWindow(QMainWindow):
         checked = self._structure_group.checkedButton()
         return checked.text().lower() if checked is not None else "swing"
 
+    def _set_section_aligned(self, section_aligned: bool | None) -> None:
+        """Check the Section-start/Mid-section button matching *section_aligned*
+        (Section start if unset)."""
+        value = True if section_aligned is None else section_aligned
+        for btn in self._section_group.buttons():
+            btn.setChecked(btn.text() == ("Section start" if value else "Mid-section"))
+
+    def _current_section_aligned(self) -> bool:
+        checked = self._section_group.checkedButton()
+        return checked is None or checked.text() == "Section start"
+
     def _on_save(self) -> None:
         path = annotation_path(self._track)
         save_annotations(self._track, path)
@@ -858,6 +904,8 @@ class MainWindow(QMainWindow):
             load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
         )
         metadata.structure = self._current_structure()
+        metadata.section_aligned = self._current_section_aligned()
+        metadata.annotator_id = self._author_edit.text().strip() or None
         # Only fill in if unset — a track captured on the phone should keep
         # reporting its actual recording device, not the laptop it happens
         # to be annotated on.
@@ -1037,12 +1085,18 @@ class MainWindow(QMainWindow):
             return
 
         parts = []
+        if metadata.annotator_id:
+            parts.append(f"Author: {metadata.annotator_id}")
         if metadata.device:
             parts.append(f"Device: {metadata.device}")
         if metadata.location:
             parts.append(f"Location: {metadata.location}")
         if metadata.structure:
             parts.append(f"Structure: {metadata.structure}")
+        if metadata.section_aligned is not None:
+            parts.append(
+                f"Section: {'aligned' if metadata.section_aligned else 'mid-section'}"
+            )
         if metadata.duration_s is not None:
             m, s = divmod(int(metadata.duration_s), 60)
             parts.append(f"Rec. duration: {m}:{s:02d}")

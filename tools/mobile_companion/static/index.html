@@ -181,6 +181,18 @@
   </section>
 
   <section>
+    <div class="label-row">
+      <label style="margin-bottom: 0;">Section alignment</label>
+      <button id="section-help-btn" type="button" class="info-icon" aria-expanded="false" aria-label="Section alignment info">ⓘ</button>
+    </div>
+    <p id="section-help-text" class="help-text hidden">Tapping always starts on a 1 — but did that 1 also land at the start of a section, or somewhere in the middle of one?</p>
+    <div class="toggle-group">
+      <button id="section-start-btn" type="button" class="toggle-btn active">Section start</button>
+      <button id="section-mid-btn" type="button" class="toggle-btn">Mid-section</button>
+    </div>
+  </section>
+
+  <section>
     <button id="record-btn" type="button">● Record</button>
   </section>
 
@@ -211,7 +223,7 @@
     <p id="sync-status"></p>
   </section>
 
-  <p id="app-version">v12.2.3</p>
+  <p id="app-version">v12.3.1</p>
 
   <script type="module" src="/static/app.js"></script>
   <script>

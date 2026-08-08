@@ -1,5 +1,7 @@
 """Tests for tools.annotator.data — pure functions only, no I/O or mirdata."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -24,7 +26,7 @@ from tools.annotator.data import (
 # ---------------------------------------------------------------------------
 
 
-def _track(beat_times, beat_positions=None, tempo=120.0):
+def _track(beat_times, beat_positions=None, tempo=120.0, annotator_id=None):
     return TrackData(
         dataset_name="test",
         track_id="t1",
@@ -34,6 +36,7 @@ def _track(beat_times, beat_positions=None, tempo=120.0):
         beat_positions=(
             np.array(beat_positions, dtype=int) if beat_positions is not None else None
         ),
+        annotator_id=annotator_id,
     )
 
 
@@ -161,6 +164,11 @@ class TestAddBeat:
             track = add_beat(track, float(t))
         assert list(track.beat_positions) == [1, 2, 3, 4, 5, 6, 7, 8, 1]
 
+    def test_preserves_annotator_id(self):
+        track = _track([1.0, 3.0], [1, 2], annotator_id="alice")
+        result = add_beat(track, 2.0)
+        assert result.annotator_id == "alice"
+
 
 # ---------------------------------------------------------------------------
 # remove_beat
@@ -193,6 +201,11 @@ class TestRemoveBeat:
         track = _track([1.0, 2.0, 3.0], [1, 2, 3])
         result = remove_beat(track, 1.0, tolerance=0.1, n_beats=3)
         assert list(result.beat_positions) == [1, 2]
+
+    def test_preserves_annotator_id(self):
+        track = _track([1.0, 2.0, 3.0], [1, 2, 3], annotator_id="alice")
+        result = remove_beat(track, 1.0, tolerance=0.1)
+        assert result.annotator_id == "alice"
 
 
 # ---------------------------------------------------------------------------
@@ -253,3 +266,192 @@ class TestAnnotationPathUsesConfig:
         track = _track([1.0])
         path = annotation_path(track)
         assert path == tmp_path / "test" / "notes" / "t1.taps"
+
+
+# ---------------------------------------------------------------------------
+# annotation_path — per-annotator slots
+# ---------------------------------------------------------------------------
+
+
+class TestAnnotationPathAnnotatorSlot:
+    def test_default_slot_when_annotator_id_none(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _track([1.0])
+        path = annotation_path(track)
+        assert path == tmp_path / "test" / "annotations" / "t1.beats"
+
+    def test_nests_under_annotator_id(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _track([1.0], annotator_id="alice")
+        path = annotation_path(track)
+        assert path == tmp_path / "test" / "annotations" / "alice" / "t1.beats"
+
+    def test_sanitizes_annotator_id(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _track([1.0], annotator_id="Alice Doe!")
+        path = annotation_path(track)
+        assert path.parent.name == "Alice_Doe_"
+
+
+# ---------------------------------------------------------------------------
+# list_annotators
+# ---------------------------------------------------------------------------
+
+
+class TestListAnnotators:
+    def test_no_annotations_returns_empty(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        assert annotator_data.list_annotators("test", "t1") == []
+
+    def test_default_slot_only(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _track([1.0, 2.0], [1, 2])
+        save_annotations(track, annotation_path(track))
+        assert annotator_data.list_annotators("test", "t1") == [None]
+
+    def test_named_slot_only(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _track([1.0, 2.0], [1, 2], annotator_id="alice")
+        save_annotations(track, annotation_path(track))
+        assert annotator_data.list_annotators("test", "t1") == ["alice"]
+
+    def test_default_and_named_slots(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        default_track = _track([1.0, 2.0], [1, 2])
+        save_annotations(default_track, annotation_path(default_track))
+        alice_track = _track([1.0, 2.0], [1, 2], annotator_id="alice")
+        save_annotations(alice_track, annotation_path(alice_track))
+        assert annotator_data.list_annotators("test", "t1") == [None, "alice"]
+
+    def test_sorted_by_name(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        for annotator_id in ["bob", "alice"]:
+            track = _track([1.0], [1], annotator_id=annotator_id)
+            save_annotations(track, annotation_path(track))
+        assert annotator_data.list_annotators("test", "t1") == ["alice", "bob"]
+
+
+# ---------------------------------------------------------------------------
+# delete_annotation / delete_track
+# ---------------------------------------------------------------------------
+
+
+def _make_custom_track(tmp_path, dataset="test", track_id="t1", annotator_id=None):
+    """Write a real audio file + saved .beats annotation under tmp_path."""
+    tracks_dir = tmp_path / dataset / "tracks"
+    tracks_dir.mkdir(parents=True, exist_ok=True)
+    audio_path = tracks_dir / f"{track_id}.wav"
+    audio_path.touch()
+    track = TrackData(
+        dataset_name=dataset,
+        track_id=track_id,
+        audio_path=str(audio_path),
+        tempo=120.0,
+        beat_times=np.array([1.0, 2.0]),
+        beat_positions=np.array([1, 2]),
+        annotator_id=annotator_id,
+    )
+    save_annotations(track, annotation_path(track))
+    return track
+
+
+class TestDeleteAnnotation:
+    def test_removes_only_that_slot(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        _make_custom_track(tmp_path)
+        alice_track = _make_custom_track(tmp_path, annotator_id="alice")
+
+        annotator_data.delete_annotation(alice_track)
+
+        assert annotator_data.list_annotators("test", "t1") == [None]
+
+    def test_leaves_shared_audio_untouched(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        default_track = _make_custom_track(tmp_path)
+
+        annotator_data.delete_annotation(default_track)
+
+        assert Path(default_track.audio_path).exists()
+
+    def test_missing_annotation_is_a_no_op(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _make_custom_track(tmp_path)
+        annotator_data.delete_annotation(track)
+        annotator_data.delete_annotation(track)  # second call: nothing left to delete
+
+
+class TestDeleteTrack:
+    def test_removes_audio_and_every_annotator(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        default_track = _make_custom_track(tmp_path)
+        _make_custom_track(tmp_path, annotator_id="alice")
+
+        annotator_data.delete_track(default_track)
+
+        assert not Path(default_track.audio_path).exists()
+        assert annotator_data.list_annotators("test", "t1") == []
+
+    def test_raises_for_mirdata_dataset(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = TrackData(
+            dataset_name="ballroom",
+            track_id="t1",
+            audio_path="/fake/t1.wav",
+            tempo=None,
+            beat_times=np.array([]),
+            beat_positions=None,
+        )
+        with pytest.raises(ValueError):
+            annotator_data.delete_track(track)
+
+
+# ---------------------------------------------------------------------------
+# load_track — per-annotator slots
+# ---------------------------------------------------------------------------
+
+
+class TestLoadTrackAnnotatorSlot:
+    def test_default_slot_unaffected_by_other_annotators(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        _make_custom_track(tmp_path)
+        _make_custom_track(
+            tmp_path, annotator_id="alice"
+        )  # same track_id, different beats file
+
+        loaded = annotator_data.load_track("test", "t1")
+
+        assert loaded.annotator_id is None
+        np.testing.assert_allclose(loaded.beat_times, [1.0, 2.0])
+
+    def test_loads_named_annotator_slot(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        _make_custom_track(tmp_path, annotator_id="alice")
+
+        loaded = annotator_data.load_track("test", "t1", annotator_id="alice")
+
+        assert loaded.annotator_id == "alice"
+        np.testing.assert_allclose(loaded.beat_times, [1.0, 2.0])
+
+    def test_named_slot_with_no_saved_annotation_is_empty(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        _make_custom_track(tmp_path)  # only the default slot has data
+
+        loaded = annotator_data.load_track("test", "t1", annotator_id="alice")
+
+        assert loaded.annotator_id == "alice"
+        assert len(loaded.beat_times) == 0
+
+
+# ---------------------------------------------------------------------------
+# rename_track — carries annotator_id
+# ---------------------------------------------------------------------------
+
+
+class TestRenameTrackAnnotatorId:
+    def test_preserves_annotator_id(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        track = _make_custom_track(tmp_path, annotator_id="alice")
+
+        renamed = annotator_data.rename_track(track, "t1_renamed")
+
+        assert renamed.annotator_id == "alice"

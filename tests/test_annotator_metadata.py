@@ -70,3 +70,71 @@ class TestSchemaVersion:
         path.parent.mkdir(parents=True)
         path.write_text('{"structure": "blues"}')
         assert load_metadata("swing", "legacy").schema_version == 1
+
+
+# ---------------------------------------------------------------------------
+# metadata_path — per-annotator slots
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataPathAnnotatorSlot:
+    def test_default_slot_when_annotator_id_none(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        path = metadata_path("swing", "take1")
+        assert path == tmp_path / "swing" / "annotations" / "take1.meta.json"
+
+    def test_nests_under_annotator_id(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        path = metadata_path("swing", "take1", annotator_id="alice")
+        assert path == tmp_path / "swing" / "annotations" / "alice" / "take1.meta.json"
+
+
+# ---------------------------------------------------------------------------
+# save_metadata / load_metadata — per-annotator slots
+# ---------------------------------------------------------------------------
+
+
+class TestMetadataAnnotatorSlot:
+    def test_saves_under_metadata_annotator_id(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        metadata = TrackMetadata(structure="swing", annotator_id="alice")
+        save_metadata("swing", "take1", metadata)
+        assert metadata_path("swing", "take1", "alice").exists()
+        assert not metadata_path("swing", "take1").exists()
+
+    def test_default_and_named_slots_dont_collide(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        save_metadata("swing", "take1", TrackMetadata(structure="swing"))
+        save_metadata(
+            "swing", "take1", TrackMetadata(structure="blues", annotator_id="alice")
+        )
+
+        assert load_metadata("swing", "take1").structure == "swing"
+        assert load_metadata("swing", "take1", "alice").structure == "blues"
+
+    def test_load_missing_named_slot_returns_none(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        save_metadata("swing", "take1", TrackMetadata(structure="swing"))
+        assert load_metadata("swing", "take1", "alice") is None
+
+
+# ---------------------------------------------------------------------------
+# section_aligned
+# ---------------------------------------------------------------------------
+
+
+class TestSectionAligned:
+    def test_defaults_to_none(self):
+        assert TrackMetadata().section_aligned is None
+
+    def test_round_trips_true(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        metadata = TrackMetadata(section_aligned=True)
+        save_metadata("swing", "take1", metadata)
+        assert load_metadata("swing", "take1").section_aligned is True
+
+    def test_round_trips_false(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        metadata = TrackMetadata(section_aligned=False)
+        save_metadata("swing", "take1", metadata)
+        assert load_metadata("swing", "take1").section_aligned is False

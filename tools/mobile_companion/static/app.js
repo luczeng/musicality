@@ -30,6 +30,10 @@ const structureSwingBtn = document.getElementById("structure-swing-btn");
 const structureBluesBtn = document.getElementById("structure-blues-btn");
 const structureHelpBtn = document.getElementById("structure-help-btn");
 const structureHelpText = document.getElementById("structure-help-text");
+const sectionStartBtn = document.getElementById("section-start-btn");
+const sectionMidBtn = document.getElementById("section-mid-btn");
+const sectionHelpBtn = document.getElementById("section-help-btn");
+const sectionHelpText = document.getElementById("section-help-text");
 const recordBtn = document.getElementById("record-btn");
 const tapBtn = document.getElementById("tap-btn");
 const listenBtn = document.getElementById("listen-btn");
@@ -86,6 +90,27 @@ structureBluesBtn.addEventListener("click", () => setStructure("blues"));
 structureHelpBtn.addEventListener("click", () => {
   const expanded = structureHelpText.classList.toggle("hidden") === false;
   structureHelpBtn.setAttribute("aria-expanded", String(expanded));
+});
+
+// Tapping always starts on count position 1 — that's guaranteed, not
+// something to record. This instead tracks whether that first tap also
+// happens to be the true start of a section, vs. landing mid-section.
+// Defaults to true (the common case); the toggle only needs pressing when
+// tapping actually started partway through a section.
+let sectionAligned = true;
+
+function setSectionAligned(value) {
+  sectionAligned = value;
+  sectionStartBtn.classList.toggle("active", value === true);
+  sectionMidBtn.classList.toggle("active", value === false);
+}
+
+sectionStartBtn.addEventListener("click", () => setSectionAligned(true));
+sectionMidBtn.addEventListener("click", () => setSectionAligned(false));
+
+sectionHelpBtn.addEventListener("click", () => {
+  const expanded = sectionHelpText.classList.toggle("hidden") === false;
+  sectionHelpBtn.setAttribute("aria-expanded", String(expanded));
 });
 
 async function loadDatasetOptions() {
@@ -376,6 +401,7 @@ saveBtn.addEventListener("click", async () => {
     dataset,
     trackName || null,
     structure,
+    sectionAligned,
     device || null,
     recordDurationS,
     bpmStats
@@ -388,6 +414,7 @@ saveBtn.addEventListener("click", async () => {
   listenBtn.disabled = true;
   trackNameInput.value = "";
   setStructure("swing");
+  setSectionAligned(true);
   resetTapState();
   statusEl.textContent = "Saved locally.";
   await refreshPendingCount();
@@ -420,6 +447,7 @@ async function syncOneCapture(capture) {
         bpm_mean: capture.bpmMean,
         bpm_median: capture.bpmMedian,
         bpm_std: capture.bpmStd,
+        section_aligned: capture.sectionAligned,
       }),
     }
   );
