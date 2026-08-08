@@ -396,21 +396,23 @@ class MainWindow(QMainWindow):
             structure_bar.addWidget(btn)
         structure_bar.addStretch()
 
-        # Whether the first tap actually landed on the true phrase-1, or the
-        # annotator started mid-phrase — mirrors the mobile companion's
-        # "Phrase alignment" toggle exactly (same two labels).
-        self._phrase_group = QButtonGroup(self)
-        self._phrase_group.setExclusive(True)
-        phrase_bar = QHBoxLayout()
-        phrase_bar.addWidget(QLabel("Phrase:"))
-        for label in ("On the 1", "Off the 1"):
+        # Tapping always starts on count position 1 — that's guaranteed, not
+        # something to confirm. This instead tracks whether that first tap
+        # also happens to be the true start of a section, vs. landing
+        # mid-section — mirrors the mobile companion's "Section alignment"
+        # toggle exactly (same two labels).
+        self._section_group = QButtonGroup(self)
+        self._section_group.setExclusive(True)
+        section_bar = QHBoxLayout()
+        section_bar.addWidget(QLabel("Section:"))
+        for label in ("Section start", "Mid-section"):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            btn.setChecked(label == "On the 1")
-            self._phrase_group.addButton(btn)
-            phrase_bar.addWidget(btn)
-        phrase_bar.addStretch()
+            btn.setChecked(label == "Section start")
+            self._section_group.addButton(btn)
+            section_bar.addWidget(btn)
+        section_bar.addStretch()
 
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
@@ -435,7 +437,7 @@ class MainWindow(QMainWindow):
         controls_column.addLayout(count_bar)
         controls_column.addLayout(accent_bar)
         controls_column.addLayout(structure_bar)
-        controls_column.addLayout(phrase_bar)
+        controls_column.addLayout(section_bar)
         controls_column.addLayout(delete_bar)
         controls_column.addStretch()
 
@@ -538,7 +540,7 @@ class MainWindow(QMainWindow):
         self._tap_widget.reset()
         metadata = load_metadata(self._dataset_name, track_id) or TrackMetadata()
         self._set_structure(metadata.structure)
-        self._set_phrase_aligned(metadata.phrase_aligned)
+        self._set_section_aligned(metadata.section_aligned)
         self._update_metadata_label()
 
         self._prev_btn.setEnabled(index > 0)
@@ -867,15 +869,16 @@ class MainWindow(QMainWindow):
         checked = self._structure_group.checkedButton()
         return checked.text().lower() if checked is not None else "swing"
 
-    def _set_phrase_aligned(self, phrase_aligned: bool | None) -> None:
-        """Check the On/Off-the-1 button matching *phrase_aligned* (On the 1 if unset)."""
-        value = True if phrase_aligned is None else phrase_aligned
-        for btn in self._phrase_group.buttons():
-            btn.setChecked(btn.text() == ("On the 1" if value else "Off the 1"))
+    def _set_section_aligned(self, section_aligned: bool | None) -> None:
+        """Check the Section-start/Mid-section button matching *section_aligned*
+        (Section start if unset)."""
+        value = True if section_aligned is None else section_aligned
+        for btn in self._section_group.buttons():
+            btn.setChecked(btn.text() == ("Section start" if value else "Mid-section"))
 
-    def _current_phrase_aligned(self) -> bool:
-        checked = self._phrase_group.checkedButton()
-        return checked is None or checked.text() == "On the 1"
+    def _current_section_aligned(self) -> bool:
+        checked = self._section_group.checkedButton()
+        return checked is None or checked.text() == "Section start"
 
     def _on_save(self) -> None:
         path = annotation_path(self._track)
@@ -885,7 +888,7 @@ class MainWindow(QMainWindow):
             load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
         )
         metadata.structure = self._current_structure()
-        metadata.phrase_aligned = self._current_phrase_aligned()
+        metadata.section_aligned = self._current_section_aligned()
         # Only fill in if unset — a track captured on the phone should keep
         # reporting its actual recording device, not the laptop it happens
         # to be annotated on.
@@ -1071,9 +1074,9 @@ class MainWindow(QMainWindow):
             parts.append(f"Location: {metadata.location}")
         if metadata.structure:
             parts.append(f"Structure: {metadata.structure}")
-        if metadata.phrase_aligned is not None:
+        if metadata.section_aligned is not None:
             parts.append(
-                f"Phrase: {'on the 1' if metadata.phrase_aligned else 'off the 1'}"
+                f"Section: {'aligned' if metadata.section_aligned else 'mid-section'}"
             )
         if metadata.duration_s is not None:
             m, s = divmod(int(metadata.duration_s), 60)

@@ -28,7 +28,7 @@ DEFAULT_N_BEATS = 8
 # stamps this value; TrackMetadata.schema_version defaults to 1 (the implicit
 # version of every file saved before this field existed), so a file missing
 # the key on load is correctly read as version 1 rather than "current".
-# v2 adds annotator_id and phrase_aligned.
+# v2 adds annotator_id and section_aligned.
 METADATA_SCHEMA_VERSION = 2
 
 
@@ -74,7 +74,12 @@ class TrackMetadata:
     bpm_median: float | None = None
     bpm_std: float | None = None
     annotator_id: str | None = None  # who made this annotation, if known
-    phrase_aligned: bool | None = None  # True: first tap is a confirmed phrase-1
+    # Tapping always starts at count position 1 (see cycle_positions) — that
+    # part is guaranteed, not something to confirm. section_aligned instead
+    # records whether that first tap also happens to be the true start of a
+    # section, vs. landing mid-section. True/False = confirmed either way,
+    # None = not recorded.
+    section_aligned: bool | None = None
     schema_version: int = 1
 
 

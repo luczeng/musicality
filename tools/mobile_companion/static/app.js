@@ -30,10 +30,10 @@ const structureSwingBtn = document.getElementById("structure-swing-btn");
 const structureBluesBtn = document.getElementById("structure-blues-btn");
 const structureHelpBtn = document.getElementById("structure-help-btn");
 const structureHelpText = document.getElementById("structure-help-text");
-const phraseAlignedBtn = document.getElementById("phrase-aligned-btn");
-const phraseMisalignedBtn = document.getElementById("phrase-misaligned-btn");
-const phraseHelpBtn = document.getElementById("phrase-help-btn");
-const phraseHelpText = document.getElementById("phrase-help-text");
+const sectionStartBtn = document.getElementById("section-start-btn");
+const sectionMidBtn = document.getElementById("section-mid-btn");
+const sectionHelpBtn = document.getElementById("section-help-btn");
+const sectionHelpText = document.getElementById("section-help-text");
 const recordBtn = document.getElementById("record-btn");
 const tapBtn = document.getElementById("tap-btn");
 const listenBtn = document.getElementById("listen-btn");
@@ -92,23 +92,25 @@ structureHelpBtn.addEventListener("click", () => {
   structureHelpBtn.setAttribute("aria-expanded", String(expanded));
 });
 
-// Defaults to true — matches the tap-tempo convention everywhere else in
-// this codebase that tapping starts on beat 1 of the count. The toggle only
-// needs pressing when that convention wasn't actually followed.
-let phraseAligned = true;
+// Tapping always starts on count position 1 — that's guaranteed, not
+// something to record. This instead tracks whether that first tap also
+// happens to be the true start of a section, vs. landing mid-section.
+// Defaults to true (the common case); the toggle only needs pressing when
+// tapping actually started partway through a section.
+let sectionAligned = true;
 
-function setPhraseAligned(value) {
-  phraseAligned = value;
-  phraseAlignedBtn.classList.toggle("active", value === true);
-  phraseMisalignedBtn.classList.toggle("active", value === false);
+function setSectionAligned(value) {
+  sectionAligned = value;
+  sectionStartBtn.classList.toggle("active", value === true);
+  sectionMidBtn.classList.toggle("active", value === false);
 }
 
-phraseAlignedBtn.addEventListener("click", () => setPhraseAligned(true));
-phraseMisalignedBtn.addEventListener("click", () => setPhraseAligned(false));
+sectionStartBtn.addEventListener("click", () => setSectionAligned(true));
+sectionMidBtn.addEventListener("click", () => setSectionAligned(false));
 
-phraseHelpBtn.addEventListener("click", () => {
-  const expanded = phraseHelpText.classList.toggle("hidden") === false;
-  phraseHelpBtn.setAttribute("aria-expanded", String(expanded));
+sectionHelpBtn.addEventListener("click", () => {
+  const expanded = sectionHelpText.classList.toggle("hidden") === false;
+  sectionHelpBtn.setAttribute("aria-expanded", String(expanded));
 });
 
 async function loadDatasetOptions() {
@@ -399,7 +401,7 @@ saveBtn.addEventListener("click", async () => {
     dataset,
     trackName || null,
     structure,
-    phraseAligned,
+    sectionAligned,
     device || null,
     recordDurationS,
     bpmStats
@@ -412,7 +414,7 @@ saveBtn.addEventListener("click", async () => {
   listenBtn.disabled = true;
   trackNameInput.value = "";
   setStructure("swing");
-  setPhraseAligned(true);
+  setSectionAligned(true);
   resetTapState();
   statusEl.textContent = "Saved locally.";
   await refreshPendingCount();
@@ -445,7 +447,7 @@ async function syncOneCapture(capture) {
         bpm_mean: capture.bpmMean,
         bpm_median: capture.bpmMedian,
         bpm_std: capture.bpmStd,
-        phrase_aligned: capture.phraseAligned,
+        section_aligned: capture.sectionAligned,
       }),
     }
   );

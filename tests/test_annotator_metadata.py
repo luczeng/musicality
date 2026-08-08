@@ -119,22 +119,22 @@ class TestMetadataAnnotatorSlot:
 
 
 # ---------------------------------------------------------------------------
-# phrase_aligned
+# section_aligned
 # ---------------------------------------------------------------------------
 
 
-class TestPhraseAligned:
+class TestSectionAligned:
     def test_defaults_to_none(self):
-        assert TrackMetadata().phrase_aligned is None
+        assert TrackMetadata().section_aligned is None
 
     def test_round_trips_true(self, monkeypatch, tmp_path):
         monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
-        metadata = TrackMetadata(phrase_aligned=True)
+        metadata = TrackMetadata(section_aligned=True)
         save_metadata("swing", "take1", metadata)
-        assert load_metadata("swing", "take1").phrase_aligned is True
+        assert load_metadata("swing", "take1").section_aligned is True
 
     def test_round_trips_false(self, monkeypatch, tmp_path):
         monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
-        metadata = TrackMetadata(phrase_aligned=False)
+        metadata = TrackMetadata(section_aligned=False)
         save_metadata("swing", "take1", metadata)
-        assert load_metadata("swing", "take1").phrase_aligned is False
+        assert load_metadata("swing", "take1").section_aligned is False

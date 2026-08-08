@@ -1,4 +1,4 @@
-# Part 2 — Add annotator identity + phrase-alignment metadata
+# Part 2 — Add annotator identity + section-alignment metadata
 
 Depends on [Part 1](01_centralize_annotation_data_format.md) — reuses the
 centralized dirname/suffix config and the `schema_version` field it
@@ -8,9 +8,10 @@ introduces.
 
 Adds the two pieces of metadata originally requested: (1) support for
 multiple independent annotations per track, tagged by who made them, and
-(2) a per-annotation flag recording whether the annotator is confident the
-first tapped beat is the true phrase-1 (today this is silently assumed —
-see `data.py:21-23,184-190` — with no way to flag it's uncertain).
+(2) a per-annotation flag recording whether the first tapped beat — which
+always starts count position 1, that part is guaranteed — also happens to
+be the true start of a section, vs. landing mid-section (today this
+distinction isn't recorded at all).
 
 ## Design
 
@@ -35,9 +36,9 @@ own per-dataset files live under a versioned subfolder (e.g.
 
 - `TrackData` (`data.py:39-48`): add `annotator_id: str | None = None`.
 - `TrackMetadata` (`data.py:51-65`): add `annotator_id: str | None = None`
-  and `phrase_aligned: bool | None = None` (`None` = unknown/unrecorded —
-  matches all existing data; `True` = confirmed first tap is the true
-  phrase-1; `False` = annotator flagged a mid-phrase start).
+  and `section_aligned: bool | None = None` (`None` = unknown/unrecorded —
+  matches all existing data; `True` = confirmed the first tap is the true
+  start of a section; `False` = annotator flagged a mid-section start).
 
 **Path/IO functions to update**:
 
@@ -70,7 +71,7 @@ all annotators, not just the caller's slot.
 **Not in scope**: `BeatDataset`/`TempoDataset` still read exclusively
 through `mirdata` and continue to ignore these sidecars, same as today —
 bridging annotator-produced data into training is separate future work.
-UI wiring (annotator picker, identity input, phrase-aligned toggle in
+UI wiring (annotator picker, identity input, section-aligned toggle in
 `main_window.py`, mobile companion upload form) is follow-on work built on
 top of this `data.py` API, not designed here.
 
