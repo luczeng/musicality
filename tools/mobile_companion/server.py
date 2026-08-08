@@ -18,6 +18,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
 from tools.annotator.naming import generate_track_id, sanitize_track_name
 
@@ -93,7 +94,7 @@ async def upload_track(
         ) from exc
 
     track_id = sanitize_track_name(name) if name else generate_track_id()
-    tracks_dir = annotator_data.DATA_DIR / dataset / "tracks"
+    tracks_dir = annotator_data.DATA_DIR / dataset / dataformats.FORMAT.tracks_dirname
     tracks_dir.mkdir(parents=True, exist_ok=True)
     sf.write(str(tracks_dir / f"{track_id}.wav"), audio, _SR)
 
@@ -110,7 +111,10 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
         dataset_name=dataset,
         track_id=track_id,
         audio_path=str(
-            annotator_data.DATA_DIR / dataset / "tracks" / f"{track_id}.wav"
+            annotator_data.DATA_DIR
+            / dataset
+            / dataformats.FORMAT.tracks_dirname
+            / f"{track_id}.wav"
         ),
         tempo=annotator_data.tempo_from_beats(beat_times),
         beat_times=beat_times,

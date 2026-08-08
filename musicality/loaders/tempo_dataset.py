@@ -11,8 +11,7 @@ from torch.utils.data import Dataset
 import musicality.dataformats as dataformats
 
 
-_fmt = dataformats.load()
-DATA_DIR = dataformats.ROOT / _fmt.data_dir
+DATA_DIR = dataformats.DATA_DIR
 
 
 class TempoDataset(Dataset):

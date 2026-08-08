@@ -1,5 +1,6 @@
 """Tests for tools.annotator.data's track metadata persistence."""
 
+import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
 from tools.annotator.data import (
     TrackMetadata,
@@ -39,3 +40,33 @@ class TestSaveLoadMetadata:
     def test_missing_metadata_returns_none(self, monkeypatch, tmp_path):
         monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
         assert load_metadata("swing", "never_saved") is None
+
+
+class TestMetadataPathUsesConfig:
+    def test_path_uses_configured_dirname_and_suffix(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats.FORMAT, "annotations_dirname", "notes")
+        monkeypatch.setattr(dataformats.FORMAT, "metadata_suffix", ".info.json")
+        path = metadata_path("swing", "take1")
+        assert path == tmp_path / "swing" / "notes" / "take1.info.json"
+
+
+class TestSchemaVersion:
+    def test_new_metadata_defaults_to_version_1(self):
+        assert TrackMetadata().schema_version == 1
+
+    def test_save_stamps_current_version(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        metadata = TrackMetadata(structure="swing")
+        save_metadata("swing", "take1", metadata)
+        assert metadata.schema_version == annotator_data.METADATA_SCHEMA_VERSION
+        assert load_metadata("swing", "take1").schema_version == (
+            annotator_data.METADATA_SCHEMA_VERSION
+        )
+
+    def test_pre_versioning_file_loads_as_version_1(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        path = metadata_path("swing", "legacy")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"structure": "blues"}')
+        assert load_metadata("swing", "legacy").schema_version == 1
