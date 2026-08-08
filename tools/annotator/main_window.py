@@ -187,6 +187,15 @@ class MainWindow(QMainWindow):
         self._record_dataset_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self._record_dataset_edit.setPlaceholderText("dataset")
 
+        # Optional — who annotated this track. Purely descriptive metadata,
+        # like Device/Location: doesn't affect where the annotation is saved
+        # (that's TrackData.annotator_id, the multi-annotator slot selector,
+        # left alone here).
+        self._author_edit = QLineEdit()
+        self._author_edit.setFixedWidth(140)
+        self._author_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self._author_edit.setPlaceholderText("e.g. luc")
+
         self._record_btn = QPushButton("⏺  Record new track")
         self._record_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._record_btn.setCheckable(True)
@@ -414,6 +423,11 @@ class MainWindow(QMainWindow):
             section_bar.addWidget(btn)
         section_bar.addStretch()
 
+        author_bar = QHBoxLayout()
+        author_bar.addWidget(QLabel("Author:"))
+        author_bar.addWidget(self._author_edit)
+        author_bar.addStretch()
+
         self._tap_widget = TapTempoWidget()
         self._tap_widget.reset_requested.connect(self._on_reset_beats)
 
@@ -438,6 +452,7 @@ class MainWindow(QMainWindow):
         controls_column.addLayout(accent_bar)
         controls_column.addLayout(structure_bar)
         controls_column.addLayout(section_bar)
+        controls_column.addLayout(author_bar)
         controls_column.addLayout(delete_bar)
         controls_column.addStretch()
 
@@ -541,6 +556,7 @@ class MainWindow(QMainWindow):
         metadata = load_metadata(self._dataset_name, track_id) or TrackMetadata()
         self._set_structure(metadata.structure)
         self._set_section_aligned(metadata.section_aligned)
+        self._author_edit.setText(metadata.annotator_id or "")
         self._update_metadata_label()
 
         self._prev_btn.setEnabled(index > 0)
@@ -889,6 +905,7 @@ class MainWindow(QMainWindow):
         )
         metadata.structure = self._current_structure()
         metadata.section_aligned = self._current_section_aligned()
+        metadata.annotator_id = self._author_edit.text().strip() or None
         # Only fill in if unset — a track captured on the phone should keep
         # reporting its actual recording device, not the laptop it happens
         # to be annotated on.
@@ -1068,6 +1085,8 @@ class MainWindow(QMainWindow):
             return
 
         parts = []
+        if metadata.annotator_id:
+            parts.append(f"Author: {metadata.annotator_id}")
         if metadata.device:
             parts.append(f"Device: {metadata.device}")
         if metadata.location:
