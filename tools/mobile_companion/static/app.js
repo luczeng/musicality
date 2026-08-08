@@ -30,6 +30,10 @@ const structureSwingBtn = document.getElementById("structure-swing-btn");
 const structureBluesBtn = document.getElementById("structure-blues-btn");
 const structureHelpBtn = document.getElementById("structure-help-btn");
 const structureHelpText = document.getElementById("structure-help-text");
+const phraseAlignedBtn = document.getElementById("phrase-aligned-btn");
+const phraseMisalignedBtn = document.getElementById("phrase-misaligned-btn");
+const phraseHelpBtn = document.getElementById("phrase-help-btn");
+const phraseHelpText = document.getElementById("phrase-help-text");
 const recordBtn = document.getElementById("record-btn");
 const tapBtn = document.getElementById("tap-btn");
 const listenBtn = document.getElementById("listen-btn");
@@ -86,6 +90,25 @@ structureBluesBtn.addEventListener("click", () => setStructure("blues"));
 structureHelpBtn.addEventListener("click", () => {
   const expanded = structureHelpText.classList.toggle("hidden") === false;
   structureHelpBtn.setAttribute("aria-expanded", String(expanded));
+});
+
+// Defaults to true — matches the tap-tempo convention everywhere else in
+// this codebase that tapping starts on beat 1 of the count. The toggle only
+// needs pressing when that convention wasn't actually followed.
+let phraseAligned = true;
+
+function setPhraseAligned(value) {
+  phraseAligned = value;
+  phraseAlignedBtn.classList.toggle("active", value === true);
+  phraseMisalignedBtn.classList.toggle("active", value === false);
+}
+
+phraseAlignedBtn.addEventListener("click", () => setPhraseAligned(true));
+phraseMisalignedBtn.addEventListener("click", () => setPhraseAligned(false));
+
+phraseHelpBtn.addEventListener("click", () => {
+  const expanded = phraseHelpText.classList.toggle("hidden") === false;
+  phraseHelpBtn.setAttribute("aria-expanded", String(expanded));
 });
 
 async function loadDatasetOptions() {
@@ -376,6 +399,7 @@ saveBtn.addEventListener("click", async () => {
     dataset,
     trackName || null,
     structure,
+    phraseAligned,
     device || null,
     recordDurationS,
     bpmStats
@@ -388,6 +412,7 @@ saveBtn.addEventListener("click", async () => {
   listenBtn.disabled = true;
   trackNameInput.value = "";
   setStructure("swing");
+  setPhraseAligned(true);
   resetTapState();
   statusEl.textContent = "Saved locally.";
   await refreshPendingCount();
@@ -420,6 +445,7 @@ async function syncOneCapture(capture) {
         bpm_mean: capture.bpmMean,
         bpm_median: capture.bpmMedian,
         bpm_std: capture.bpmStd,
+        phrase_aligned: capture.phraseAligned,
       }),
     }
   );

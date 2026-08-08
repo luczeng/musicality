@@ -37,6 +37,7 @@ class TapAnnotation(BaseModel):
     bpm_mean: float | None = None
     bpm_median: float | None = None
     bpm_std: float | None = None
+    phrase_aligned: bool | None = None
 
 
 @app.get("/")
@@ -129,6 +130,7 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
         body.bpm_mean,
         body.bpm_median,
         body.bpm_std,
+        body.phrase_aligned,
     )
     if any(field is not None for field in metadata_fields):
         metadata = (
@@ -147,6 +149,8 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
             metadata.bpm_median = body.bpm_median
         if body.bpm_std is not None:
             metadata.bpm_std = body.bpm_std
+        if body.phrase_aligned is not None:
+            metadata.phrase_aligned = body.phrase_aligned
         annotator_data.save_metadata(dataset, track_id, metadata)
 
     return {"dataset": dataset, "track_id": track_id, "tempo": track.tempo}

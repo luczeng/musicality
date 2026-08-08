@@ -51,6 +51,7 @@ export async function addPendingCapture(
   dataset,
   trackName,
   structure,
+  phraseAligned,
   device,
   durationS,
   bpmStats
@@ -64,6 +65,7 @@ export async function addPendingCapture(
       trackName: trackName || null,
       tapTimes,
       structure: structure || null,
+      phraseAligned: phraseAligned ?? null,
       device: device || null,
       durationS: durationS ?? null,
       bpmMean: bpmStats?.mean ?? null,

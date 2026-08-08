@@ -181,6 +181,18 @@
   </section>
 
   <section>
+    <div class="label-row">
+      <label style="margin-bottom: 0;">Phrase alignment</label>
+      <button id="phrase-help-btn" type="button" class="info-icon" aria-expanded="false" aria-label="Phrase alignment info">ⓘ</button>
+    </div>
+    <p id="phrase-help-text" class="help-text hidden">Did the first tap land exactly on the 1 of the count, or somewhere in the middle of a phrase?</p>
+    <div class="toggle-group">
+      <button id="phrase-aligned-btn" type="button" class="toggle-btn active">On the 1</button>
+      <button id="phrase-misaligned-btn" type="button" class="toggle-btn">Off the 1</button>
+    </div>
+  </section>
+
+  <section>
     <button id="record-btn" type="button">● Record</button>
   </section>
 
@@ -211,7 +223,7 @@
     <p id="sync-status"></p>
   </section>
 
-  <p id="app-version">v12.2.3</p>
+  <p id="app-version">v12.3.0</p>
 
   <script type="module" src="/static/app.js"></script>
   <script>
