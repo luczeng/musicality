@@ -395,17 +395,17 @@ saveBtn.addEventListener("click", async () => {
 
   if (device) localStorage.setItem(DEVICE_STORAGE_KEY, device);
 
-  await addPendingCapture(
-    recordedBlob,
-    tapTimesS,
+  await addPendingCapture({
+    blob: recordedBlob,
+    tapTimes: tapTimesS,
     dataset,
-    trackName || null,
+    trackName: trackName || null,
     structure,
     sectionAligned,
-    device || null,
-    recordDurationS,
-    bpmStats
-  );
+    device: device || null,
+    durationS: recordDurationS,
+    bpmStats,
+  });
 
   if (listening) stopListening();
   recordedBlob = null;
@@ -430,7 +430,8 @@ async function syncOneCapture(capture) {
     { method: "POST", body: uploadForm }
   );
   if (!uploadResponse.ok) {
-    throw new Error(`upload failed (${uploadResponse.status})`);
+    const detail = await uploadResponse.text().catch(() => "");
+    throw new Error(`upload failed (${uploadResponse.status}): ${detail}`);
   }
   const { track_id } = await uploadResponse.json();
 
@@ -452,7 +453,8 @@ async function syncOneCapture(capture) {
     }
   );
   if (!annotationResponse.ok) {
-    throw new Error(`annotation failed (${annotationResponse.status})`);
+    const detail = await annotationResponse.text().catch(() => "");
+    throw new Error(`annotation failed (${annotationResponse.status}): ${detail}`);
   }
 }
 
@@ -461,13 +463,16 @@ async function syncOneCapture(capture) {
 // later retry rather than losing it.
 let syncInFlight = false;
 
+// Returns the number of captures successfully synced, so callers (the
+// manual Sync button, below) can decide whether to react to it — the
+// opportunistic on-load sync just fires this and ignores the result.
 async function syncPendingCaptures() {
   // Checked and set synchronously, before any `await`, so the opportunistic
   // on-load sync and a manual Sync click can't both start: the server's
   // auto-generated track id only has microsecond resolution, so two
   // concurrent syncs of the same capture racing each other could otherwise
   // overwrite one another (observed in practice before this guard existed).
-  if (syncInFlight) return;
+  if (syncInFlight) return 0;
   syncInFlight = true;
   syncBtn.disabled = true;
 
@@ -475,7 +480,7 @@ async function syncPendingCaptures() {
     const pending = await listPending();
     if (pending.length === 0) {
       syncStatusEl.textContent = "Nothing to sync.";
-      return;
+      return 0;
     }
 
     syncStatusEl.textContent = `Syncing ${pending.length} capture(s)…`;
@@ -488,21 +493,28 @@ async function syncPendingCaptures() {
         await markSynced(capture.id);
         await deletePending(capture.id);
         succeeded++;
-      } catch {
+      } catch (err) {
         failed++;
+        console.warn("[sync] capture failed:", capture.id, err);
       }
     }
 
     syncStatusEl.textContent =
       `Synced ${succeeded}` + (failed ? `, ${failed} failed (still queued).` : ".");
     await refreshPendingCount();
+    return succeeded;
   } finally {
     syncInFlight = false;
     syncBtn.disabled = false;
   }
 }
 
-syncBtn.addEventListener("click", syncPendingCaptures);
+syncBtn.addEventListener("click", async () => {
+  const succeeded = await syncPendingCaptures();
+  if (succeeded > 0) {
+    alert("Thank you for contributing to the swing database!");
+  }
+});
 
 flushBtn.addEventListener("click", async () => {
   const pending = await listPending();

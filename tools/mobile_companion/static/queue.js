@@ -44,8 +44,15 @@ async function getStore(mode) {
 
 /**
  * Save a captured recording + tap times locally. Returns the generated id.
+ *
+ * Takes a single named-fields object rather than positional arguments —
+ * a positional call silently misassigns fields (wrong type landing in the
+ * wrong key) if a caller and this function ever fall out of sync on
+ * argument order, e.g. under service-worker cache skew between app.js and
+ * queue.js. A named object fails safe: a missing field is just undefined
+ * in that one field, not a shift of every field after it.
  */
-export async function addPendingCapture(
+export async function addPendingCapture({
   blob,
   tapTimes,
   dataset,
@@ -54,8 +61,8 @@ export async function addPendingCapture(
   sectionAligned,
   device,
   durationS,
-  bpmStats
-) {
+  bpmStats,
+}) {
   const store = await getStore("readwrite");
   const id = crypto.randomUUID();
   await promisifyRequest(
