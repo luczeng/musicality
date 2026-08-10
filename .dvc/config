@@ -1,5 +1,8 @@
 [core]
-    remote = storage
+    remote = infomaniak
 ['remote "storage"']
     url = s3://lindyhop/
     endpointurl = https://s3.us-east-005.backblazeb2.com
+['remote "infomaniak"']
+    url = s3://default/musicality/
+    endpointurl = https://s3.swiss-backup02.infomaniak.com
