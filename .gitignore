@@ -20,6 +20,9 @@ env/
 # Pytest
 .pytest_cache/
 
+# Sphinx docs (generated)
+docs/source/generated/
+
 # Local dev TLS certs (mkcert)
 tools/mobile_companion/certs/
 

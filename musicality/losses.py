@@ -9,12 +9,17 @@ def relative_tempo_loss(
     target: torch.Tensor,
     factors: tuple = (0.5, 1.0, 2.0),
 ) -> torch.Tensor:
-    """MAE loss invariant to metrical octave errors.
+    r"""MAE loss invariant to metrical octave errors.
 
     For each sample, computes the absolute error between the prediction and
     each factor × target, then takes the minimum. Predicting double or half
     the annotated tempo incurs zero penalty — both are musically valid
     metrical interpretations of the same groove.
+
+    .. math::
+
+        \mathcal{L} = \frac{1}{B} \sum_{i=1}^{B} \min_{f \in \text{factors}}
+        \left| \hat{y}_i - f \cdot y_i \right|
 
     :param pred: Predicted BPM values, shape ``(B,)``.
     :param target: Ground-truth BPM values, shape ``(B,)``.
@@ -33,10 +38,14 @@ def absolute_tempo_loss(
     pred: torch.Tensor,
     target: torch.Tensor,
 ) -> torch.Tensor:
-    """Plain MAE between predicted and target BPM values.
+    r"""Plain MAE between predicted and target BPM values.
 
     Unlike :func:`relative_tempo_loss`, this penalises octave errors in full,
     so the model is pushed to predict the exact annotated tempo.
+
+    .. math::
+
+        \mathcal{L} = \frac{1}{B} \sum_{i=1}^{B} \left| \hat{y}_i - y_i \right|
 
     :param pred: Predicted BPM values, shape ``(B,)``.
     :param target: Ground-truth BPM values, shape ``(B,)``.
@@ -51,13 +60,21 @@ def gaussian_soft_target(
     bin_centers: torch.Tensor,
     sigma: float,
 ) -> torch.Tensor:
-    """Soft target distribution over tempo bins.
+    r"""Soft target distribution over tempo bins.
 
     For each sample, places a Gaussian centred on the true tempo across the
     discrete bin grid, then normalises to a probability distribution. Bins
     near the true tempo receive non-zero target mass, which gives the model
     a smoother gradient than a one-hot target and bakes in the ordinal
     structure of the bin grid.
+
+    .. math::
+
+        p_{i,j} = \frac{\exp\left(-\frac{1}{2}\left(\frac{c_j - y_i}{\sigma}\right)^2\right)}
+        {\sum_{k=1}^{n_{\text{bins}}} \exp\left(-\frac{1}{2}\left(\frac{c_k - y_i}{\sigma}\right)^2\right)}
+
+    where :math:`c_j` is the centre of bin :math:`j` and :math:`y_i` is the
+    true tempo of sample :math:`i`.
 
     :param tempo: True BPM values, shape ``(B,)``.
     :param bin_centers: BPM at the centre of each bin, shape ``(n_bins,)``.
@@ -75,7 +92,7 @@ def beat_phase_loss(
     target: torch.Tensor,
     pos_weight: torch.Tensor | float = 8.0,
 ) -> torch.Tensor:
-    """Masked multi-head frame-wise BCE loss for beat-phase detection.
+    r"""Masked multi-head frame-wise BCE loss for beat-phase detection.
 
     Sums three per-frame binary-cross-entropy terms (beat, one, last). ``beat``
     is supervised on every frame; ``one``/``last`` are gated by the target's
@@ -84,6 +101,15 @@ def beat_phase_loss(
     normalized by the number of masked-in frames rather than the total frame
     count, so a batch with few or no position-annotated tracks doesn't just
     have its one/last loss silently shrink towards zero.
+
+    .. math::
+
+        \mathcal{L} = \underbrace{\frac{1}{BT} \sum_{i,t} \ell(\hat{b}_{i,t}, b_{i,t})}_{\text{beat}}
+        + \underbrace{\frac{\sum_{i,t} m_{i,t} \, \ell(\hat{o}_{i,t}, o_{i,t})}{\sum_{i,t} m_{i,t}}}_{\text{one}}
+        + \underbrace{\frac{\sum_{i,t} m_{i,t} \, \ell(\hat{l}_{i,t}, l_{i,t})}{\sum_{i,t} m_{i,t}}}_{\text{last}}
+
+    where :math:`\ell` is per-frame weighted binary cross-entropy (with
+    ``pos_weight``) and :math:`m_{i,t}` is the target's ``mask`` channel.
 
     :param logits: Raw per-frame model output, shape ``(B, 3, T)`` — beat/one/last,
         unactivated (see :class:`musicality.models.tcn.TCNTempoNet` with
@@ -128,7 +154,16 @@ def classification_tempo_loss(
     bin_centers: torch.Tensor,
     sigma: float,
 ) -> torch.Tensor:
-    """Cross-entropy between predicted softmax and Gaussian soft target.
+    r"""Cross-entropy between predicted softmax and Gaussian soft target.
+
+    .. math::
+
+        \mathcal{L} = -\frac{1}{B} \sum_{i=1}^{B} \sum_{j=1}^{n_{\text{bins}}}
+        p_{i,j} \log \hat{p}_{i,j}
+
+    where :math:`p_{i,j}` is the Gaussian soft target from
+    :func:`gaussian_soft_target` and :math:`\hat{p}_{i,j}` is the model's
+    softmax probability for bin :math:`j`.
 
     :param logits: Model logits over BPM bins, shape ``(B, n_bins)``.
     :param tempo: True BPM values, shape ``(B,)``.
