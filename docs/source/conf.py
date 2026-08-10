@@ -25,6 +25,7 @@ autodoc_default_options = {
 }
 autodoc_typehints = "description"
 autodoc_inherit_docstrings = False
+add_module_names = False
 
 templates_path = ["_templates"]
 exclude_patterns = []
