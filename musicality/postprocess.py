@@ -92,6 +92,7 @@ def gate_periodicity(
     3. **Matches ``k`` periods (``round(ratio) = k`` and
        ``|ratio - k| <= tolerance``):** the gap is consistent with exactly
        ``k`` beats' worth of time.
+
        - ``k == 1``: an ordinary, expected next beat. Accept ``t``.
        - ``k >= 2``: the peak-picker likely missed ``k - 1`` beats in a row
          (e.g. a quiet passage where ``p_beat`` never crossed

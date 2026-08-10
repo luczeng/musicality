@@ -8,7 +8,7 @@ import lightning as L
 
 
 class ErrorVsTempoPlot(L.Callback):
-    """Scatter-plots |pred - target| vs target tempo at the end of each validation epoch.
+    """Scatter-plots :math:`|pred - target|` vs target tempo at the end of each validation epoch.
 
     Points are coloured green (pass MIREX acc1) or red (fail). The dashed curve
     shows the 8% tolerance boundary so you can immediately see which tempo
@@ -40,10 +40,22 @@ class ErrorVsTempoPlot(L.Callback):
 
         fig, ax = plt.subplots(figsize=(7, 4))
 
-        ax.scatter(targets[correct], errors[correct], s=20, alpha=0.7,
-                   color="#2ecc71", label="pass acc1")
-        ax.scatter(targets[~correct], errors[~correct], s=20, alpha=0.7,
-                   color="#e74c3c", label="fail acc1")
+        ax.scatter(
+            targets[correct],
+            errors[correct],
+            s=20,
+            alpha=0.7,
+            color="#2ecc71",
+            label="pass acc1",
+        )
+        ax.scatter(
+            targets[~correct],
+            errors[~correct],
+            s=20,
+            alpha=0.7,
+            color="#e74c3c",
+            label="fail acc1",
+        )
 
         t_range = np.linspace(targets.min() * 0.9, targets.max() * 1.1, 200)
         ax.plot(t_range, 0.08 * t_range, "k--", linewidth=1, label="8% tolerance")

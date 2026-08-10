@@ -245,6 +245,7 @@ class BeatPhaseAugmenter:
     """Composes waveform+target augmentations for beat-phase training.
 
     Applied in order:
+
     1. :class:`FrameTimeStretch` — changes length; re-crops/pads both the
        waveform and the target back to their expected fixed lengths.
     2. :class:`RandomGain`

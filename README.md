@@ -355,6 +355,27 @@ uv run python tools/inspect_track.py path/to/audio.wav
 uv run python tools/plot_tempo_histograms.py
 ```
 
+## API documentation
+
+Sphinx-generated API reference for the `musicality` package — losses, metrics,
+loaders, models, trainers, callbacks — with math equations rendered for the loss
+functions. Docstrings are the source of truth; the docs are built from them, not
+maintained separately.
+
+```bash
+uv run sphinx-build -b html docs/source docs/build && open docs/build/index.html
+```
+
+While editing docstrings, use the live-reload server instead — it rebuilds and
+refreshes the browser on save:
+
+```bash
+uv run sphinx-autobuild docs/source docs/build
+```
+
+Rendering the math equations requires internet access (MathJax loads from a CDN);
+everything else works fully offline.
+
 ## Tests
 
 ```bash
