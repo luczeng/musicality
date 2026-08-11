@@ -2,7 +2,13 @@
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://luczeng.github.io/musicality/)
 
-A Python library for tempo and beat estimation from audio, built on [mirdata](https://mirdata.readthedocs.io), PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.
+A Python library for music analysis via SOTA methods using PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.  
+
+Currently supports:  
+
+- Tempo estimation
+- Beat estimation
+- Tempo phase estimation
 
 <details id="setup">
 <summary><b>Setup</b></summary>
