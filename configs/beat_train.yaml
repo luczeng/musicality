@@ -2,7 +2,7 @@ defaults:
   - model: tcn_frames
   - _self_
 
-pos_weight: 8.0
+pos_weight: [1,4,4.0]
 lr: 5e-4
 weight_decay: 0.0
 batch_size: 16
@@ -18,7 +18,7 @@ group_size: 4
 # waltz/Viennese waltz tracks, which are in triple meter — 1, 2, 3 — rather
 # than binary meter). Must match whatever the split was built with (see
 # `--binary-only` on tools/create_splits.py), since it changes dataset length.
-binary_only: false
+binary_only: true
 train_subsample: null
 checkpoint_dir: checkpoints_beat/
 trainer:
