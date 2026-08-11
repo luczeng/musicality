@@ -186,7 +186,10 @@ Tailscale.
 
 </details>
 
-## Training
+<details id="train">
+<summary><b>Train</b></summary>
+
+### Tempo estimation
 
 `musicality/models/tcn.py` (`TCNTempoNet`) is the default backbone, wrapped by
 `musicality/trainers/tempo_module.py` (`TempoModule`) — see the
@@ -196,26 +199,10 @@ Alternate backbones: `musicality/models/tempo_net.py` (a simpler CNN),
 wav2vec2/BEaT), `musicality/models/torch_audio.py` (wraps pretrained `torchaudio`
 models).
 
-### Configuration
-
-Training is configured with [Hydra](https://hydra.cc). Config files live in
-`configs/` and can be overridden on the command line.
-
-Key options in `configs/train.yaml`:
-
-| Key | Default | Description |
-|---|---|---|
-| `loss` | `classification` | `absolute`, `relative`, or `classification` |
-| `lr` | `5e-4` | Learning rate |
-| `weight_decay` | `0.0` | L2 regularisation |
-| `checkpoint_dir` | `checkpoints/` | Where to save model checkpoints |
-| `batch_size` | `32` | Batch size |
-| `data.val_split` | `0.2` | Fraction of data held out for validation |
-| `data.duration` | `15.0` | Audio clip length in seconds |
-| `trainer.max_epochs` | `100` | Maximum training epochs |
-| `trainer.accelerator` | `auto` | `cpu`, `gpu`, or `auto` |
-
-### Run training
+Training is configured with [Hydra](https://hydra.cc) and overridable on the
+command line; every key in `configs/train.yaml` is documented in place — see the
+[configuration reference](https://luczeng.github.io/musicality/configuration.html)
+for the full file.
 
 ```bash
 uv run python tools/train.py
@@ -238,27 +225,15 @@ Hydra writes logs and run configs to `outputs/<date>/<time>/` by default.
 Checkpoints are saved to `checkpoint_dir` (top-3 by `val/loss`, with early stopping
 after 10 epochs without improvement).
 
-## Beat-phase detection
+### Beat-phase detection
 
 A second pipeline, alongside tempo estimation, detects frame-level **beat** /
 **"one"** (downbeat) / **"last"** (last beat of the group — bar position 4 by
 default) events. It reuses the same dataset/training scaffolding as tempo
-estimation (`BeatDataset`, Hydra config, Lightning), configured through
-`configs/beat_train.yaml`.
-
-Key options in `configs/beat_train.yaml`:
-
-| Key | Default | Description |
-|---|---|---|
-| `lr` | `5e-4` | Learning rate |
-| `group_size` | `4` | Beats per group: `4` for bar position (1-4), `8` for phrase position (1-8) on a dataset with phrase annotations |
-| `binary_only` | `false` | Train on the binary-meter-only split (see [Splits](#splits)); must match how the split was created |
-| `pos_weight` | `8.0` | Positive-class weight for the one/last BCE heads |
-| `train_subsample` | `null` | Fraction of the training split to use (e.g. `0.2`), for quick smoke runs |
-| `data.name` | `ballroom` | mirdata dataset name |
-| `checkpoint_dir` | `checkpoints_beat/` | Where to save model checkpoints |
-
-### Run training
+estimation (`BeatDataset`, Hydra config, Lightning). Configured through
+`configs/beat_train.yaml`, every key documented in place — see the
+[configuration reference](https://luczeng.github.io/musicality/configuration.html)
+for the full file.
 
 ```bash
 uv run python tools/train_beat.py
@@ -269,19 +244,6 @@ WANDB_MODE=offline uv run python tools/train_beat.py \
 
 # a phrase-position (1-8) dataset instead of the default bar-position (1-4) one
 uv run python tools/train_beat.py group_size=8 data.name=<phrase_dataset>
-```
-
-### Evaluate a checkpoint
-
-`tools/eval_beat_phase.py` scores a trained checkpoint on full-length tracks
-(not the fixed-duration training clips): beat / "1" / "last" F-measure, and
-the half-cycle phase-confusion rate (catches a model that's found the right
-periodicity but locked onto the wrong phase).
-
-```bash
-uv run python tools/eval_beat_phase.py \
-    --checkpoint checkpoints_beat/beat-phase-epoch=05-val_loss=0.1234.ckpt \
-    --dataset ballroom
 ```
 
 ### Sweep learning rates
@@ -297,20 +259,17 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
 uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 ```
 
-### Visualize targets
+</details>
 
-```bash
-uv run python tools/plot_beat_targets.py --dataset ballroom
-```
-
-## Tools
+<details id="tools">
+<summary><b>Tools</b></summary>
 
 | Tool | Description |
 |---|---|
 | `tools/train.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
 | `tools/create_splits.py` | Create the train/val splits under `data/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
-| `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint: beat/"1"/"last" F-measure and phase-confusion rate |
+| `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint on full-length tracks (not the fixed-duration training clips): beat/"1"/"last" F-measure and phase-confusion rate |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
@@ -334,7 +293,10 @@ uv run python tools/inspect_track.py path/to/audio.wav
 uv run python tools/plot_tempo_histograms.py
 ```
 
-## API documentation
+</details>
+
+<details id="api-documentation">
+<summary><b>API documentation</b></summary>
 
 Sphinx-generated API reference for the `musicality` package — losses, metrics,
 loaders, models, trainers, callbacks — with math equations rendered for the loss
@@ -355,8 +317,4 @@ uv run sphinx-autobuild docs/source docs/build
 Rendering the math equations requires internet access (MathJax loads from a CDN);
 everything else works fully offline.
 
-## Tests
-
-```bash
-uv run pytest tests/
-```
+</details>
