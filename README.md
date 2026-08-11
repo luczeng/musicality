@@ -64,6 +64,62 @@ this repo:
   `data/<name>/tracks/` (audio) and `data/<name>/annotations/*.beats` (tapped beats),
   a plain directory layout rather than a mirdata dataset definition.
 
+### Data format
+
+**mirdata datasets** are read entirely through
+[mirdata](https://mirdata.readthedocs.io)'s own API and on-disk layout —
+`TempoDataset`/`BeatDataset` never touch the files directly, just
+`track.audio_path`, `track.tempo`, `track.beats.times`, and
+`track.beats.positions` (1-indexed bar/count position per beat, when the
+dataset annotates it).
+
+**Homemade datasets** (recorded via the annotation apps) use a parallel,
+hand-rolled layout under `data/<dataset>/`, centralized in
+`musicality.dataformats` (`musicality/dataformats/dataformat.yaml`) rather
+than scattered as string literals across the annotator code:
+
+```
+data/<dataset>/tracks/<track_id>.wav                          # audio
+data/<dataset>/annotations/<track_id>.beats                   # beat annotations (default annotator slot)
+data/<dataset>/annotations/<track_id>.meta.json                # descriptive metadata (default annotator slot)
+data/<dataset>/annotations/<annotator_id>/<track_id>.beats     # a second annotator's take on the same track
+data/<dataset>/annotations/<annotator_id>/<track_id>.meta.json
+```
+
+`.beats` files use the same `<time> <position>` per-line format as mirdata's
+own raw beat annotations (e.g. ballroom's), so homemade and mirdata tracks
+read identically once loaded — one line per beat, seconds then 1-indexed
+bar/count position:
+
+```
+10.949773 1
+11.247052 2
+11.653333 3
+```
+
+`.meta.json` carries fields mirdata has no place for — all optional, filled in
+incrementally as an annotation is worked on, and forward-compatible (a file
+missing a newer field just falls back to that field's default on load):
+
+| Field | Meaning |
+|---|---|
+| `location` | Where the track was recorded/found |
+| `device` | Recording device (e.g. phone model, hostname) |
+| `structure` | Free-text song structure notes |
+| `duration_s` | Audio duration, in seconds |
+| `bpm_mean` / `bpm_median` / `bpm_std` | Tempo statistics derived from the tapped beats |
+| `annotator_id` | Who made this annotation — `null` for the original/default slot |
+| `section_aligned` | Whether the first tapped beat is the true start of a section (`true`/`false`), or `null` if not recorded |
+| `schema_version` | Metadata schema version (currently `2`) |
+
+Multiple people can annotate the same track independently: `annotator_id: null`
+is the original, unsuffixed slot (every file saved before multi-annotator
+support existed still resolves here — no migration needed), and each named
+annotator gets their own subdirectory holding a parallel `.beats`/`.meta.json`
+pair for the same `track_id`. Not yet used to feed training — `BeatDataset`/
+`TempoDataset` still read exclusively through mirdata; bridging homemade
+annotations into training is separate future work.
+
 ### Download a mirdata dataset
 
 ```bash
