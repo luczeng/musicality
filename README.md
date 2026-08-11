@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="musicality logo" width="250">
+  <img src="assets/logo.png" alt="musicality logo" width="534">
 </p>
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://luczeng.github.io/musicality/)
