@@ -31,13 +31,14 @@ import musicality.dataformats as dataformats
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 
 COLOR_INACTIVE = "#444444"
-COLOR_BEAT     = "#FFD700"   # yellow
-COLOR_DOWNBEAT = "#44CC44"   # green
+COLOR_BEAT = "#FFD700"  # yellow
+COLOR_DOWNBEAT = "#44CC44"  # green
 
 
 # ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
+
 
 def load_track(dataset_name: str, track_id: str):
     ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
@@ -67,8 +68,10 @@ def pick_track(dataset_name: str, track_id: str | None) -> str:
 # Visual inspection
 # ---------------------------------------------------------------------------
 
+
 def plot_track(audio_path: str, tempo: float, beat_times, beat_positions):
     import librosa
+    import librosa.display
     import matplotlib.pyplot as plt
     import matplotlib.ticker as ticker
     from matplotlib.lines import Line2D
@@ -77,34 +80,52 @@ def plot_track(audio_path: str, tempo: float, beat_times, beat_positions):
     duration = len(audio) / sr
     times = np.linspace(0, duration, len(audio))
 
-    fig, ax = plt.subplots(figsize=(14, 3))
-    ax.plot(times, audio, color="steelblue", linewidth=0.4, alpha=0.8)
-    ax.set_xlim(0, duration)
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("Amplitude")
+    stft_db = librosa.amplitude_to_db(np.abs(librosa.stft(audio)), ref=np.max)
+
+    fig, (ax_stft, ax_wav) = plt.subplots(
+        2, 1, figsize=(14, 6), sharex=True, gridspec_kw={"height_ratios": [1.4, 1]}
+    )
+
+    img = librosa.display.specshow(
+        stft_db, sr=sr, x_axis="time", y_axis="log", ax=ax_stft, cmap="magma"
+    )
+    ax_stft.set_xlabel("")
+    ax_stft.set_ylabel("Frequency (Hz)")
+    fig.colorbar(img, ax=ax_stft, format="%+2.0f dB")
+
+    ax_wav.plot(times, audio, color="steelblue", linewidth=0.4, alpha=0.8)
+    ax_wav.set_xlim(0, duration)
+    ax_wav.set_xlabel("Time (s)")
+    ax_wav.set_ylabel("Amplitude")
 
     title = Path(audio_path).stem
     if tempo is not None:
         title += f"  —  {tempo:.1f} BPM"
-    ax.set_title(title)
+    ax_stft.set_title(title)
 
     if beat_times is not None:
         for i, t in enumerate(beat_times):
             pos = beat_positions[i] if beat_positions is not None else None
             is_downbeat = (pos == 1) if pos is not None else False
-            ax.axvline(t, color="red" if is_downbeat else "orange",
-                       linewidth=1.2 if is_downbeat else 0.7, alpha=0.8)
+            color = "#44CC44" if is_downbeat else "#3498DB"
+            linewidth = 1.2 if is_downbeat else 0.7
+            ax_stft.axvline(t, color=color, linewidth=linewidth, alpha=0.8)
+            ax_wav.axvline(t, color=color, linewidth=linewidth, alpha=0.8)
 
-        handles = [
-            Line2D([0], [0], color="red",    linewidth=1.2, label="downbeat"),
-            Line2D([0], [0], color="orange", linewidth=0.7, label="beat"),
-        ] if beat_positions is not None else [
-            Line2D([0], [0], color="orange", linewidth=0.7, label="beat"),
-        ]
-        ax.legend(handles=handles, loc="upper right", fontsize=8)
+        handles = (
+            [
+                Line2D([0], [0], color="#44CC44", linewidth=1.2, label="downbeat"),
+                Line2D([0], [0], color="#3498DB", linewidth=0.7, label="beat"),
+            ]
+            if beat_positions is not None
+            else [
+                Line2D([0], [0], color="#3498DB", linewidth=0.7, label="beat"),
+            ]
+        )
+        ax_wav.legend(handles=handles, loc="upper right", fontsize=8)
 
-    ax.xaxis.set_minor_locator(ticker.MultipleLocator(1))
-    ax.grid(axis="x", which="major", linestyle="--", alpha=0.3)
+    ax_wav.xaxis.set_minor_locator(ticker.MultipleLocator(1))
+    ax_wav.grid(axis="x", which="major", linestyle="--", alpha=0.3)
     fig.tight_layout()
     plt.show()
 
@@ -112,6 +133,7 @@ def plot_track(audio_path: str, tempo: float, beat_times, beat_positions):
 # ---------------------------------------------------------------------------
 # Metronome window
 # ---------------------------------------------------------------------------
+
 
 def _beats_per_bar(beat_positions) -> int:
     if beat_positions is None or len(beat_positions) == 0:
@@ -166,7 +188,11 @@ def run_metronome(beat_times, beat_positions, total_duration: float):
             for c in circles:
                 c.set_color(COLOR_INACTIVE)
             if idx >= 0:
-                pos = int(beat_positions[idx]) if beat_positions is not None else (idx % n) + 1
+                pos = (
+                    int(beat_positions[idx])
+                    if beat_positions is not None
+                    else (idx % n) + 1
+                )
                 dot = (pos - 1) % n
                 circles[dot].set_color(COLOR_DOWNBEAT if pos == 1 else COLOR_BEAT)
 
@@ -186,16 +212,23 @@ def run_metronome(beat_times, beat_positions, total_duration: float):
 # Audio playback with click track
 # ---------------------------------------------------------------------------
 
-def play_with_clicks(audio_path: str, beat_times, beat_positions,
-                     click_volume: float = 0.3):
+
+def play_with_clicks(
+    audio_path: str, beat_times, beat_positions, click_volume: float = 0.3
+):
     import librosa
     import sounddevice as sd
 
     audio, sr = librosa.load(audio_path, sr=None, mono=True)
 
     if beat_times is not None and len(beat_times) > 0:
-        click = librosa.clicks(times=beat_times, sr=sr, length=len(audio),
-                               click_freq=1000, click_duration=0.02)
+        click = librosa.clicks(
+            times=beat_times,
+            sr=sr,
+            length=len(audio),
+            click_freq=1000,
+            click_duration=0.02,
+        )
         mixed = audio + click_volume * click
         mixed = mixed / max(np.abs(mixed).max(), 1.0)
     else:
@@ -213,14 +246,26 @@ def play_with_clicks(audio_path: str, beat_times, beat_positions,
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="Inspect a dataset track.")
-    parser.add_argument("--dataset", required=True, help="mirdata dataset name (e.g. ballroom)")
+    parser.add_argument(
+        "--dataset", required=True, help="mirdata dataset name (e.g. ballroom)"
+    )
     parser.add_argument("--track", default=None, help="Track ID (random if omitted)")
-    parser.add_argument("--visual", action="store_true", help="Show waveform + beat plot")
-    parser.add_argument("--audio",  action="store_true", help="Play audio with beat clicks and metronome")
-    parser.add_argument("--click-volume", type=float, default=0.3, metavar="VOL",
-                        help="Click track volume relative to audio (default: 0.3)")
+    parser.add_argument(
+        "--visual", action="store_true", help="Show waveform + beat plot"
+    )
+    parser.add_argument(
+        "--audio", action="store_true", help="Play audio with beat clicks and metronome"
+    )
+    parser.add_argument(
+        "--click-volume",
+        type=float,
+        default=0.3,
+        metavar="VOL",
+        help="Click track volume relative to audio (default: 0.3)",
+    )
     args = parser.parse_args()
 
     if not args.visual and not args.audio:
@@ -231,14 +276,17 @@ def main():
     print(f"[inspect] dataset={args.dataset}  track={track_id}")
 
     audio_path, tempo, beat_times, beat_positions = load_track(args.dataset, track_id)
-    print(f"[inspect] tempo={tempo}  beats={len(beat_times) if beat_times is not None else 0}")
+    print(
+        f"[inspect] tempo={tempo}  beats={len(beat_times) if beat_times is not None else 0}"
+    )
 
     if args.visual:
         plot_track(audio_path, tempo, beat_times, beat_positions)
 
     if args.audio:
-        play_with_clicks(audio_path, beat_times, beat_positions,
-                         click_volume=args.click_volume)
+        play_with_clicks(
+            audio_path, beat_times, beat_positions, click_volume=args.click_volume
+        )
 
 
 if __name__ == "__main__":

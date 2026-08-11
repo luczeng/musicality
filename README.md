@@ -1,10 +1,19 @@
-# musicality
+<p align="center">
+  <img src="assets/logo.png" alt="musicality logo" width="534">
+</p>
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://luczeng.github.io/musicality/)
 
-A Python library for tempo and beat estimation from audio, built on [mirdata](https://mirdata.readthedocs.io), PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.
+A Python library for music analysis via SOTA methods using PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.  
 
-## Setup
+Currently supports:  
+
+- Tempo estimation
+- Beat estimation
+- Tempo phase estimation
+
+<details id="setup">
+<summary><b>Setup</b></summary>
 
 ```bash
 uv sync
@@ -47,7 +56,10 @@ reusable vast.ai instance template:
 - On-start script: clone the repo and run the setup script, e.g.
   `git clone <repo-url> musicality && cd musicality && bash tools/setup_remote.sh`.
 
-## Datasets
+</details>
+
+<details id="datasets">
+<summary><b>Datasets</b></summary>
 
 Training data comes from two sources, both read identically by every loader/tool in
 this repo:
@@ -60,29 +72,63 @@ this repo:
   `data/<name>/tracks/` (audio) and `data/<name>/annotations/*.beats` (tapped beats),
   a plain directory layout rather than a mirdata dataset definition.
 
-### Download a mirdata dataset
+### Data format
 
-```bash
-uv run python tools/download_dataset.py <mirdata-name>
-# e.g.
-uv run python tools/download_dataset.py brid
-```
+**mirdata datasets** are read entirely through
+[mirdata](https://mirdata.readthedocs.io)'s own API and on-disk layout —
+`TempoDataset`/`BeatDataset` never touch the files directly, just
+`track.audio_path`, `track.tempo`, `track.beats.times`, and
+`track.beats.positions` (1-indexed bar/count position per beat, when the
+dataset annotates it).
 
-### List downloaded datasets
-
-```bash
-uv run python tools/summarize_datasets.py
-```
-
-Output includes the dataset name, number of songs, and mirdata annotation types:
+**Homemade datasets** (recorded via the annotation apps) use a parallel,
+hand-rolled layout under `data/<dataset>/`, centralized in
+`musicality.dataformats` (`musicality/dataformats/dataformat.yaml`) rather
+than scattered as string literals across the annotator code:
 
 ```
-Dataset    Songs  Annotations
----------------------------------
-brid         367  beats, tempo
+data/<dataset>/tracks/<track_id>.wav                          # audio
+data/<dataset>/annotations/<track_id>.beats                   # beat annotations (default annotator slot)
+data/<dataset>/annotations/<track_id>.meta.json                # descriptive metadata (default annotator slot)
+data/<dataset>/annotations/<annotator_id>/<track_id>.beats     # a second annotator's take on the same track
+data/<dataset>/annotations/<annotator_id>/<track_id>.meta.json
 ```
 
-## Splits
+`.beats` files use the same `<time> <position>` per-line format as mirdata's
+own raw beat annotations (e.g. ballroom's), so homemade and mirdata tracks
+read identically once loaded — one line per beat, seconds then 1-indexed
+bar/count position:
+
+```
+10.949773 1
+11.247052 2
+11.653333 3
+```
+
+`.meta.json` carries fields mirdata has no place for — all optional, filled in
+incrementally as an annotation is worked on, and forward-compatible (a file
+missing a newer field just falls back to that field's default on load):
+
+| Field | Meaning |
+|---|---|
+| `location` | Where the track was recorded/found |
+| `device` | Recording device (e.g. phone model, hostname) |
+| `structure` | Free-text song structure notes |
+| `duration_s` | Audio duration, in seconds |
+| `bpm_mean` / `bpm_median` / `bpm_std` | Tempo statistics derived from the tapped beats |
+| `annotator_id` | Who made this annotation — `null` for the original/default slot |
+| `section_aligned` | Whether the first tapped beat is the true start of a section (`true`/`false`), or `null` if not recorded |
+| `schema_version` | Metadata schema version (currently `2`) |
+
+Multiple people can annotate the same track independently: `annotator_id: null`
+is the original, unsuffixed slot (every file saved before multi-annotator
+support existed still resolves here — no migration needed), and each named
+annotator gets their own subdirectory holding a parallel `.beats`/`.meta.json`
+pair for the same `track_id`. Not yet used to feed training — `BeatDataset`/
+`TempoDataset` still read exclusively through mirdata; bridging homemade
+annotations into training is separate future work.
+
+### Splits
 
 Train/val splits are precomputed and stored as plain index lists under
 `data/splits/<name>/{train,val}.txt`, read by `Splitter.run()` at train/eval time.
@@ -93,7 +139,7 @@ files under `data/splits/` (e.g. via DVC, same as the audio) and pull them rathe
 regenerating locally, where a different `mirdata` version or an incomplete download
 could silently produce a different split.
 
-### Create a split
+#### Create a split
 
 ```bash
 uv run python tools/create_splits.py                          # every dataset in data/
@@ -106,7 +152,7 @@ Creates two splits per dataset: a tempo split (`data/splits/<name>`, from
 `BeatDataset`). Whichever has no samples for a given dataset (e.g. no tempo
 annotations) is skipped. Existing splits are left untouched unless `--force` is passed.
 
-### Binary-meter-only beat-phase splits
+#### Binary-meter-only beat-phase splits
 
 Some datasets mix meters — ballroom's waltz/Viennese waltz tracks are annotated with a
 triple-meter bar-position cycle (`1, 2, 3, 1, 2, 3, ...`) instead of the binary meter
@@ -128,7 +174,7 @@ uv run python tools/train_beat.py binary_only=true
 uv run python tools/eval_beat_phase.py --checkpoint <path> --dataset ballroom --binary-only
 ```
 
-### Version splits with DVC
+#### Version splits with DVC
 
 ```bash
 uv run dvc add data/splits
@@ -141,7 +187,10 @@ On another machine, `dvc pull` (see [Fresh machine](#fresh-machine--remote-insta
 above) fetches the exact same split files, so training and evaluation line up across
 machines instead of each generating its own split locally.
 
-## Annotation apps
+</details>
+
+<details id="annotation-apps">
+<summary><b>Annotation apps</b></summary>
 
 Two apps produce homemade datasets — audio plus hand-tapped beat annotations, saved
 in the same format the mirdata datasets use.
@@ -177,68 +226,25 @@ reads. Useful for field recordings (e.g. live dancing) away from a laptop. See
 `tools/mobile_companion/README.md` for setup, including remote HTTPS access via
 Tailscale.
 
-## Loaders
+</details>
 
-`musicality/loaders/tempo_dataset.py` — `TempoDataset`, returns `(waveform, tempo)`
-pairs for any mirdata dataset exposing a `tempo` attribute per track.
+<details id="train">
+<summary><b>Training</b></summary>
 
-`musicality/loaders/beat_dataset.py` — `BeatDataset`, returns `(waveform, target)`
-pairs for any mirdata (or homemade) dataset exposing `beats` per track, where
-`target` is a 4-channel `(beat, one, last, mask)` frame-level tensor (see
-[Beat-phase detection](#beat-phase-detection) below).
+### Tempo estimation
 
-Both resample to a target sample rate and pad/truncate to a fixed clip duration.
-Mel-spectrogram extraction happens inside the model, not the loader.
-
-## Training
-
-### Model
-
-`musicality/models/tcn.py` defines `TCNTempoNet`, a dilated TCN (Davies & Böck,
-2019) — the default architecture for both tempo estimation and beat-phase detection:
-
-```
-log-mel spectrogram → per-clip normalization
-  → 1×1 channel projection
-  → N dilated residual Conv1d blocks (dilation 1, 2, 4, ..., 2^(N-1))
-  → global average pool → FC head            (tempo: scalar / classification bins)
-  → or: 1×1 conv head, no pooling            (beat-phase: per-frame beat/one/last)
-```
-
+`musicality/models/tcn.py` (`TCNTempoNet`) is the default backbone, wrapped by
+`musicality/trainers/tempo_module.py` (`TempoModule`) — see the
+[API documentation](#api-documentation) for architecture, loss modes, and metrics.
 Alternate backbones: `musicality/models/tempo_net.py` (a simpler CNN),
 `musicality/models/huggingface.py` (wraps HuggingFace `transformers` models, e.g.
 wav2vec2/BEaT), `musicality/models/torch_audio.py` (wraps pretrained `torchaudio`
 models).
 
-### LightningModule
-
-`musicality/trainers/tempo_module.py` wraps the model as `TempoModule`:
-
-- Loss: `absolute` (MAE), `relative` (octave-invariant MAE), or `classification`
-  (softmax over BPM bins with a Gaussian soft target)
-- Metric: MIREX Accuracy 1 (`acc1`), logged alongside MAE
-- Optimizer: Adam with a `ReduceLROnPlateau` scheduler
-
-### Configuration
-
-Training is configured with [Hydra](https://hydra.cc). Config files live in
-`configs/` and can be overridden on the command line.
-
-Key options in `configs/train.yaml`:
-
-| Key | Default | Description |
-|---|---|---|
-| `loss` | `classification` | `absolute`, `relative`, or `classification` |
-| `lr` | `5e-4` | Learning rate |
-| `weight_decay` | `0.0` | L2 regularisation |
-| `checkpoint_dir` | `checkpoints/` | Where to save model checkpoints |
-| `batch_size` | `32` | Batch size |
-| `data.val_split` | `0.2` | Fraction of data held out for validation |
-| `data.duration` | `15.0` | Audio clip length in seconds |
-| `trainer.max_epochs` | `100` | Maximum training epochs |
-| `trainer.accelerator` | `auto` | `cpu`, `gpu`, or `auto` |
-
-### Run training
+Training is configured with [Hydra](https://hydra.cc) and overridable on the
+command line; every key in `configs/train.yaml` is documented in place — see the
+[configuration reference](https://luczeng.github.io/musicality/configuration.html)
+for the full file.
 
 ```bash
 uv run python tools/train.py
@@ -261,27 +267,15 @@ Hydra writes logs and run configs to `outputs/<date>/<time>/` by default.
 Checkpoints are saved to `checkpoint_dir` (top-3 by `val/loss`, with early stopping
 after 10 epochs without improvement).
 
-## Beat-phase detection
+### Beat-phase detection
 
 A second pipeline, alongside tempo estimation, detects frame-level **beat** /
 **"one"** (downbeat) / **"last"** (last beat of the group — bar position 4 by
 default) events. It reuses the same dataset/training scaffolding as tempo
-estimation (`BeatDataset`, Hydra config, Lightning), configured through
-`configs/beat_train.yaml`.
-
-Key options in `configs/beat_train.yaml`:
-
-| Key | Default | Description |
-|---|---|---|
-| `lr` | `5e-4` | Learning rate |
-| `group_size` | `4` | Beats per group: `4` for bar position (1-4), `8` for phrase position (1-8) on a dataset with phrase annotations |
-| `binary_only` | `false` | Train on the binary-meter-only split (see [Splits](#splits)); must match how the split was created |
-| `pos_weight` | `8.0` | Positive-class weight for the one/last BCE heads |
-| `train_subsample` | `null` | Fraction of the training split to use (e.g. `0.2`), for quick smoke runs |
-| `data.name` | `ballroom` | mirdata dataset name |
-| `checkpoint_dir` | `checkpoints_beat/` | Where to save model checkpoints |
-
-### Run training
+estimation (`BeatDataset`, Hydra config, Lightning). Configured through
+`configs/beat_train.yaml`, every key documented in place — see the
+[configuration reference](https://luczeng.github.io/musicality/configuration.html)
+for the full file.
 
 ```bash
 uv run python tools/train_beat.py
@@ -292,19 +286,6 @@ WANDB_MODE=offline uv run python tools/train_beat.py \
 
 # a phrase-position (1-8) dataset instead of the default bar-position (1-4) one
 uv run python tools/train_beat.py group_size=8 data.name=<phrase_dataset>
-```
-
-### Evaluate a checkpoint
-
-`tools/eval_beat_phase.py` scores a trained checkpoint on full-length tracks
-(not the fixed-duration training clips): beat / "1" / "last" F-measure, and
-the half-cycle phase-confusion rate (catches a model that's found the right
-periodicity but locked onto the wrong phase).
-
-```bash
-uv run python tools/eval_beat_phase.py \
-    --checkpoint checkpoints_beat/beat-phase-epoch=05-val_loss=0.1234.ckpt \
-    --dataset ballroom
 ```
 
 ### Sweep learning rates
@@ -320,20 +301,17 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
 uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 ```
 
-### Visualize targets
+</details>
 
-```bash
-uv run python tools/plot_beat_targets.py --dataset ballroom
-```
-
-## Tools
+<details id="tools">
+<summary><b>Tools</b></summary>
 
 | Tool | Description |
 |---|---|
 | `tools/train.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
 | `tools/create_splits.py` | Create the train/val splits under `data/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
-| `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint: beat/"1"/"last" F-measure and phase-confusion rate |
+| `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint on full-length tracks (not the fixed-duration training clips): beat/"1"/"last" F-measure and phase-confusion rate |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
@@ -357,7 +335,10 @@ uv run python tools/inspect_track.py path/to/audio.wav
 uv run python tools/plot_tempo_histograms.py
 ```
 
-## API documentation
+</details>
+
+<details id="api-documentation">
+<summary><b>API documentation</b></summary>
 
 Sphinx-generated API reference for the `musicality` package — losses, metrics,
 loaders, models, trainers, callbacks — with math equations rendered for the loss
@@ -378,8 +359,4 @@ uv run sphinx-autobuild docs/source docs/build
 Rendering the math equations requires internet access (MathJax loads from a CDN);
 everything else works fully offline.
 
-## Tests
-
-```bash
-uv run pytest tests/
-```
+</details>
