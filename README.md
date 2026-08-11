@@ -120,28 +120,6 @@ pair for the same `track_id`. Not yet used to feed training — `BeatDataset`/
 `TempoDataset` still read exclusively through mirdata; bridging homemade
 annotations into training is separate future work.
 
-### Download a mirdata dataset
-
-```bash
-uv run python tools/download_dataset.py <mirdata-name>
-# e.g.
-uv run python tools/download_dataset.py brid
-```
-
-### List downloaded datasets
-
-```bash
-uv run python tools/summarize_datasets.py
-```
-
-Output includes the dataset name, number of songs, and mirdata annotation types:
-
-```
-Dataset    Songs  Annotations
----------------------------------
-brid         367  beats, tempo
-```
-
 ### Splits
 
 Train/val splits are precomputed and stored as plain index lists under
@@ -243,7 +221,7 @@ Tailscale.
 </details>
 
 <details id="train">
-<summary><b>Train</b></summary>
+<summary><b>Training</b></summary>
 
 ### Tempo estimation
 
