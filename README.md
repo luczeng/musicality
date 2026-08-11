@@ -1,6 +1,7 @@
 # musicality
 
-![musicality logo](assets/logo.png)
+<img src="assets/logo.png" alt="musicality logo" width="150">
+
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://luczeng.github.io/musicality/)
 
