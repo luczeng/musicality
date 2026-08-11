@@ -4,7 +4,8 @@
 
 A Python library for tempo and beat estimation from audio, built on [mirdata](https://mirdata.readthedocs.io), PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.
 
-## Setup
+<details id="setup">
+<summary><b>Setup</b></summary>
 
 ```bash
 uv sync
@@ -47,7 +48,10 @@ reusable vast.ai instance template:
 - On-start script: clone the repo and run the setup script, e.g.
   `git clone <repo-url> musicality && cd musicality && bash tools/setup_remote.sh`.
 
-## Datasets
+</details>
+
+<details id="datasets">
+<summary><b>Datasets</b></summary>
 
 Training data comes from two sources, both read identically by every loader/tool in
 this repo:
@@ -82,7 +86,7 @@ Dataset    Songs  Annotations
 brid         367  beats, tempo
 ```
 
-## Splits
+### Splits
 
 Train/val splits are precomputed and stored as plain index lists under
 `data/splits/<name>/{train,val}.txt`, read by `Splitter.run()` at train/eval time.
@@ -93,7 +97,7 @@ files under `data/splits/` (e.g. via DVC, same as the audio) and pull them rathe
 regenerating locally, where a different `mirdata` version or an incomplete download
 could silently produce a different split.
 
-### Create a split
+#### Create a split
 
 ```bash
 uv run python tools/create_splits.py                          # every dataset in data/
@@ -106,7 +110,7 @@ Creates two splits per dataset: a tempo split (`data/splits/<name>`, from
 `BeatDataset`). Whichever has no samples for a given dataset (e.g. no tempo
 annotations) is skipped. Existing splits are left untouched unless `--force` is passed.
 
-### Binary-meter-only beat-phase splits
+#### Binary-meter-only beat-phase splits
 
 Some datasets mix meters — ballroom's waltz/Viennese waltz tracks are annotated with a
 triple-meter bar-position cycle (`1, 2, 3, 1, 2, 3, ...`) instead of the binary meter
@@ -128,7 +132,7 @@ uv run python tools/train_beat.py binary_only=true
 uv run python tools/eval_beat_phase.py --checkpoint <path> --dataset ballroom --binary-only
 ```
 
-### Version splits with DVC
+#### Version splits with DVC
 
 ```bash
 uv run dvc add data/splits
@@ -141,7 +145,10 @@ On another machine, `dvc pull` (see [Fresh machine](#fresh-machine--remote-insta
 above) fetches the exact same split files, so training and evaluation line up across
 machines instead of each generating its own split locally.
 
-## Annotation apps
+</details>
+
+<details id="annotation-apps">
+<summary><b>Annotation apps</b></summary>
 
 Two apps produce homemade datasets — audio plus hand-tapped beat annotations, saved
 in the same format the mirdata datasets use.
@@ -177,47 +184,17 @@ reads. Useful for field recordings (e.g. live dancing) away from a laptop. See
 `tools/mobile_companion/README.md` for setup, including remote HTTPS access via
 Tailscale.
 
-## Loaders
-
-`musicality/loaders/tempo_dataset.py` — `TempoDataset`, returns `(waveform, tempo)`
-pairs for any mirdata dataset exposing a `tempo` attribute per track.
-
-`musicality/loaders/beat_dataset.py` — `BeatDataset`, returns `(waveform, target)`
-pairs for any mirdata (or homemade) dataset exposing `beats` per track, where
-`target` is a 4-channel `(beat, one, last, mask)` frame-level tensor (see
-[Beat-phase detection](#beat-phase-detection) below).
-
-Both resample to a target sample rate and pad/truncate to a fixed clip duration.
-Mel-spectrogram extraction happens inside the model, not the loader.
+</details>
 
 ## Training
 
-### Model
-
-`musicality/models/tcn.py` defines `TCNTempoNet`, a dilated TCN (Davies & Böck,
-2019) — the default architecture for both tempo estimation and beat-phase detection:
-
-```
-log-mel spectrogram → per-clip normalization
-  → 1×1 channel projection
-  → N dilated residual Conv1d blocks (dilation 1, 2, 4, ..., 2^(N-1))
-  → global average pool → FC head            (tempo: scalar / classification bins)
-  → or: 1×1 conv head, no pooling            (beat-phase: per-frame beat/one/last)
-```
-
+`musicality/models/tcn.py` (`TCNTempoNet`) is the default backbone, wrapped by
+`musicality/trainers/tempo_module.py` (`TempoModule`) — see the
+[API documentation](#api-documentation) for architecture, loss modes, and metrics.
 Alternate backbones: `musicality/models/tempo_net.py` (a simpler CNN),
 `musicality/models/huggingface.py` (wraps HuggingFace `transformers` models, e.g.
 wav2vec2/BEaT), `musicality/models/torch_audio.py` (wraps pretrained `torchaudio`
 models).
-
-### LightningModule
-
-`musicality/trainers/tempo_module.py` wraps the model as `TempoModule`:
-
-- Loss: `absolute` (MAE), `relative` (octave-invariant MAE), or `classification`
-  (softmax over BPM bins with a Gaussian soft target)
-- Metric: MIREX Accuracy 1 (`acc1`), logged alongside MAE
-- Optimizer: Adam with a `ReduceLROnPlateau` scheduler
 
 ### Configuration
 
