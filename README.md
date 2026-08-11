@@ -1,5 +1,7 @@
 # musicality
 
+![musicality logo](assets/logo.png)
+
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://luczeng.github.io/musicality/)
 
 A Python library for music analysis via SOTA methods using PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.  
