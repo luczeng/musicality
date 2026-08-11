@@ -8,8 +8,7 @@ import lightning as L
 # Suppress Lightning's promotional tip about LitLogger (INFO-level noise)
 logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
-from lightning.pytorch.loggers import WandbLogger
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
@@ -18,6 +17,7 @@ from musicality.callbacks.error_plot import ErrorVsTempoPlot
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.loaders.tempo_dataset import TempoDataset
 from musicality.splits.splitter import Splitter
+from musicality.trainers.common import build_trainer
 from musicality.trainers.tempo_module import TempoModule
 
 
@@ -31,12 +31,14 @@ def train(cfg: DictConfig) -> None:
     callbacks = build_callbacks(cfg)
     trainer = build_trainer(cfg, callbacks)
 
-    trainer.logger.experiment.config.update({
-        "data/n_train": n_train,
-        "data/n_val": n_val,
-        "model/arch": cfg.model.get("arch"),
-        "loss/name": cfg.loss,
-    })
+    trainer.logger.experiment.config.update(
+        {
+            "data/n_train": n_train,
+            "data/n_val": n_val,
+            "model/arch": cfg.model.get("arch"),
+            "loss/name": cfg.loss,
+        }
+    )
 
     trainer.fit(module, train_loader, val_loader)
 
@@ -61,7 +63,9 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
     augmenter = build_augmenter(cfg.augmentations) if cfg.get("augmentations") else None
     if augmenter is not None:
         n_samples = int(cfg.data.duration * cfg.data.sample_rate)
-        train_ds = AugmentedDataset(train_ds, augmenter, cfg.data.sample_rate, n_samples)
+        train_ds = AugmentedDataset(
+            train_ds, augmenter, cfg.data.sample_rate, n_samples
+        )
 
     subsample = cfg.get("train_subsample", None)
     if subsample is not None:
@@ -119,22 +123,3 @@ def build_callbacks(cfg: DictConfig) -> list:
         BestMetricsPrinter(),
         ErrorVsTempoPlot(),
     ]
-
-
-def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:
-
-    return L.Trainer(
-        max_epochs=cfg.trainer.max_epochs,
-        accelerator=cfg.trainer.accelerator,
-        devices=cfg.trainer.devices,
-        log_every_n_steps=cfg.trainer.log_every_n_steps,
-        check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
-        callbacks=callbacks,
-        logger=WandbLogger(
-            project=cfg.wandb.project,
-            name=cfg.wandb.run_name,
-            tags=cfg.wandb.tags,
-            config=OmegaConf.to_container(cfg, resolve=True),
-        ),
-        enable_progress_bar=True,
-    )

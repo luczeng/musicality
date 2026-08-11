@@ -1,0 +1,12 @@
+_target_: musicality.models.tcn.TCNTempoNet
+arch: TCN-frames-beat
+n_mels: ${n_mels}
+sample_rate: 22050
+channels: 256
+hop_length: ${hop_length}
+n_layers: 8
+dropout: 0.2
+# frame_level and n_outputs are forced to True/1 by BeatModule regardless of
+# what's set here — listed for documentation only.
+frame_level: true
+n_outputs: 1
