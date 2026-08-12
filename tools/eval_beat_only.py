@@ -1,19 +1,15 @@
 #!/usr/bin/env python3
-"""Evaluate a trained beat-phase checkpoint: beat / "1" / "last" F-measure and
-the half-cycle phase-confusion rate, over full-length tracks (not the
-fixed-duration clips used during training).
+"""Evaluate a trained beat-only checkpoint: beat F-measure over full-length
+tracks (not the fixed-duration clips used during training).
 
 Usage
 -----
-    uv run python tools/eval_beat_phase.py \\
-        --checkpoint checkpoints_beat/beat-phase-epoch=05-val_loss=0.1234.ckpt \\
+    uv run python tools/eval_beat_only.py \\
+        --checkpoint checkpoints_beat_only/beat-only-epoch=05-val_loss=0.1234.ckpt \\
         --dataset ballroom
 
     # evaluate the training split too, or just the first N tracks for a quick check
-    uv run python tools/eval_beat_phase.py --checkpoint ... --dataset ballroom --split all --limit 20
-
-    # a phrase-position (1-8) dataset instead of the default bar-position (1-4) one
-    uv run python tools/eval_beat_phase.py --checkpoint ... --dataset my_phrase_dataset --group-size 8
+    uv run python tools/eval_beat_only.py --checkpoint ... --dataset ballroom --split all --limit 20
 """
 
 import argparse
@@ -26,17 +22,16 @@ import torchaudio.transforms as T
 
 import musicality.dataformats as dataformats
 from musicality.loaders.beat_dataset import BeatDataset
-from musicality.metrics.confusion import confusion_half_cycle_rate
-from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
-from musicality.postprocess import readout
+from musicality.metrics.f_measure import beat_f_measure
+from musicality.postprocess import readout_beat_only
 from musicality.splits.splitter import Splitter
-from musicality.trainers.beat_phase_module import BeatPhaseModule
+from musicality.trainers.beat_module import BeatModule
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 
 
-def load_module(checkpoint_path: str, device: torch.device) -> BeatPhaseModule:
-    """Load a ``BeatPhaseModule`` checkpoint, migrating checkpoints saved before
+def load_module(checkpoint_path: str, device: torch.device) -> BeatModule:
+    """Load a ``BeatModule`` checkpoint, migrating checkpoints saved before
     ``TCNTempoNet``'s frame head gained a dropout layer (``Conv1d`` ->
     ``Sequential(Dropout, Conv1d)``), which shifted its state dict keys from
     ``frame_head.{weight,bias}`` to ``frame_head.1.{weight,bias}``. Safe to
@@ -51,7 +46,7 @@ def load_module(checkpoint_path: str, device: torch.device) -> BeatPhaseModule:
         if legacy_key in state_dict:
             state_dict[f"model.frame_head.1.{suffix}"] = state_dict.pop(legacy_key)
 
-    module = BeatPhaseModule(**checkpoint["hyper_parameters"])
+    module = BeatModule(**checkpoint["hyper_parameters"])
     module.load_state_dict(state_dict)
 
     return module
@@ -79,7 +74,12 @@ def select_indices(
     binary_only: bool = False,
 ) -> list[int]:
     """Return dataset indices for ``split``, reusing the training run's cached
-    train/val split so "val" means genuinely held-out tracks."""
+    train/val split so "val" means genuinely held-out tracks.
+
+    Namespaced the same way as :mod:`musicality.trainers.common` builds it for
+    both beat-phase and beat-only training (``beat_phase-<name>[-binary]``),
+    since the two share the exact same held-out split.
+    """
 
     if split == "all":
         return list(range(len(dataset)))
@@ -97,11 +97,9 @@ def select_indices(
 
 @torch.no_grad()
 def evaluate_track(
-    module: BeatPhaseModule,
+    module: BeatModule,
     audio_path: str,
     beat_times: np.ndarray,
-    positions: np.ndarray | None,
-    has_positions: bool,
     sample_rate: int,
     hop_length: int,
     device: torch.device,
@@ -110,57 +108,29 @@ def evaluate_track(
     beat_threshold: float,
     min_distance_frames: int,
     gate_tolerance: float,
-    anchor_threshold: float,
-    group_size: int,
 ) -> dict:
     """Run the model on one full track and score its readout against the reference."""
 
     wav = (
         load_track_waveform(audio_path, sample_rate).unsqueeze(0).to(device)
     )  # (1, 1, N)
-    logits = module(wav)  # (1, 3, T')
-    probs = torch.sigmoid(logits)[0].cpu().numpy()  # (3, T')
+    logits = module(wav)  # (1, T')
+    probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',)
     fps = sample_rate / hop_length
 
-    events = readout(
-        probs[0],
-        probs[1],
-        probs[2],
+    pred_times = readout_beat_only(
+        probs,
         fps=fps,
         beat_threshold=beat_threshold,
         min_distance_frames=min_distance_frames,
         gate_tolerance=gate_tolerance,
-        anchor_threshold=anchor_threshold,
-        group_size=group_size,
     )
-    pred_times = [e["time"] for e in events]
 
-    result = {
+    return {
         "f_beat": beat_f_measure(
             beat_times, pred_times, tolerance=tolerance, trim=trim
         ),
-        "f_one": None,
-        "f_last": None,
-        "confusion": None,
     }
-
-    if has_positions:
-        positions = np.asarray(positions)
-        f_one, f_last = downbeat_f_measures(
-            beat_times,
-            positions,
-            events,
-            tolerance=tolerance,
-            trim=trim,
-            group_size=group_size,
-        )
-        result["f_one"] = f_one
-        result["f_last"] = f_last
-        result["confusion"] = confusion_half_cycle_rate(
-            beat_times, positions, events, tolerance=tolerance, group_size=group_size
-        )
-
-    return result
 
 
 def _mean(results: list[dict], key: str) -> float | None:
@@ -174,7 +144,7 @@ def _fmt(value: float | None) -> str:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Evaluate a beat-phase checkpoint on full-length tracks."
+        description="Evaluate a beat-only checkpoint on full-length tracks."
     )
     parser.add_argument(
         "--checkpoint", required=True, help="Path to a Lightning .ckpt file"
@@ -185,12 +155,6 @@ def main():
     parser.add_argument("--val-split", type=float, default=0.2)
     parser.add_argument("--sample-rate", type=int, default=22050)
     parser.add_argument("--hop-length", type=int, default=512)
-    parser.add_argument(
-        "--group-size",
-        type=int,
-        default=4,
-        help="Beats per group: 4 for bar position (default), 8 for phrase position",
-    )
     parser.add_argument(
         "--binary-only",
         action="store_true",
@@ -213,7 +177,6 @@ def main():
     parser.add_argument("--beat-threshold", type=float, default=0.3)
     parser.add_argument("--min-distance-frames", type=int, default=1)
     parser.add_argument("--gate-tolerance", type=float, default=0.2)
-    parser.add_argument("--anchor-threshold", type=float, default=0.5)
     parser.add_argument(
         "--limit",
         type=int,
@@ -229,7 +192,6 @@ def main():
         data_home=data_home,
         sample_rate=args.sample_rate,
         hop_length=args.hop_length,
-        group_size=args.group_size,
         binary_only=args.binary_only,
     )
 
@@ -244,20 +206,16 @@ def main():
     module.eval()
     module.to(device)
 
-    print(
-        f"[eval] {len(indices)} track(s) from '{args.dataset}' (split={args.split}, group_size={args.group_size})"
-    )
+    print(f"[eval] {len(indices)} track(s) from '{args.dataset}' (split={args.split})")
 
     results = []
     for i in indices:
-        audio_path, beat_times, positions, has_positions = dataset.samples[i]
+        audio_path, beat_times, _positions, _has_positions = dataset.samples[i]
 
         r = evaluate_track(
             module,
             audio_path,
             beat_times,
-            positions,
-            has_positions,
             args.sample_rate,
             args.hop_length,
             device,
@@ -266,23 +224,15 @@ def main():
             args.beat_threshold,
             args.min_distance_frames,
             args.gate_tolerance,
-            args.anchor_threshold,
-            args.group_size,
         )
         results.append(r)
 
         label = Path(audio_path).stem
-        print(
-            f"[{label:30s}] beat={_fmt(r['f_beat'])}  one={_fmt(r['f_one'])}  "
-            f"last={_fmt(r['f_last'])}  confusion={_fmt(r['confusion'])}"
-        )
+        print(f"[{label:30s}] beat={_fmt(r['f_beat'])}")
 
     print("-" * 70)
     print(f"n_tracks={len(results)}")
-    print(f"mean beat F-measure:  {_fmt(_mean(results, 'f_beat'))}")
-    print(f"mean '1' F-measure:   {_fmt(_mean(results, 'f_one'))}")
-    print(f"mean 'last' F-measure: {_fmt(_mean(results, 'f_last'))}")
-    print(f"mean phase confusion:  {_fmt(_mean(results, 'confusion'))}")
+    print(f"mean beat F-measure: {_fmt(_mean(results, 'f_beat'))}")
 
 
 if __name__ == "__main__":
