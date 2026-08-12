@@ -5,5 +5,4 @@ Other
    :toctree: generated
    :recursive:
 
-   ~musicality.augmentations
    ~musicality.postprocess

@@ -1,5 +1,6 @@
 """PyTorch Dataset for mirdata beat/bar-position estimation datasets."""
 
+import random
 from pathlib import Path
 
 import mirdata
@@ -84,6 +85,11 @@ class BeatDataset(Dataset):
         since their meter can't be confirmed. Independent of ``group_size``:
         a track only needs an even beats-per-bar count, not one equal to
         ``group_size``.
+    :param random_crop: If ``True``, draw the ``duration``-second window at a
+        random offset into the track on every access, instead of always the
+        first ``duration`` seconds. Use for training (so the model doesn't
+        just memorize one fixed window per track across epochs); leave
+        ``False`` for validation, so eval clips stay fixed and reproducible.
     """
 
     def __init__(
@@ -96,6 +102,7 @@ class BeatDataset(Dataset):
         sigma_frames: float = 1.5,
         group_size: int = 4,
         binary_only: bool = False,
+        random_crop: bool = False,
     ):
         if data_home is None:
             data_home = DATA_DIR / name
@@ -106,6 +113,7 @@ class BeatDataset(Dataset):
         self.n_frames = self.n_samples // hop_length
         self.sigma_frames = sigma_frames
         self.group_size = group_size
+        self.random_crop = random_crop
 
         ds = mirdata.initialize(name, data_home=str(data_home))
 
@@ -177,9 +185,16 @@ class BeatDataset(Dataset):
             wav = T.Resample(sr, self.sample_rate)(wav)
 
         if wav.shape[1] >= self.n_samples:
-            wav = wav[:, : self.n_samples]
+            max_start = wav.shape[1] - self.n_samples
+            start = random.randint(0, max_start) if self.random_crop else 0
+            wav = wav[:, start : start + self.n_samples]
         else:
+            start = 0
             wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
+
+        # Shift annotation times to be relative to the cropped window's start,
+        # so frame indices computed below line up with the cropped audio.
+        beat_times = beat_times - start / self.sample_rate
 
         if has_positions:
             positions = np.asarray(positions)
