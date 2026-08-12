@@ -190,6 +190,37 @@ class TestFrameAccuracy:
         mask = torch.zeros(1, 2)
         assert torch.isfinite(frame_accuracy(probs, target, mask=mask)).all()
 
+    def test_balanced_perfect_match_is_one(self):
+        probs = torch.tensor([0.9, 0.1, 0.9, 0.1])
+        target = torch.tensor([1.0, 0.0, 1.0, 0.0])
+        assert frame_accuracy(probs, target, balanced=True).item() == pytest.approx(1.0)
+
+    def test_balanced_always_negative_floors_at_half(self):
+        # 1 positive frame out of 10; a model that never fires still gets 9/10
+        # right under the pooled mean, but should floor at 0.5 when balanced.
+        target = torch.tensor([[1.0] + [0.0] * 9])
+        probs = torch.full((1, 10), 0.1)
+
+        assert frame_accuracy(probs, target).item() == pytest.approx(0.9)
+        assert frame_accuracy(probs, target, balanced=True).item() == pytest.approx(0.5)
+
+    def test_balanced_mask_excludes_frames(self):
+        probs = torch.tensor([[0.9, 0.1, 0.9]])
+        target = torch.tensor([[1.0, 1.0, 1.0]])  # frame 1 is wrong
+        mask = torch.tensor([[1.0, 0.0, 1.0]])  # frame 1 excluded
+
+        assert frame_accuracy(
+            probs, target, mask=mask, balanced=True
+        ).item() == pytest.approx(0.5)
+
+    def test_balanced_all_masked_out_no_nan(self):
+        probs = torch.tensor([[0.9, 0.1]])
+        target = torch.tensor([[1.0, 0.0]])
+        mask = torch.zeros(1, 2)
+        assert torch.isfinite(
+            frame_accuracy(probs, target, mask=mask, balanced=True)
+        ).all()
+
 
 # ---------------------------------------------------------------------------
 # tempo_acc1

@@ -50,6 +50,7 @@ def build_module(cfg: DictConfig) -> BeatModule:
         pos_weight=cfg.pos_weight,
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
+        balanced=cfg.balanced,
     )
 
 
