@@ -4,7 +4,7 @@ defaults:
 
 # Positive-class weight for the beat/one/last BCE heads — scalar (shared across
 # heads) or a 3-element list for per-head weights.
-pos_weight: [1,4,4.0]
+pos_weight: [5,18,18]
 lr: 5e-4  # learning rate
 weight_decay: 0.0  # L2 regularisation
 # Balance the logged acc_beat/acc_one/acc_last metrics (average of true-positive
