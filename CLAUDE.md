@@ -76,6 +76,13 @@ Entry point: `tools/train.py` uses Hydra to compose config and calls `train()`.
 
 Supports absolute, relative, and classification loss modes. Classification loss treats tempo as a discretized bin with a Gaussian target distribution.
 
+### Metrics (`musicality/metrics/`)
+
+- `f_measure.py` — `beat_f_measure`, `downbeat_f_measures`: event-level F-measure against `mir_eval`, overall and per bar/phrase position.
+- `confusion.py` — `confusion_half_cycle_rate`: rate of half-cycle ("1" vs. opposite position) phase-parity errors.
+- `frame_accuracy.py` — `frame_accuracy`: cheap per-epoch frame-level accuracy used as a training-time signal.
+- `tempo_acc1.py` — `tempo_acc1`: MIREX Accuracy 1, octave-tolerant tempo accuracy.
+
 ### Callbacks (`musicality/callbacks/`)
 
 - `error_plot.py` — `ErrorVsTempoPlot`: logs a per-epoch error-vs-tempo scatter to W&B.
