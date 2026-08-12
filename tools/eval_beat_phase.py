@@ -26,11 +26,8 @@ import torchaudio.transforms as T
 
 import musicality.dataformats as dataformats
 from musicality.loaders.beat_dataset import BeatDataset
-from musicality.metrics import (
-    beat_f_measure,
-    confusion_half_cycle_rate,
-    downbeat_f_measures,
-)
+from musicality.metrics.confusion import confusion_half_cycle_rate
+from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
 from musicality.postprocess import readout
 from musicality.splits.splitter import Splitter
 from musicality.trainers.beat_phase_module import BeatPhaseModule

@@ -5,11 +5,8 @@ confusion_half_cycle_rate.
 import numpy as np
 import pytest
 
-from musicality.metrics import (
-    beat_f_measure,
-    confusion_half_cycle_rate,
-    downbeat_f_measures,
-)
+from musicality.metrics.confusion import confusion_half_cycle_rate
+from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
 
 
 # ---------------------------------------------------------------------------
