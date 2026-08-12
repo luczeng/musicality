@@ -303,6 +303,17 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 
 </details>
 
+<details id="leaderboard">
+<summary><b>Leaderboard</b></summary>
+
+
+| Dataset | Task | Split | Beat F-measure |
+|---|---|---|---|
+| ballroom (binary meter) | Beat detection (beat-only) | val, 104 tracks | 0.896 |
+
+
+</details>
+
 <details id="tools">
 <summary><b>Tools</b></summary>
 
