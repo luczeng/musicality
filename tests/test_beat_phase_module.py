@@ -4,11 +4,7 @@ import torch
 import pytest
 from omegaconf import OmegaConf
 
-from musicality.trainers.beat_phase_module import (
-    BeatPhaseModule,
-    align_time,
-    frame_accuracy,
-)
+from musicality.trainers.beat_phase_module import BeatPhaseModule, align_time
 
 N_SAMPLES = 4096  # short but > n_fft (2048) so STFT doesn't error
 B, T = 4, 6
@@ -63,35 +59,6 @@ class TestAlignTime:
         out_logits, out_target = align_time(logits, target)
         assert torch.equal(out_logits, logits)
         assert torch.equal(out_target, target)
-
-
-# ---------------------------------------------------------------------------
-# frame_accuracy
-# ---------------------------------------------------------------------------
-
-
-class TestFrameAccuracy:
-    def test_perfect_match_is_one(self):
-        probs = torch.tensor([0.9, 0.1, 0.9, 0.1])
-        target = torch.tensor([1.0, 0.0, 1.0, 0.0])
-        assert frame_accuracy(probs, target).item() == pytest.approx(1.0)
-
-    def test_total_mismatch_is_zero(self):
-        probs = torch.tensor([0.9, 0.1])
-        target = torch.tensor([0.0, 1.0])
-        assert frame_accuracy(probs, target).item() == pytest.approx(0.0)
-
-    def test_mask_excludes_frames(self):
-        probs = torch.tensor([[0.9, 0.1, 0.9]])
-        target = torch.tensor([[1.0, 1.0, 1.0]])  # frame 1 is wrong
-        mask = torch.tensor([[1.0, 0.0, 1.0]])  # frame 1 excluded
-        assert frame_accuracy(probs, target, mask=mask).item() == pytest.approx(1.0)
-
-    def test_all_masked_out_no_nan(self):
-        probs = torch.tensor([[0.9, 0.1]])
-        target = torch.tensor([[1.0, 0.0]])
-        mask = torch.zeros(1, 2)
-        assert torch.isfinite(frame_accuracy(probs, target, mask=mask)).all()
 
 
 # ---------------------------------------------------------------------------

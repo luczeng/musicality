@@ -2,7 +2,7 @@
 
 Consumes the labeled beat list produced by :func:`musicality.postprocess.readout`
 (or raw reference annotations) — this is the "does the final output line up with
-the ground truth" evaluation, distinct from :func:`musicality.trainers.beat_phase_module.frame_accuracy`,
+the ground truth" evaluation, distinct from :func:`musicality.metrics.frame_accuracy.frame_accuracy`,
 which is a cheap per-epoch training signal on raw frame probabilities.
 """
 
