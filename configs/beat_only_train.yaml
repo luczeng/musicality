@@ -7,7 +7,7 @@ defaults:
 # ballroom, measured directly from BeatDataset — see docs/beat_phase_pos_weight_notes.md).
 pos_weight: 6.0
 lr: 5e-4
-weight_decay: 0.0
+weight_decay: 1e-4
 # Balance the logged acc_beat metric (average of true-positive and
 # true-negative rate) instead of a pooled mean, which is dominated by the
 # true-negative rate since beat frames are a small minority.
