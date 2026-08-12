@@ -37,7 +37,7 @@ data:
   duration: 10.0
   val_split: 0.2
   num_workers: 4
-  random_crop: true  # train: draw a random offset window per track each access; val is always fixed at the clip start
+  random_crop: true  # train: draw a random offset window per track each access; val is always a fixed window from the track's middle (avoids intros)
 augmentations:
   enabled: true
   time_stretch:

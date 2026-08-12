@@ -40,9 +40,10 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
         binary_only=binary_only,
     )
     # Separate dataset instances for train/val so only the train split draws a
-    # random crop window per track per epoch — val stays fixed at the start of
-    # the track for reproducible eval. They share the same underlying track
-    # list/order, so the split indices below apply identically to both.
+    # random crop window per track per epoch — val stays fixed at the middle
+    # of the track (see BeatDataset) for reproducible eval. They share the
+    # same underlying track list/order, so the split indices below apply
+    # identically to both.
     train_dataset = BeatDataset(
         random_crop=cfg.data.get("random_crop", True), **dataset_kwargs
     )

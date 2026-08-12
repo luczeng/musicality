@@ -16,9 +16,12 @@ flag gates all of them at once.
      - Config path
    * - Random crop
      - Draws the fixed-``duration`` clip at a random offset into the track
-       on every access, instead of always the first ``duration`` seconds.
-       Beat/one/last annotation times are shifted to stay aligned with the
-       cropped window. Beat-phase/beat-only training only
+       on every access. When disabled (including for validation, which
+       always has this off), the clip is instead a fixed window from the
+       *middle* of the track rather than the start, since intros are often
+       sparse/atypical and less representative for eval. Beat/one/last
+       annotation times are shifted to stay aligned with whichever window
+       was picked. Beat-phase/beat-only training only
        (:class:`~musicality.loaders.beat_dataset.BeatDataset`); the tempo
        pipeline doesn't crop (whole-clip regression). Lives outside the
        ``augmentations:`` block and is implemented at the dataset level

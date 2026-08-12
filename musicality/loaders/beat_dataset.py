@@ -86,10 +86,11 @@ class BeatDataset(Dataset):
         a track only needs an even beats-per-bar count, not one equal to
         ``group_size``.
     :param random_crop: If ``True``, draw the ``duration``-second window at a
-        random offset into the track on every access, instead of always the
-        first ``duration`` seconds. Use for training (so the model doesn't
-        just memorize one fixed window per track across epochs); leave
-        ``False`` for validation, so eval clips stay fixed and reproducible.
+        random offset into the track on every access. Use for training (so
+        the model doesn't just memorize one fixed window per track across
+        epochs). If ``False``, always take a fixed window from the middle of
+        the track — deterministic/reproducible for validation, and more
+        representative than the start, which is often a sparse intro.
     """
 
     def __init__(
@@ -186,7 +187,11 @@ class BeatDataset(Dataset):
 
         if wav.shape[1] >= self.n_samples:
             max_start = wav.shape[1] - self.n_samples
-            start = random.randint(0, max_start) if self.random_crop else 0
+            # Fixed (non-random) crops are taken from the middle rather than
+            # the start, since intros are often sparse/atypical (e.g. no
+            # beat yet) and a less representative eval window than the rest
+            # of the track.
+            start = random.randint(0, max_start) if self.random_crop else max_start // 2
             wav = wav[:, start : start + self.n_samples]
         else:
             start = 0
