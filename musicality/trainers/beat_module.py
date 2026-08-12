@@ -6,7 +6,8 @@ import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.trainers.beat_phase_module import align_time, frame_accuracy
+from musicality.metrics.frame_accuracy import frame_accuracy
+from musicality.trainers.beat_phase_module import align_time
 
 
 class BeatModule(L.LightningModule):

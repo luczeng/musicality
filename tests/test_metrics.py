@@ -1,15 +1,15 @@
 """Tests for musicality.metrics: beat_f_measure, downbeat_f_measures,
-confusion_half_cycle_rate.
+confusion_half_cycle_rate, frame_accuracy, tempo_acc1.
 """
 
 import numpy as np
 import pytest
+import torch
 
-from musicality.metrics import (
-    beat_f_measure,
-    confusion_half_cycle_rate,
-    downbeat_f_measures,
-)
+from musicality.metrics.confusion import confusion_half_cycle_rate
+from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
+from musicality.metrics.frame_accuracy import frame_accuracy
+from musicality.metrics.tempo_acc1 import tempo_acc1
 
 
 # ---------------------------------------------------------------------------
@@ -160,3 +160,68 @@ class TestConfusionHalfCycleRate:
             confusion_half_cycle_rate(ref_times, ref_positions, pred, group_size=8)
             == 0.0
         )
+
+
+# ---------------------------------------------------------------------------
+# frame_accuracy
+# ---------------------------------------------------------------------------
+
+
+class TestFrameAccuracy:
+    def test_perfect_match_is_one(self):
+        probs = torch.tensor([0.9, 0.1, 0.9, 0.1])
+        target = torch.tensor([1.0, 0.0, 1.0, 0.0])
+        assert frame_accuracy(probs, target).item() == pytest.approx(1.0)
+
+    def test_total_mismatch_is_zero(self):
+        probs = torch.tensor([0.9, 0.1])
+        target = torch.tensor([0.0, 1.0])
+        assert frame_accuracy(probs, target).item() == pytest.approx(0.0)
+
+    def test_mask_excludes_frames(self):
+        probs = torch.tensor([[0.9, 0.1, 0.9]])
+        target = torch.tensor([[1.0, 1.0, 1.0]])  # frame 1 is wrong
+        mask = torch.tensor([[1.0, 0.0, 1.0]])  # frame 1 excluded
+        assert frame_accuracy(probs, target, mask=mask).item() == pytest.approx(1.0)
+
+    def test_all_masked_out_no_nan(self):
+        probs = torch.tensor([[0.9, 0.1]])
+        target = torch.tensor([[1.0, 0.0]])
+        mask = torch.zeros(1, 2)
+        assert torch.isfinite(frame_accuracy(probs, target, mask=mask)).all()
+
+
+# ---------------------------------------------------------------------------
+# tempo_acc1
+# ---------------------------------------------------------------------------
+
+
+class TestTempoAcc1:
+    def test_exact_match_is_one(self):
+        target = torch.tensor([80.0, 100.0, 120.0])
+        assert tempo_acc1(target, target).item() == pytest.approx(1.0)
+
+    def test_within_tolerance_is_one(self):
+        target = torch.tensor([120.0])
+        pred = torch.tensor([125.0])  # +4.2%, within the default 8% tolerance
+        assert tempo_acc1(pred, target).item() == pytest.approx(1.0)
+
+    def test_outside_tolerance_is_zero(self):
+        target = torch.tensor([120.0])
+        pred = torch.tensor([140.0])  # +16.7%, outside tolerance and not an octave
+        assert tempo_acc1(pred, target).item() == pytest.approx(0.0)
+
+    def test_half_tempo_counts_correct(self):
+        target = torch.tensor([120.0])
+        pred = torch.tensor([60.0])  # exactly half-tempo
+        assert tempo_acc1(pred, target).item() == pytest.approx(1.0)
+
+    def test_double_tempo_counts_correct(self):
+        target = torch.tensor([120.0])
+        pred = torch.tensor([240.0])  # exactly double-tempo
+        assert tempo_acc1(pred, target).item() == pytest.approx(1.0)
+
+    def test_mixed_batch_partial_accuracy(self):
+        target = torch.tensor([120.0, 120.0])
+        pred = torch.tensor([120.0, 140.0])  # one correct, one not
+        assert tempo_acc1(pred, target).item() == pytest.approx(0.5)
