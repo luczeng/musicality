@@ -174,9 +174,12 @@ def main():
         action="store_true",
         help="Disable mir_eval's standard 5s warm-up trim (use for short clips)",
     )
-    parser.add_argument("--beat-threshold", type=float, default=0.3)
-    parser.add_argument("--min-distance-frames", type=int, default=1)
-    parser.add_argument("--gate-tolerance", type=float, default=0.2)
+    # Defaults from tools/sweep_beat_postprocess.py's grid search against the
+    # epoch-89 ballroom checkpoint (mean beat F-measure 0.735 -> 0.896) — rerun
+    # the sweep if the checkpoint/dataset changes materially.
+    parser.add_argument("--beat-threshold", type=float, default=0.8)
+    parser.add_argument("--min-distance-frames", type=int, default=4)
+    parser.add_argument("--gate-tolerance", type=float, default=0.1)
     parser.add_argument(
         "--limit",
         type=int,
