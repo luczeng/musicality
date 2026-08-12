@@ -33,6 +33,10 @@ class BeatModule(L.LightningModule):
     :param weight_decay: L2 regularisation.
     :param threshold: Sigmoid/target threshold used only for the logged accuracy
         metric, not for the loss itself.
+    :param balanced: Passed through to :func:`~musicality.metrics.frame_accuracy.frame_accuracy`
+        for the logged accuracy metric. Defaults to ``True`` since beat frames
+        are a small minority and a pooled mean is dominated by the
+        true-negative rate.
     """
 
     def __init__(
@@ -42,6 +46,7 @@ class BeatModule(L.LightningModule):
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
+        balanced: bool = True,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -73,7 +78,12 @@ class BeatModule(L.LightningModule):
         self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
         self.log(
             f"{stage}/acc_beat",
-            frame_accuracy(probs, beat_y, threshold=self.hparams.threshold),
+            frame_accuracy(
+                probs,
+                beat_y,
+                threshold=self.hparams.threshold,
+                balanced=self.hparams.balanced,
+            ),
             **log_kw,
         )
 

@@ -8,6 +8,10 @@ defaults:
 pos_weight: 6.0
 lr: 5e-4
 weight_decay: 0.0
+# Balance the logged acc_beat metric (average of true-positive and
+# true-negative rate) instead of a pooled mean, which is dominated by the
+# true-negative rate since beat frames are a small minority.
+balanced: true
 batch_size: 16
 n_mels: 128
 hop_length: 512
