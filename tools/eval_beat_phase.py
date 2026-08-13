@@ -23,6 +23,7 @@ import numpy as np
 import torch
 import torchaudio
 import torchaudio.transforms as T
+import yaml
 
 import musicality.dataformats as dataformats
 from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
@@ -32,6 +33,11 @@ from musicality.postprocess import readout
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
+
+# Default CLI values — see configs/eval_beat_phase.yaml for what each means.
+DEFAULTS = yaml.safe_load(
+    (dataformats.ROOT / "configs" / "eval_beat_phase.yaml").read_text()
+)
 
 
 def load_module(checkpoint_path: str, device: torch.device) -> BeatPhaseModule:
@@ -154,16 +160,20 @@ def main():
     parser.add_argument(
         "--checkpoint", required=True, help="Path to a Lightning .ckpt file"
     )
-    parser.add_argument("--dataset", default="ballroom", help="mirdata dataset name")
+    parser.add_argument(
+        "--dataset", default=DEFAULTS["dataset"], help="mirdata dataset name"
+    )
     parser.add_argument("--data-home", default=None, help="Defaults to data/<dataset>")
-    parser.add_argument("--split", choices=["train", "val", "all"], default="val")
-    parser.add_argument("--val-split", type=float, default=0.2)
-    parser.add_argument("--sample-rate", type=int, default=22050)
-    parser.add_argument("--hop-length", type=int, default=512)
+    parser.add_argument(
+        "--split", choices=["train", "val", "all"], default=DEFAULTS["split"]
+    )
+    parser.add_argument("--val-split", type=float, default=DEFAULTS["val_split"])
+    parser.add_argument("--sample-rate", type=int, default=DEFAULTS["sample_rate"])
+    parser.add_argument("--hop-length", type=int, default=DEFAULTS["hop_length"])
     parser.add_argument(
         "--group-size",
         type=int,
-        default=4,
+        default=DEFAULTS["group_size"],
         help="Beats per group: 4 for bar position (default), 8 for phrase position",
     )
     parser.add_argument(
@@ -177,7 +187,7 @@ def main():
     parser.add_argument(
         "--tolerance",
         type=float,
-        default=0.07,
+        default=DEFAULTS["tolerance"],
         help="F-measure matching window, seconds",
     )
     parser.add_argument(
@@ -185,17 +195,25 @@ def main():
         action="store_true",
         help="Disable mir_eval's standard 5s warm-up trim (use for short clips)",
     )
-    parser.add_argument("--beat-threshold", type=float, default=0.3)
-    parser.add_argument("--min-distance-frames", type=int, default=1)
-    parser.add_argument("--gate-tolerance", type=float, default=0.2)
-    parser.add_argument("--anchor-threshold", type=float, default=0.5)
+    parser.add_argument(
+        "--beat-threshold", type=float, default=DEFAULTS["beat_threshold"]
+    )
+    parser.add_argument(
+        "--min-distance-frames", type=int, default=DEFAULTS["min_distance_frames"]
+    )
+    parser.add_argument(
+        "--gate-tolerance", type=float, default=DEFAULTS["gate_tolerance"]
+    )
+    parser.add_argument(
+        "--anchor-threshold", type=float, default=DEFAULTS["anchor_threshold"]
+    )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Evaluate only the first N selected tracks",
     )
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=DEFAULTS["device"])
     args = parser.parse_args()
 
     data_home = Path(args.data_home) if args.data_home else DATA_DIR / args.dataset
