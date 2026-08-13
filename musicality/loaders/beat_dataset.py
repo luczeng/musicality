@@ -11,6 +11,7 @@ import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
+from musicality.splits.splitter import Splitter
 
 
 DATA_DIR = dataformats.DATA_DIR
@@ -217,3 +218,50 @@ class BeatDataset(Dataset):
         target = torch.from_numpy(np.stack([beat, one, last, mask]))
 
         return wav, target  # (1, T), (4, n_frames)
+
+
+def beat_split_name(name: str, binary_only: bool = False) -> str:
+    """Split directory name for a BeatDataset build: ``beat_phase-<name>[-binary]``.
+
+    Namespaced by dataset name and ``binary_only`` only — not by which heads a
+    trainer/eval script actually uses, since ``BeatDataset``'s filtering (and
+    therefore its length) only depends on those two things. So beat-phase and
+    beat-only runs over the same dataset share the exact same held-out split,
+    keeping their eval numbers directly comparable.
+    """
+
+    return f"beat_phase-{name}" + ("-binary" if binary_only else "")
+
+
+def select_indices(
+    dataset: "BeatDataset",
+    name: str,
+    split: str,
+    val_split: float,
+    binary_only: bool = False,
+) -> list[int]:
+    """Return ``dataset`` indices for ``split``, reusing a training run's
+    cached train/val split (see :class:`~musicality.splits.splitter.Splitter`)
+    so ``"val"`` means genuinely held-out tracks.
+
+    :param dataset: The ``BeatDataset`` to select indices from.
+    :param name: mirdata dataset name (e.g. ``"ballroom"``) used to look up the split.
+    :param split: ``"train"``, ``"val"``, or ``"all"`` (every index — no split
+        file is read in this case).
+    :param val_split: Fraction of the dataset held out for validation. Must
+        match how the split was created.
+    :param binary_only: Must match how the split was created — see
+        :func:`beat_split_name`.
+    """
+
+    if split == "all":
+        return list(range(len(dataset)))
+
+    _fmt = dataformats.load()
+    splits_dir = dataformats.ROOT / _fmt.splits_dir
+
+    train_ds, val_ds = Splitter(
+        dataset, splits_dir, beat_split_name(name, binary_only), val_split
+    ).run()
+
+    return list((val_ds if split == "val" else train_ds).indices)

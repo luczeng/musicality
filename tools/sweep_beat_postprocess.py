@@ -31,10 +31,10 @@ from pathlib import Path
 import torch
 
 import musicality.dataformats as dataformats
-from musicality.loaders.beat_dataset import BeatDataset
+from musicality.loaders.beat_dataset import BeatDataset, select_indices
 from musicality.metrics.f_measure import beat_f_measure
 from musicality.postprocess import readout_beat_only
-from tools.eval_beat_only import load_module, load_track_waveform, select_indices
+from tools.eval_beat_only import load_module, load_track_waveform
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 

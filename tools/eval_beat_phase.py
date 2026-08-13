@@ -25,11 +25,10 @@ import torchaudio
 import torchaudio.transforms as T
 
 import musicality.dataformats as dataformats
-from musicality.loaders.beat_dataset import BeatDataset
+from musicality.loaders.beat_dataset import BeatDataset, select_indices
 from musicality.metrics.confusion import confusion_half_cycle_rate
 from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
 from musicality.postprocess import readout
-from musicality.splits.splitter import Splitter
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
@@ -69,30 +68,6 @@ def load_track_waveform(audio_path: str, sample_rate: int) -> torch.Tensor:
         wav = T.Resample(sr, sample_rate)(wav)
 
     return wav  # (1, N)
-
-
-def select_indices(
-    dataset: BeatDataset,
-    dataset_name: str,
-    split: str,
-    val_split: float,
-    binary_only: bool = False,
-) -> list[int]:
-    """Return dataset indices for ``split``, reusing the training run's cached
-    train/val split so "val" means genuinely held-out tracks."""
-
-    if split == "all":
-        return list(range(len(dataset)))
-
-    _fmt = dataformats.load()
-    splits_dir = dataformats.ROOT / _fmt.splits_dir
-    suffix = "-binary" if binary_only else ""
-
-    train_ds, val_ds = Splitter(
-        dataset, splits_dir, f"beat_phase-{dataset_name}{suffix}", val_split
-    ).run()
-
-    return list((val_ds if split == "val" else train_ds).indices)
 
 
 @torch.no_grad()
