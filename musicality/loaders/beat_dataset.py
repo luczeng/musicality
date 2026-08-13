@@ -233,7 +233,7 @@ def beat_split_name(name: str, binary_only: bool = False) -> str:
     return f"beat_phase-{name}" + ("-binary" if binary_only else "")
 
 
-def select_indices(
+def indices_for_split(
     dataset: "BeatDataset",
     name: str,
     split: str,

@@ -21,7 +21,7 @@ import torchaudio
 import torchaudio.transforms as T
 
 import musicality.dataformats as dataformats
-from musicality.loaders.beat_dataset import BeatDataset, select_indices
+from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
 from musicality.metrics.f_measure import beat_f_measure
 from musicality.postprocess import readout_beat_only
 from musicality.trainers.beat_module import BeatModule
@@ -168,7 +168,7 @@ def main():
         binary_only=args.binary_only,
     )
 
-    indices = select_indices(
+    indices = indices_for_split(
         dataset, args.dataset, args.split, args.val_split, args.binary_only
     )
     if args.limit is not None:
