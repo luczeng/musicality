@@ -32,8 +32,8 @@ class TCNTempoNet(nn.Module):
     :param channels: Channel width for the TCN.
     :param n_layers: Number of dilated layers. Keep receptive field
         (3 × (2^n_layers − 1) frames) within the input sequence length.
-    :param dropout: Dropout probability in the pooled regression head. Unused when
-        ``frame_level=True`` (the frame head is a single 1x1 conv, no dropout).
+    :param dropout: Dropout probability applied right before the final head layer —
+        the pooled regression head's last ``Linear``, or the frame head's 1x1 conv.
     :param n_outputs: Output dimension. In pooled mode, ``1`` for scalar regression,
         > 1 for classification over tempo bins. In frame-level mode, the number of
         per-frame target channels (e.g. 3 for beat/one/last).
@@ -82,7 +82,10 @@ class TCNTempoNet(nn.Module):
         )
 
         if frame_level:
-            self.frame_head = nn.Conv1d(channels, n_outputs, kernel_size=1)
+            self.frame_head = nn.Sequential(
+                nn.Dropout(dropout),
+                nn.Conv1d(channels, n_outputs, kernel_size=1),
+            )
         else:
             self.head = nn.Sequential(
                 nn.Linear(channels, 128),

@@ -6,7 +6,7 @@ defaults:
 # heads) or a 3-element list for per-head weights.
 pos_weight: [5,18,18]
 lr: 5e-4  # learning rate
-weight_decay: 0.0  # L2 regularisation
+weight_decay: 1e-4  # L2 regularisation
 # Balance the logged acc_beat/acc_one/acc_last metrics (average of true-positive
 # and true-negative rate) instead of a pooled mean, which is dominated by the
 # true-negative rate since beat/one/last frames are a small minority.
@@ -40,6 +40,7 @@ data:
   duration: 10.0  # audio clip length, in seconds
   val_split: 0.2  # fraction of data held out for validation
   num_workers: 4
+  random_crop: true  # train: draw a random offset window per track each access; val is always a fixed window from the track's middle (avoids intros)
 augmentations:
   enabled: true
   time_stretch:

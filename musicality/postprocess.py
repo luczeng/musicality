@@ -266,3 +266,33 @@ def readout(
     return [
         {"time": float(t), "beat_in_bar": label} for t, label in zip(beat_times, labels)
     ]
+
+
+def readout_beat_only(
+    beat_probs: np.ndarray,
+    fps: float,
+    beat_threshold: float = 0.3,
+    min_distance_frames: int = 1,
+    gate_tolerance: float = 0.2,
+) -> np.ndarray:
+    """End-to-end: a per-frame beat probability curve -> beat timestamps.
+
+    Same first two stages as :func:`readout` (:func:`pick_peaks` then
+    :func:`gate_periodicity`), minus the bar-position labeling step — that
+    needs "one"/"last" probability curves, which a beat-only model doesn't
+    produce.
+
+    :param beat_probs: Per-frame beat probability curve, shape ``(T,)``.
+    :param fps: Frames per second (``sample_rate / hop_length``).
+    :param beat_threshold: Passed to :func:`pick_peaks`.
+    :param min_distance_frames: Passed to :func:`pick_peaks`.
+    :param gate_tolerance: Passed to :func:`gate_periodicity` as ``tolerance``.
+    :returns: Sorted beat timestamps (seconds).
+    """
+
+    peak_frames = pick_peaks(
+        beat_probs, threshold=beat_threshold, min_distance=min_distance_frames
+    )
+    peak_times = peak_frames / fps
+
+    return gate_periodicity(peak_times, tolerance=gate_tolerance)

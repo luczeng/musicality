@@ -7,6 +7,7 @@ API reference for the ``musicality`` tempo-estimation library.
    :maxdepth: 2
 
    configuration
+   augmentations
    losses
    metrics
    loaders

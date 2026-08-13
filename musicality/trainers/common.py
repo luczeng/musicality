@@ -29,7 +29,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
 
     binary_only = cfg.get("binary_only", False)
 
-    dataset = BeatDataset(
+    dataset_kwargs = dict(
         name=cfg.data.name,
         data_home=cfg.data.data_home,
         sample_rate=cfg.data.sample_rate,
@@ -39,6 +39,15 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
         group_size=cfg.get("group_size", 4),
         binary_only=binary_only,
     )
+    # Separate dataset instances for train/val so only the train split draws a
+    # random crop window per track per epoch — val stays fixed at the middle
+    # of the track (see BeatDataset) for reproducible eval. They share the
+    # same underlying track list/order, so the split indices below apply
+    # identically to both.
+    train_dataset = BeatDataset(
+        random_crop=cfg.data.get("random_crop", True), **dataset_kwargs
+    )
+    val_dataset = BeatDataset(random_crop=False, **dataset_kwargs)
 
     _fmt = dataformats.load()
     splits_dir = dataformats.ROOT / _fmt.splits_dir
@@ -49,8 +58,11 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
     # numbers directly comparable.
     dataset_name = f"beat_phase-{cfg.data.name}" + ("-binary" if binary_only else "")
 
-    train_ds, val_ds = Splitter(
-        dataset, splits_dir, dataset_name, cfg.data.val_split
+    train_ds, _ = Splitter(
+        train_dataset, splits_dir, dataset_name, cfg.data.val_split
+    ).run()
+    _, val_ds = Splitter(
+        val_dataset, splits_dir, dataset_name, cfg.data.val_split
     ).run()
 
     augmenter = (
