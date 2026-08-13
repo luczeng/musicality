@@ -19,15 +19,20 @@ import numpy as np
 import torch
 import torchaudio
 import torchaudio.transforms as T
+import yaml
 
 import musicality.dataformats as dataformats
-from musicality.loaders.beat_dataset import BeatDataset
+from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
 from musicality.metrics.f_measure import beat_f_measure
 from musicality.postprocess import readout_beat_only
-from musicality.splits.splitter import Splitter
 from musicality.trainers.beat_module import BeatModule
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
+
+# Default CLI values — see configs/eval_beat_only.yaml for what each means.
+DEFAULTS = yaml.safe_load(
+    (dataformats.ROOT / "configs" / "eval_beat_only.yaml").read_text()
+)
 
 
 def load_module(checkpoint_path: str, device: torch.device) -> BeatModule:
@@ -64,35 +69,6 @@ def load_track_waveform(audio_path: str, sample_rate: int) -> torch.Tensor:
         wav = T.Resample(sr, sample_rate)(wav)
 
     return wav  # (1, N)
-
-
-def select_indices(
-    dataset: BeatDataset,
-    dataset_name: str,
-    split: str,
-    val_split: float,
-    binary_only: bool = False,
-) -> list[int]:
-    """Return dataset indices for ``split``, reusing the training run's cached
-    train/val split so "val" means genuinely held-out tracks.
-
-    Namespaced the same way as :mod:`musicality.trainers.common` builds it for
-    both beat-phase and beat-only training (``beat_phase-<name>[-binary]``),
-    since the two share the exact same held-out split.
-    """
-
-    if split == "all":
-        return list(range(len(dataset)))
-
-    _fmt = dataformats.load()
-    splits_dir = dataformats.ROOT / _fmt.splits_dir
-    suffix = "-binary" if binary_only else ""
-
-    train_ds, val_ds = Splitter(
-        dataset, splits_dir, f"beat_phase-{dataset_name}{suffix}", val_split
-    ).run()
-
-    return list((val_ds if split == "val" else train_ds).indices)
 
 
 @torch.no_grad()
@@ -149,12 +125,16 @@ def main():
     parser.add_argument(
         "--checkpoint", required=True, help="Path to a Lightning .ckpt file"
     )
-    parser.add_argument("--dataset", default="ballroom", help="mirdata dataset name")
+    parser.add_argument(
+        "--dataset", default=DEFAULTS["dataset"], help="mirdata dataset name"
+    )
     parser.add_argument("--data-home", default=None, help="Defaults to data/<dataset>")
-    parser.add_argument("--split", choices=["train", "val", "all"], default="val")
-    parser.add_argument("--val-split", type=float, default=0.2)
-    parser.add_argument("--sample-rate", type=int, default=22050)
-    parser.add_argument("--hop-length", type=int, default=512)
+    parser.add_argument(
+        "--split", choices=["train", "val", "all"], default=DEFAULTS["split"]
+    )
+    parser.add_argument("--val-split", type=float, default=DEFAULTS["val_split"])
+    parser.add_argument("--sample-rate", type=int, default=DEFAULTS["sample_rate"])
+    parser.add_argument("--hop-length", type=int, default=DEFAULTS["hop_length"])
     parser.add_argument(
         "--binary-only",
         action="store_true",
@@ -166,7 +146,7 @@ def main():
     parser.add_argument(
         "--tolerance",
         type=float,
-        default=0.07,
+        default=DEFAULTS["tolerance"],
         help="F-measure matching window, seconds",
     )
     parser.add_argument(
@@ -174,19 +154,23 @@ def main():
         action="store_true",
         help="Disable mir_eval's standard 5s warm-up trim (use for short clips)",
     )
-    # Defaults from tools/sweep_beat_postprocess.py's grid search against the
-    # epoch-89 ballroom checkpoint (mean beat F-measure 0.735 -> 0.896) — rerun
-    # the sweep if the checkpoint/dataset changes materially.
-    parser.add_argument("--beat-threshold", type=float, default=0.8)
-    parser.add_argument("--min-distance-frames", type=int, default=4)
-    parser.add_argument("--gate-tolerance", type=float, default=0.1)
+    # See configs/eval_beat_only.yaml for where these three come from.
+    parser.add_argument(
+        "--beat-threshold", type=float, default=DEFAULTS["beat_threshold"]
+    )
+    parser.add_argument(
+        "--min-distance-frames", type=int, default=DEFAULTS["min_distance_frames"]
+    )
+    parser.add_argument(
+        "--gate-tolerance", type=float, default=DEFAULTS["gate_tolerance"]
+    )
     parser.add_argument(
         "--limit",
         type=int,
         default=None,
         help="Evaluate only the first N selected tracks",
     )
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=DEFAULTS["device"])
     args = parser.parse_args()
 
     data_home = Path(args.data_home) if args.data_home else DATA_DIR / args.dataset
@@ -198,7 +182,7 @@ def main():
         binary_only=args.binary_only,
     )
 
-    indices = select_indices(
+    indices = indices_for_split(
         dataset, args.dataset, args.split, args.val_split, args.binary_only
     )
     if args.limit is not None:

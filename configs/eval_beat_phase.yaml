@@ -1,0 +1,19 @@
+# Defaults for tools/eval_beat_phase.py — every key below is overridable via
+# the matching --flag on the command line (e.g. `--beat-threshold 0.4`).
+
+dataset: ballroom  # mirdata dataset name
+split: val  # train | val | all
+val_split: 0.2  # fraction of the dataset held out for validation — must match how the split was created
+sample_rate: 22050  # audio sample rate the checkpoint was trained at
+hop_length: 512  # frame hop size, in samples — must match the checkpoint's training config
+group_size: 4  # beats per group: 4 for bar position (default), 8 for phrase position
+tolerance: 0.07  # F-measure matching window, seconds
+
+# Postprocessing (musicality/postprocess.py) — untuned defaults; sweep them
+# per checkpoint the way tools/sweep_beat_postprocess.py does for beat-only.
+beat_threshold: 0.3  # pick_peaks: minimum probability to be considered a peak at all
+min_distance_frames: 1  # pick_peaks: minimum frame gap enforced between returned peaks
+gate_tolerance: 0.2  # gate_periodicity: relative slack around an integer multiple of the current beat period
+anchor_threshold: 0.5  # label_bar_position: minimum probability for a beat to be trusted as a confident "1"/"last" anchor
+
+device: cpu  # torch device to run inference on

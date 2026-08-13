@@ -29,14 +29,20 @@ import itertools
 from pathlib import Path
 
 import torch
+import yaml
 
 import musicality.dataformats as dataformats
-from musicality.loaders.beat_dataset import BeatDataset
+from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
 from musicality.metrics.f_measure import beat_f_measure
 from musicality.postprocess import readout_beat_only
-from tools.eval_beat_only import load_module, load_track_waveform, select_indices
+from tools.eval_beat_only import load_module, load_track_waveform
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
+
+# Default CLI values — see configs/sweep_beat_postprocess.yaml for what each means.
+DEFAULTS = yaml.safe_load(
+    (dataformats.ROOT / "configs" / "sweep_beat_postprocess.yaml").read_text()
+)
 
 
 @torch.no_grad()
@@ -99,12 +105,16 @@ def main():
     parser.add_argument(
         "--checkpoint", required=True, help="Path to a Lightning .ckpt file"
     )
-    parser.add_argument("--dataset", default="ballroom", help="mirdata dataset name")
+    parser.add_argument(
+        "--dataset", default=DEFAULTS["dataset"], help="mirdata dataset name"
+    )
     parser.add_argument("--data-home", default=None, help="Defaults to data/<dataset>")
-    parser.add_argument("--split", choices=["train", "val", "all"], default="val")
-    parser.add_argument("--val-split", type=float, default=0.2)
-    parser.add_argument("--sample-rate", type=int, default=22050)
-    parser.add_argument("--hop-length", type=int, default=512)
+    parser.add_argument(
+        "--split", choices=["train", "val", "all"], default=DEFAULTS["split"]
+    )
+    parser.add_argument("--val-split", type=float, default=DEFAULTS["val_split"])
+    parser.add_argument("--sample-rate", type=int, default=DEFAULTS["sample_rate"])
+    parser.add_argument("--hop-length", type=int, default=DEFAULTS["hop_length"])
     parser.add_argument(
         "--binary-only",
         action="store_true",
@@ -113,7 +123,7 @@ def main():
     parser.add_argument(
         "--tolerance",
         type=float,
-        default=0.07,
+        default=DEFAULTS["tolerance"],
         help="F-measure matching window, seconds",
     )
     parser.add_argument(
@@ -127,30 +137,33 @@ def main():
         default=None,
         help="Evaluate only the first N selected tracks",
     )
-    parser.add_argument("--device", default="cpu")
+    parser.add_argument("--device", default=DEFAULTS["device"])
     parser.add_argument(
         "--beat-thresholds",
         type=float,
         nargs="+",
-        default=[0.2, 0.3, 0.4, 0.5, 0.6],
+        default=DEFAULTS["beat_thresholds"],
         help="Passed to pick_peaks as `threshold`",
     )
     parser.add_argument(
         "--min-distance-frames",
         type=int,
         nargs="+",
-        default=[1, 2, 4],
+        default=DEFAULTS["min_distance_frames"],
         help="Passed to pick_peaks as `min_distance`",
     )
     parser.add_argument(
         "--gate-tolerances",
         type=float,
         nargs="+",
-        default=[0.1, 0.15, 0.2, 0.3],
+        default=DEFAULTS["gate_tolerances"],
         help="Passed to gate_periodicity as `tolerance`",
     )
     parser.add_argument(
-        "--top", type=int, default=10, help="Print only the top N combinations"
+        "--top",
+        type=int,
+        default=DEFAULTS["top"],
+        help="Print only the top N combinations",
     )
     parser.add_argument(
         "--output",
@@ -169,7 +182,7 @@ def main():
         binary_only=args.binary_only,
     )
 
-    indices = select_indices(
+    indices = indices_for_split(
         dataset, args.dataset, args.split, args.val_split, args.binary_only
     )
     if args.limit is not None:

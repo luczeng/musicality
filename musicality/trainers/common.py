@@ -9,7 +9,7 @@ from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
 from musicality.augmentations import AugmentedBeatDataset, build_beat_phase_augmenter
-from musicality.loaders.beat_dataset import BeatDataset
+from musicality.loaders.beat_dataset import BeatDataset, beat_split_name
 from musicality.splits.splitter import Splitter
 
 
@@ -51,12 +51,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
 
     _fmt = dataformats.load()
     splits_dir = dataformats.ROOT / _fmt.splits_dir
-    # Namespaced by name/binary_only only (not by which heads the caller
-    # trains) — BeatDataset's filtering, and therefore its length, only
-    # depends on those two things, so beat-phase and beat-only runs over the
-    # same dataset share the exact same held-out split. That makes their eval
-    # numbers directly comparable.
-    dataset_name = f"beat_phase-{cfg.data.name}" + ("-binary" if binary_only else "")
+    dataset_name = beat_split_name(cfg.data.name, binary_only)
 
     train_ds, _ = Splitter(
         train_dataset, splits_dir, dataset_name, cfg.data.val_split

@@ -120,8 +120,8 @@ Hydra configs live in `configs/`:
 
 ## Git Commits
 
-- Only commit once a piece of work is actually done — don't create a commit for every small/incremental change.
-- Commit messages should describe what was added.
+- Do not run `git commit` yourself, under any circumstance — the user makes every commit. A `PostToolUse` hook (`.claude/settings.json`) already auto-formats and `git add`s each changed file, so leave changes staged and stop there.
+- If asked to commit in a specific instance anyway: only commit once a piece of work is actually done — don't create a commit for every small/incremental change — and commit messages should describe what was added.
 
 ## Datasets
 
