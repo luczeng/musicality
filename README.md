@@ -4,7 +4,7 @@
 
 [![Docs](https://img.shields.io/badge/docs-online-blue)](https://luczeng.github.io/musicality/)
 
-A Python library for music analysis via SOTA methods using PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.  
+A Python library for music analysis via SOTA methods using ML, bayesian inference and signal processing. Built using PyTorch, PyTorch Lightning, and Hydra — with desktop and mobile apps for building homemade training data.  
 
 Currently supports:  
 
@@ -20,41 +20,16 @@ uv sync
 uv pip install -e .
 ```
 
-### Fresh machine / remote instance (e.g. vast.ai)
+### quick install
 
-After cloning, with `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `WANDB_API_KEY`
-set in the environment:
+For quick setup on a remote instance, a conveniance script is provided: 
 
 ```bash
 bash tools/setup_remote.sh
 ```
 
-This installs `uv` if missing, syncs dependencies, pulls data from Backblaze via
-[DVC](https://dvc.org), logs in to Weights & Biases, and fetches the `mirdata` index
-for any DVC-pulled dataset (see below for why that last step is needed). Re-running it
-on the same machine is safe.
+This also fetches custom dataset from the remote via DVC (currently on Infomaniak s3). Requirements are to setup env variables `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `WANDB_API_KEY`. The custom datasets might become available on demand.
 
-Under the hood:
-
-- Data is stored via DVC on a remote (S3-compatible, Backblaze-hosted) bucket. DVC's S3
-  backend reads `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` directly from the
-  environment (`uv run dvc pull`, or `uv run dvc pull data/<name>.dvc` for a single
-  dataset).
-- Training logs to Weights & Biases by default (`uv run wandb login "$WANDB_API_KEY"`).
-- `mirdata`'s dataset **index** (small metadata JSON, separate from the audio/annotations
-  themselves) is normally fetched the first time `tools/download_dataset.py` runs. Since
-  DVC pulls the audio directly and skips that step, training would otherwise fail with
-  `FileNotFoundError: This dataset's index must be downloaded` the first time on a new
-  machine.
-
-### Vast.ai instance template
-
-To make a rented instance training-ready with no manual steps, set these once in a
-reusable vast.ai instance template:
-
-- Environment variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `WANDB_API_KEY`.
-- On-start script: clone the repo and run the setup script, e.g.
-  `git clone <repo-url> musicality && cd musicality && bash tools/setup_remote.sh`.
 
 </details>
 
