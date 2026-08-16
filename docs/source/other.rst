@@ -6,3 +6,4 @@ Other
    :recursive:
 
    ~musicality.postprocess
+   ~musicality.inference
