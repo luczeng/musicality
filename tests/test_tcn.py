@@ -97,8 +97,9 @@ class TestFrameLevelMode:
             n_mels=16, channels=8, n_layers=3, n_outputs=3, frame_level=True
         )
         # Push the head's bias out of [0, 1] range to make the assertion meaningful.
+        # frame_head is Sequential(Dropout, Conv1d) — index 1 is the Conv1d.
         with torch.no_grad():
-            model.frame_head.bias.fill_(5.0)
+            model.frame_head[1].bias.fill_(5.0)
         out = model(torch.randn(2, 1, N_SAMPLES))
         assert (out > 1.0).any()
 
