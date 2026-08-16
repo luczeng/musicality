@@ -31,7 +31,13 @@ from PySide6.QtWidgets import (
 )
 
 from .audio import AudioEngine
-from .inference import checkpoint_label, infer_beats, list_checkpoints, load_module
+from .inference import (
+    EVAL_DEFAULTS,
+    checkpoint_label,
+    infer_beats,
+    list_checkpoints,
+    load_module,
+)
 from .recorder import Recorder, _SR as _REC_SR
 from .data import (
     DATA_DIR,
@@ -118,6 +124,7 @@ class MainWindow(QMainWindow):
         self._inferred_beat_positions: np.ndarray | None = None
         self._beat_module = None
         self._beat_module_path = None
+        self._beat_module_task = None
         self._engine = AudioEngine()
         self._recorder = Recorder()
         self._timer = QTimer(self)
@@ -777,10 +784,19 @@ class MainWindow(QMainWindow):
         QApplication.processEvents()
         try:
             if checkpoint_path != self._beat_module_path:
-                self._beat_module = load_module(checkpoint_path)
+                self._beat_module, self._beat_module_task = load_module(checkpoint_path)
                 self._beat_module_path = checkpoint_path
+            task_defaults = EVAL_DEFAULTS[self._beat_module_task]
             beat_times, beat_positions = infer_beats(
-                self._beat_module, self._track_audio, self._track_sr
+                self._beat_module,
+                self._beat_module_task,
+                self._track_audio,
+                self._track_sr,
+                group_size=task_defaults.get("group_size", 4),
+                beat_threshold=task_defaults["beat_threshold"],
+                min_distance_frames=task_defaults["min_distance_frames"],
+                gate_tolerance=task_defaults["gate_tolerance"],
+                anchor_threshold=task_defaults.get("anchor_threshold", 0.5),
             )
         finally:
             QApplication.restoreOverrideCursor()
