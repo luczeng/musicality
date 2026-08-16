@@ -2,6 +2,11 @@ defaults:
   - model: tcn_frames
   - _self_
 
+# Declares which task this config trains, saved into the checkpoint's
+# hyperparameters (BeatPhaseModule) and used by musicality.inference.detect_task
+# to pick the right module class/postprocessing at eval/inference time.
+task: beat_phase
+
 # Positive-class weight for the beat/one/last BCE heads — scalar (shared across
 # heads) or a 3-element list for per-head weights.
 pos_weight: [5,18,18]

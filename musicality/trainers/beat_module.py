@@ -37,6 +37,11 @@ class BeatModule(L.LightningModule):
         for the logged accuracy metric. Defaults to ``True`` since beat frames
         are a small minority and a pooled mean is dominated by the
         true-negative rate.
+    :param task: Saved into the checkpoint's hyperparameters for
+        :func:`~musicality.inference.detect_task` to read back at eval/inference
+        time. Always ``"beat_only"`` for this class; exists as a parameter
+        (rather than hardcoded) so ``configs/beat_only_train.yaml``'s ``task:``
+        field is the visible, single source of truth for what a checkpoint is.
     """
 
     def __init__(
@@ -47,6 +52,7 @@ class BeatModule(L.LightningModule):
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
         balanced: bool = True,
+        task: str = "beat_only",
     ):
         super().__init__()
         self.save_hyperparameters()
