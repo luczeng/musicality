@@ -146,7 +146,7 @@ flag so they load the split that actually corresponds to the dataset they build:
 
 ```bash
 uv run python tools/train_beat.py binary_only=true
-uv run python tools/eval_beat_phase.py --checkpoint <path> --dataset ballroom --binary-only
+uv run python tools/eval_beat.py --checkpoint <path> --dataset ballroom --binary-only
 ```
 
 #### Version splits with DVC
@@ -297,7 +297,8 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 | `tools/train.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
 | `tools/create_splits.py` | Create the train/val splits under `data/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
-| `tools/eval_beat_phase.py` | Evaluate a beat-phase checkpoint on full-length tracks (not the fixed-duration training clips): beat/"1"/"last" F-measure and phase-confusion rate |
+| `tools/eval_beat.py` | Evaluate a beat-only or beat-phase checkpoint (task auto-detected) on full-length tracks (not the fixed-duration training clips): beat F-measure, plus "1"/"last" F-measure and phase-confusion rate for beat-phase checkpoints |
+| `tools/sweep_beat_postprocess.py` | Grid-search postprocessing thresholds (`beat_threshold`/`min_distance_frames`/`gate_tolerance`) for a beat-only checkpoint, scoring each combination by mean beat F-measure |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
@@ -312,7 +313,8 @@ See [Annotation apps](#annotation-apps) above for `tools/annotator/` and
 uv run python tools/train.py
 uv run python tools/train_beat.py
 uv run python tools/create_splits.py
-uv run python tools/eval_beat_phase.py --checkpoint <path-to-ckpt> --dataset ballroom
+uv run python tools/eval_beat.py --checkpoint <path-to-ckpt> --dataset ballroom
+uv run python tools/sweep_beat_postprocess.py --checkpoint <path-to-ckpt> --dataset ballroom
 uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
 uv run python tools/plot_beat_targets.py --dataset ballroom
 uv run python tools/download_dataset.py
