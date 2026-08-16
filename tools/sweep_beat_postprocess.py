@@ -32,10 +32,10 @@ import torch
 import yaml
 
 import musicality.dataformats as dataformats
+from musicality.inference import load_module, load_track_waveform
 from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
 from musicality.metrics.f_measure import beat_f_measure
 from musicality.postprocess import readout_beat_only
-from tools.eval_beat_only import load_module, load_track_waveform
 
 DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 
@@ -189,9 +189,13 @@ def main():
         indices = indices[: args.limit]
 
     device = torch.device(args.device)
-    module = load_module(args.checkpoint, device)
-    module.eval()
-    module.to(device)
+    module, task = load_module(args.checkpoint, device)
+    if task != "beat_only":
+        raise SystemExit(
+            f"tools/sweep_beat_postprocess.py only supports beat-only checkpoints "
+            f"(its grid and readout_beat_only() call are beat-only-specific) — "
+            f"got task={task!r}. Use tools/eval_beat.py for beat-phase checkpoints."
+        )
 
     print(
         f"[sweep_postprocess] caching frame probabilities for {len(indices)} "
