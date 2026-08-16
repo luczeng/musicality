@@ -1,10 +1,10 @@
 """On-demand beat inference for the annotator, using a trained beat-phase checkpoint.
 
-Loads a :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule` from a
-Lightning checkpoint and decodes its per-frame beat/one/last probability
-curves into beat timestamps + bar positions via
-:func:`~musicality.postprocess.readout`, at the same sample rate / hop length
-the model was trained with.
+Loads a :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule` via
+:func:`musicality.inference.load_module` and decodes its per-frame
+beat/one/last probability curves into beat timestamps + bar positions via
+:func:`musicality.inference.run_inference`, at the same sample rate / hop
+length the model was trained with.
 """
 
 from __future__ import annotations
@@ -15,13 +15,24 @@ from pathlib import Path
 import numpy as np
 import torch
 import torchaudio.transforms as T
+import yaml
 
-from musicality.postprocess import readout
+import musicality.dataformats as dataformats
+from musicality.inference import load_module, run_inference
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
 CHECKPOINT_ROOT = Path(__file__).parent.parent.parent / "checkpoints_beat"
 SAMPLE_RATE = 22050
 HOP_LENGTH = 512
+
+# Per-task tuned postprocessing defaults — same file tools/eval_beat.py reads.
+# Only "beat_phase" is used today (CHECKPOINT_ROOT only ever discovers
+# beat-phase checkpoints), but this stays a genuine task lookup rather than a
+# hardcoded block so it doesn't need revisiting if checkpoint discovery is
+# ever widened to include beat-only checkpoints too.
+EVAL_DEFAULTS = yaml.safe_load(
+    (dataformats.ROOT / "configs" / "eval_beat.yaml").read_text()
+)
 
 _LOSS_RE = re.compile(r"loss=(\d+\.\d+)")
 
@@ -54,17 +65,6 @@ def checkpoint_label(path: Path, root: Path = CHECKPOINT_ROOT) -> str:
     return str(rel.with_suffix(""))
 
 
-def load_module(checkpoint_path: Path, device: str = "cpu") -> BeatPhaseModule:
-    """Load a :class:`BeatPhaseModule` from *checkpoint_path* in eval mode."""
-
-    module = BeatPhaseModule.load_from_checkpoint(
-        str(checkpoint_path), map_location=device, weights_only=False
-    )
-    module.eval()
-
-    return module
-
-
 def _fill_positions(labels: list[int | None], group_size: int) -> np.ndarray:
     """Back-fill leading unresolved (``None``) bar-position labels.
 
@@ -92,6 +92,7 @@ def _fill_positions(labels: list[int | None], group_size: int) -> np.ndarray:
 @torch.no_grad()
 def infer_beats(
     module: BeatPhaseModule,
+    task: str,
     audio: np.ndarray,
     sr: int,
     group_size: int = 4,
@@ -103,28 +104,36 @@ def infer_beats(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run *module* on a full track and decode beat times + bar positions.
 
-    :param module: A loaded, eval-mode :class:`BeatPhaseModule` (see :func:`load_module`).
+    :param module: A loaded, eval-mode :class:`BeatPhaseModule` (see
+        :func:`musicality.inference.load_module`).
+    :param task: Must be ``"beat_phase"`` — the annotator only displays bar
+        positions, which a beat-only checkpoint has no concept of.
     :param audio: Mono float32 waveform.
     :param sr: Sample rate of *audio* — resampled to :data:`SAMPLE_RATE` if it differs.
     :param group_size: Beats per group the model's "one"/"last" heads were trained
         against — ``4`` for bar position (the current checkpoints' convention).
     :returns: ``(beat_times, beat_positions)`` — seconds and 1-indexed bar
         positions, following the same convention as manually annotated beats.
+    :raises ValueError: *task* isn't ``"beat_phase"``.
     """
+
+    if task != "beat_phase":
+        raise ValueError(
+            f"The annotator's beat inference only supports beat-phase "
+            f"checkpoints (it displays bar positions) — got task={task!r}."
+        )
 
     wav = torch.from_numpy(np.asarray(audio, dtype=np.float32)).unsqueeze(0)  # (1, N)
     if sr != SAMPLE_RATE:
         wav = T.Resample(sr, SAMPLE_RATE)(wav)
 
-    logits = module(wav.unsqueeze(0).to(device))  # (1, 3, T')
-    probs = torch.sigmoid(logits)[0].cpu().numpy()  # (3, T')
     fps = SAMPLE_RATE / HOP_LENGTH
-
-    events = readout(
-        probs[0],
-        probs[1],
-        probs[2],
-        fps=fps,
+    events = run_inference(
+        module,
+        task,
+        wav,
+        fps,
+        device,
         beat_threshold=beat_threshold,
         min_distance_frames=min_distance_frames,
         gate_tolerance=gate_tolerance,
