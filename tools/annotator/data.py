@@ -418,6 +418,43 @@ def has_mirdata_annotation(dataset_name: str, track_id: str) -> bool:
         return False
 
 
+def annotation_meter_label(dataset_name: str, track_id: str) -> str:
+    """Return a concise "1..N" summary of a track's beat-position resolution.
+
+    N is the highest 1-indexed bar position seen, e.g. "1..4" for a track
+    annotated at full-bar resolution or "1..2" for one annotated at half-bar
+    (cut-time) resolution. Mirrors load_track()'s own precedence: a saved
+    .beats file (default annotator slot) wins over the dataset's built-in
+    mirdata annotation.
+
+    Returns "" if there's no beat annotation at all, "•" if beats exist but
+    carry no bar-position channel (bare timestamps only).
+    """
+    ann_path = (
+        _annotations_slot_dir(dataset_name, None)
+        / f"{track_id}{dataformats.FORMAT.beats_suffix}"
+    )
+    if ann_path.exists():
+        _, positions = _read_beats_file(ann_path)
+    elif (DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname).is_dir():
+        return ""  # custom dataset, no saved annotation, no mirdata fallback
+    else:
+        try:
+            ds = mirdata.initialize(
+                dataset_name, data_home=str(DATA_DIR / dataset_name)
+            )
+            beats = ds.track(track_id).beats
+        except Exception:
+            return ""
+        if beats is None or len(beats.times) == 0:
+            return ""
+        positions = getattr(beats, "positions", None)
+
+    if positions is None or len(positions) == 0:
+        return "•"
+    return f"1..{int(max(positions))}"
+
+
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
     tracks_dir = DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname

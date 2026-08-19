@@ -47,6 +47,7 @@ from .data import (
     active_bar_index,
     active_beat_position,
     add_beat,
+    annotation_meter_label,
     annotation_path,
     bar_indices,
     beats_per_bar,
@@ -501,11 +502,12 @@ class MainWindow(QMainWindow):
         sort_bar.addWidget(self._dataset_sort_combo)
 
         self._dataset_tree = QTreeWidget()
-        self._dataset_tree.setColumnCount(3)
+        self._dataset_tree.setColumnCount(4)
         self._dataset_tree.header().hide()
         self._dataset_tree.setColumnWidth(0, 320)
         self._dataset_tree.setColumnWidth(1, 18)
         self._dataset_tree.setColumnWidth(2, 18)
+        self._dataset_tree.setColumnWidth(3, 36)
         self._dataset_tree.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -676,18 +678,26 @@ class MainWindow(QMainWindow):
     def _set_annotation_indicator(
         item: QTreeWidgetItem, dataset_name: str, track_id: str
     ) -> None:
+        item.setToolTip(1, "Has a built-in mirdata annotation")
         if has_mirdata_annotation(dataset_name, track_id):
             item.setText(1, "●")
             item.setForeground(1, QColor("#44cc44"))
         else:
             item.setText(1, "✕")
             item.setForeground(1, QColor("#cc4444"))
+        item.setToolTip(2, "Has a saved annotation from this app")
         if has_annotation(dataset_name, track_id):
             item.setText(2, "●")
             item.setForeground(2, QColor("#44cc44"))
         else:
             item.setText(2, "✕")
             item.setForeground(2, QColor("#cc4444"))
+        item.setToolTip(
+            3,
+            "Annotated meter (1..N bar positions) — "
+            "• for beats with no position data, blank for no annotation",
+        )
+        item.setText(3, annotation_meter_label(dataset_name, track_id))
 
     def _update_annotation_indicator(self) -> None:
         """Refresh the ●/✕ for the currently loaded track without rebuilding the tree."""
