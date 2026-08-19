@@ -7,7 +7,7 @@ from a phone are indistinguishable from ones made in the desktop app.
 
 from __future__ import annotations
 
-import tempfile
+import io
 from pathlib import Path
 
 import librosa
@@ -79,20 +79,23 @@ async def upload_track(
     dataset: str, file: UploadFile = File(...), name: str | None = Form(None)
 ) -> dict[str, str]:
     raw = await file.read()
-    suffix = Path(file.filename or "").suffix
     try:
-        # librosa can't decode compressed formats (webm/opus, mp4/aac — what
-        # real phones record) straight from a BytesIO: soundfile doesn't
-        # support those containers, and its audioread/ffmpeg fallback shells
-        # out to the ffmpeg binary, which needs a real path, not a stream.
-        with tempfile.NamedTemporaryFile(suffix=suffix) as tmp:
-            tmp.write(raw)
-            tmp.flush()
-            audio, _ = librosa.load(tmp.name, sr=_SR, mono=True)
+        # app.js always uploads a WAV — raw PCM captured via Web Audio, no
+        # compressed container — so soundfile reads it directly from memory;
+        # no ffmpeg/tempfile fallback needed. This also means the endpoint
+        # fails loudly on anything else instead of silently limping through
+        # a codec-decode fallback.
+        audio, sr = sf.read(io.BytesIO(raw), dtype="float32")
     except Exception as exc:
         raise HTTPException(
             status_code=400, detail=f"could not decode audio: {exc}"
         ) from exc
+
+    if audio.ndim > 1:
+        audio = audio.mean(axis=1)  # mixdown, in case a future client sends stereo
+
+    if sr != _SR:
+        audio = librosa.resample(audio, orig_sr=sr, target_sr=_SR).astype(np.float32)
 
     track_id = sanitize_track_name(name) if name else generate_track_id()
     tracks_dir = annotator_data.DATA_DIR / dataset / dataformats.FORMAT.tracks_dirname

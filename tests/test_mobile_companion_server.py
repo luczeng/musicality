@@ -23,6 +23,17 @@ def _wav_bytes(duration_s: float = 0.5, sr: int = 22050) -> bytes:
     return buf.getvalue()
 
 
+def _stereo_wav_bytes(duration_s: float = 0.5, sr: int = 44100) -> bytes:
+    """Synthetic 2-channel WAV, to exercise the mono mixdown branch."""
+    t = np.linspace(0, duration_s, int(duration_s * sr), endpoint=False)
+    left = 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
+    right = 0.5 * np.sin(2 * np.pi * 220 * t).astype(np.float32)
+    audio = np.stack([left, right], axis=1)
+    buf = io.BytesIO()
+    sf.write(buf, audio, sr, format="WAV")
+    return buf.getvalue()
+
+
 class TestHealth:
     def test_returns_200(self):
         response = client.get("/health")
@@ -100,6 +111,31 @@ class TestUploadTrack:
         audio, sr = sf.read(str(out_path))
         assert sr == 44100
         assert len(audio) == pytest.approx(0.5 * 44100, abs=100)
+
+    def test_mixes_down_stereo_to_mono(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _stereo_wav_bytes(), "audio/wav")},
+            data={"name": "take1"},
+        )
+        out_path = tmp_path / "field_recordings" / "tracks" / "take1.wav"
+        audio, _ = sf.read(str(out_path))
+        assert audio.ndim == 1
+
+    def test_no_resample_when_already_target_rate(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={
+                "file": ("clip.wav", _wav_bytes(duration_s=0.5, sr=44100), "audio/wav")
+            },
+            data={"name": "take1"},
+        )
+        out_path = tmp_path / "field_recordings" / "tracks" / "take1.wav"
+        audio, sr = sf.read(str(out_path))
+        assert sr == 44100
+        assert len(audio) == int(0.5 * 44100)
 
     def test_missing_name_generates_track_id(self, monkeypatch, tmp_path):
         monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
