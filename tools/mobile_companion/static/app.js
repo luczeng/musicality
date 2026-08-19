@@ -48,15 +48,21 @@ const tapLastEl = document.getElementById("tap-last");
 const tapRecentEl = document.getElementById("tap-recent");
 const tapAllEl = document.getElementById("tap-all");
 
-let mediaRecorder = null;
-let mediaStream = null;
-let recordedChunks = [];
-let recordedBlob = null;
-let recordStartTime = null;
-let recordDurationS = null;
-let tapTimestampsMs = [];
-
 let audioCtx = null;
+let workletModulePromise = null;
+let mediaStream = null;
+let sourceNode = null;
+let workletNode = null;
+let silentGainNode = null;
+let pcmChunks = [];
+let recordSampleRate = null;
+let recordedSamples = null;
+let recordedBlob = null;
+let recordDurationS = null;
+let recording = false;
+let recordStartCtxTime = null;
+let tapTimesS = [];
+let flushResolve = null;
 let listenSourceNodes = [];
 let listening = false;
 
@@ -146,11 +152,10 @@ function std(values, avg) {
 
 // Shared with the save handler below, so the mean/median/std persisted as
 // track metadata are exactly the "All" figures the user saw on screen.
-function tapBpmStats(timestampsMs) {
+function tapBpmStats(timesS) {
   const tempos = [];
-  for (let i = 1; i < timestampsMs.length; i++) {
-    const intervalS = (timestampsMs[i] - timestampsMs[i - 1]) / 1000;
-    tempos.push(60 / intervalS);
+  for (let i = 1; i < timesS.length; i++) {
+    tempos.push(60 / (timesS[i] - timesS[i - 1]));
   }
   const valid = tempos.slice(WARMUP);
   if (valid.length === 0) return null;
@@ -160,9 +165,9 @@ function tapBpmStats(timestampsMs) {
 }
 
 function renderTapStats() {
-  tapCountEl.textContent = `N: ${tapTimestampsMs.length}`;
+  tapCountEl.textContent = `N: ${tapTimesS.length}`;
 
-  const stats = tapBpmStats(tapTimestampsMs);
+  const stats = tapBpmStats(tapTimesS);
   if (!stats) {
     tapLastEl.textContent = "Last: —";
     tapRecentEl.textContent = `Recent (${RECENT_N}): —`;
@@ -182,7 +187,7 @@ function renderTapStats() {
 }
 
 function resetTapState() {
-  tapTimestampsMs = [];
+  tapTimesS = [];
   renderTapStats();
 }
 
@@ -192,54 +197,112 @@ async function refreshPendingCount() {
 }
 
 async function startRecording() {
-  mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  recordedChunks = [];
-  mediaRecorder = new MediaRecorder(mediaStream);
-  mediaRecorder.ondataavailable = (event) => {
-    if (event.data.size > 0) recordedChunks.push(event.data);
-  };
-  mediaRecorder.onstop = () => {
-    recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
-    saveBtn.disabled = false;
-    listenBtn.disabled = false;
-    mediaStream.getTracks().forEach((track) => track.stop());
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextCtor || !("audioWorklet" in AudioContextCtor.prototype)) {
+    throw new Error(
+      "This browser doesn't support AudioWorklet — recording needs iOS Safari 14.5+ or a recent Chrome/Android."
+    );
+  }
+
+  const ctx = getAudioContext();
+  await ctx.resume();
+  await ensureWorkletLoaded(ctx);
+
+  // AGC/EC/NS off: this is a tempo-annotation source, not a call signal.
+  // Browsers' WebRTC audio-processing pipeline (used for AGC/EC/NS) adds
+  // its own extra buffering/latency on top of raw passthrough — disabling
+  // it also reduces the very kind of variable latency this pipeline exists
+  // to eliminate, not just matches desktop's unprocessed capture.
+  mediaStream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+  });
+
+  sourceNode = ctx.createMediaStreamSource(mediaStream);
+  workletNode = new AudioWorkletNode(ctx, "pcm-capture-processor", {
+    numberOfInputs: 1,
+    numberOfOutputs: 1, // + silent gain below — an output-less worklet risks
+    outputChannelCount: [1], // not being reliably pulled in some browsers
+    channelCount: 1,
+    channelCountMode: "explicit",
+  });
+  silentGainNode = ctx.createGain();
+  silentGainNode.gain.value = 0;
+
+  pcmChunks = [];
+  workletNode.port.onmessage = (event) => {
+    if (event.data.type === "chunk") {
+      pcmChunks.push(event.data.samples);
+    } else if (event.data.type === "flushed") {
+      flushResolve?.();
+      flushResolve = null;
+    }
   };
 
+  sourceNode.connect(workletNode);
+  workletNode.connect(silentGainNode);
+  silentGainNode.connect(ctx.destination);
+
   if (listening) stopListening();
-  recordStartTime = performance.now();
   resetTapState();
   recordedBlob = null;
+  recordedSamples = null;
   saveBtn.disabled = true;
   listenBtn.disabled = true;
 
-  mediaRecorder.start();
+  recordSampleRate = ctx.sampleRate;
+  recordStartCtxTime = ctx.currentTime;
   recordBtn.textContent = "■ Stop";
   tapBtn.disabled = false;
   statusEl.textContent = "Recording…";
 }
 
-function stopRecording() {
-  mediaRecorder.stop();
-  recordDurationS = (performance.now() - recordStartTime) / 1000;
+async function stopRecording() {
+  await new Promise((resolve) => {
+    flushResolve = resolve;
+    workletNode.port.postMessage({ type: "flush" });
+  });
+
+  sourceNode.disconnect();
+  workletNode.disconnect();
+  silentGainNode.disconnect();
+  mediaStream.getTracks().forEach((track) => track.stop());
+
+  const totalSamples = pcmChunks.reduce((n, c) => n + c.length, 0);
+  const samples = new Float32Array(totalSamples);
+  let offset = 0;
+  for (const chunk of pcmChunks) {
+    samples.set(chunk, offset);
+    offset += chunk.length;
+  }
+  pcmChunks = [];
+
+  recordedSamples = samples;
+  recordDurationS = totalSamples / recordSampleRate;
+  recordedBlob = encodeWavPCM16(samples, recordSampleRate);
+
   recordBtn.textContent = "● Record";
   tapBtn.disabled = true;
+  saveBtn.disabled = false;
+  listenBtn.disabled = false;
   statusEl.textContent = "Recording stopped. Review taps, then Save.";
 }
 
 recordBtn.addEventListener("click", async () => {
-  if (mediaRecorder && mediaRecorder.state === "recording") {
-    stopRecording();
+  if (recording) {
+    recording = false;
+    await stopRecording();
     return;
   }
   try {
     await startRecording();
+    recording = true;
   } catch (err) {
     statusEl.textContent = `Could not access microphone: ${err.message}`;
   }
 });
 
 tapBtn.addEventListener("click", () => {
-  tapTimestampsMs.push(performance.now());
+  tapTimesS.push(getAudioContext().currentTime - recordStartCtxTime);
   renderTapStats();
 });
 
@@ -248,6 +311,50 @@ function getAudioContext() {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
   return audioCtx;
+}
+
+// addModule() only needs to run once per context — cached here so repeated
+// record/stop cycles within one page session don't re-register it.
+function ensureWorkletLoaded(ctx) {
+  if (!workletModulePromise) {
+    workletModulePromise = ctx.audioWorklet.addModule("/static/pcm-capture-processor.js");
+  }
+  return workletModulePromise;
+}
+
+// Encodes mono Float32 PCM ([-1, 1]) as a 16-bit PCM WAV Blob. Hand-rolled
+// since this is a vanilla-JS PWA with no bundler/dependency tooling.
+function encodeWavPCM16(samples, sampleRate) {
+  const bytesPerSample = 2;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset, str) => {
+    for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+  };
+
+  writeString(0, "RIFF");
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, "WAVE");
+  writeString(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, 1, true); // mono
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * bytesPerSample, true);
+  view.setUint16(32, bytesPerSample, true);
+  view.setUint16(34, 16, true); // bits per sample
+  writeString(36, "data");
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
+  }
+
+  return new Blob([buffer], { type: "audio/wav" });
 }
 
 // Synthesizes a short decaying sine "tick" rather than shipping a click
@@ -303,12 +410,13 @@ function stopListening() {
 // every tap, cycling 1..8 with beat 1 accented — no visualization, audio
 // only, so the annotator can check taps landed on the beat by ear.
 async function startListening() {
-  if (!recordedBlob) return;
+  if (!recordedSamples || !recordSampleRate) return;
 
   const ctx = getAudioContext();
   await ctx.resume();
 
-  const audioBuffer = await ctx.decodeAudioData(await recordedBlob.arrayBuffer());
+  const audioBuffer = ctx.createBuffer(1, recordedSamples.length, recordSampleRate);
+  audioBuffer.copyToChannel(recordedSamples, 0);
   const accentClick = makeClickBuffer(ctx, { freqHz: 1800, durationS: 0.07 });
   const regularClick = makeClickBuffer(ctx, { freqHz: 1000, durationS: 0.05 });
 
@@ -351,8 +459,7 @@ async function startListening() {
   };
   listenSourceNodes.push(trackSource);
 
-  tapTimestampsMs.forEach((tsMs, i) => {
-    const offsetS = (tsMs - recordStartTime) / 1000;
+  tapTimesS.forEach((offsetS, i) => {
     if (offsetS < 0) return;
 
     const position = (i % BEATS_PER_CYCLE) + 1;
@@ -390,8 +497,7 @@ saveBtn.addEventListener("click", async () => {
   }
   const trackName = trackNameInput.value.trim();
   const device = deviceInput.value.trim();
-  const tapTimesS = tapTimestampsMs.map((t) => (t - recordStartTime) / 1000);
-  const bpmStats = tapBpmStats(tapTimestampsMs);
+  const bpmStats = tapBpmStats(tapTimesS);
 
   if (device) localStorage.setItem(DEVICE_STORAGE_KEY, device);
 
@@ -409,6 +515,7 @@ saveBtn.addEventListener("click", async () => {
 
   if (listening) stopListening();
   recordedBlob = null;
+  recordedSamples = null;
   recordDurationS = null;
   saveBtn.disabled = true;
   listenBtn.disabled = true;
@@ -535,6 +642,15 @@ flushBtn.addEventListener("click", async () => {
 loadDatasetOptions();
 refreshPendingCount();
 renderTapStats();
+
+// Best-effort preload so the worklet module is already loaded by the time
+// the user hits Record — not required for correctness, startRecording()
+// awaits ensureWorkletLoaded() itself regardless.
+try {
+  ensureWorkletLoaded(getAudioContext());
+} catch {
+  // Unsupported browser — startRecording() will surface the real error.
+}
 
 // Opportunistic sync on load — iOS Safari's Background Sync API is
 // unreliable, so a manual Sync button (above) has to remain the primary

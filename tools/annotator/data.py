@@ -491,7 +491,7 @@ def load_track(
         dataset_name=dataset_name,
         track_id=track_id,
         audio_path=track.audio_path,
-        tempo=track.tempo,
+        tempo=getattr(track, "tempo", None),
         beat_times=beat_times,
         beat_positions=beat_positions,
         annotator_id=annotator_id,

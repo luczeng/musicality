@@ -2,7 +2,7 @@
 // small fixes, minor for new features, major for breaking/large changes).
 // This same string is shown on the homepage footer, so a stale page is
 // visibly out of sync with the version checked into this file.
-const APP_VERSION = "12.4.1";
+const APP_VERSION = "13.0.0";
 const CACHE_NAME = `musicality-mobile-companion-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
@@ -11,6 +11,7 @@ const APP_SHELL = [
   "/static/icon-512.png",
   "/static/app.js",
   "/static/queue.js",
+  "/static/pcm-capture-processor.js",
 ];
 
 // cache.addAll() is atomic — one failed fetch (e.g. the server restarting
