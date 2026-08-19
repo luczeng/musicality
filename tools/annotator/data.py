@@ -97,6 +97,22 @@ def tempo_from_beats(beat_times: np.ndarray) -> float | None:
     return 60.0 / median_interval
 
 
+def _coerce_tempo(value) -> float | None:
+    """Coerce a mirdata Track's tempo to float.
+
+    Most datasets already return a float, but some (e.g. rwc_popular) return
+    the raw metadata string ('135') instead of casting it, which would
+    otherwise blow up formatting code (e.g. an f-string ``:.1f`` spec)
+    downstream.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def beats_per_bar(
     beat_positions: np.ndarray | None, default: int = DEFAULT_N_BEATS
 ) -> int:
@@ -528,7 +544,7 @@ def load_track(
         dataset_name=dataset_name,
         track_id=track_id,
         audio_path=track.audio_path,
-        tempo=getattr(track, "tempo", None),
+        tempo=_coerce_tempo(getattr(track, "tempo", None)),
         beat_times=beat_times,
         beat_positions=beat_positions,
         annotator_id=annotator_id,

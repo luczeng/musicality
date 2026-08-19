@@ -550,16 +550,25 @@ class MainWindow(QMainWindow):
         self._n_beats = beats_per_bar(self._track.beat_positions, default=self._n_beats)
         self._sync_count_buttons()
 
-        self._update_info_label()
-        self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
-
         # Inferred beats belong to the previous track's audio — clear them.
         self._inferred_beat_times = np.array([])
         self._inferred_beat_positions = None
         self._inferred_waveform.set_beats(np.array([]), None)
         self._inferred_container.setVisible(False)
 
+        # Swap in this track's audio/waveform/beats before any code below that
+        # reads per-track display fields (info label, metadata panel) — so a
+        # bad field on this particular track (e.g. a non-numeric tempo from
+        # mirdata) can't leave playback silently stuck on the previous track.
+        audio, sr = librosa.load(self._track.audio_path, sr=None, mono=True)
+        self._track_audio = audio
+        self._track_sr = sr
+        self._engine.load(audio, sr)
+        self._waveform.set_waveform(audio, sr)
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+        self._inferred_waveform.set_waveform(audio, sr)
+        self._update_engine_clicks()
+
         self._metronome.set_state(self._n_beats, None)
         self._tap_widget.reset()
         metadata = load_metadata(self._dataset_name, track_id) or TrackMetadata()
@@ -571,13 +580,8 @@ class MainWindow(QMainWindow):
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
 
-        audio, sr = librosa.load(self._track.audio_path, sr=None, mono=True)
-        self._track_audio = audio
-        self._track_sr = sr
-        self._engine.load(audio, sr)
-        self._waveform.set_waveform(audio, sr)
-        self._inferred_waveform.set_waveform(audio, sr)
-        self._update_engine_clicks()
+        self._update_info_label()
+        self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
 
     def _populate_dataset_list(self, *, keep_selection: bool = False) -> None:
         selected_dataset = self._dataset_name if keep_selection else None
