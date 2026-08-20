@@ -23,14 +23,15 @@ uv pip install -e .
 : "${WANDB_API_KEY:?Set WANDB_API_KEY before running this script}"
 
 repo_root="$PWD"
+db_dir="$(uv run python -c 'import yaml; from pathlib import Path; print(Path(yaml.safe_load(open("configs/download.yaml"))["data_home"]).resolve())')"
 
 echo "Pulling data from musicality_db..."
-if [ -d ../musicality_db/.git ]; then
-    git -C ../musicality_db pull
+if [ -d "$db_dir/.git" ]; then
+    git -C "$db_dir" pull
 else
-    git clone https://github.com/luczeng/musicality_db.git ../musicality_db
+    git clone https://github.com/luczeng/musicality_db.git "$db_dir"
 fi
-(cd ../musicality_db && "$repo_root/.venv/bin/dvc" pull)
+(cd "$db_dir" && uv run --project "$repo_root" dvc pull)
 
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"

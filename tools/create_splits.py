@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Create train/val splits for datasets in data/, saved under data/splits/.
+"""Create train/val splits for datasets in the configured data directory,
+saved under its splits subdirectory (``data_dir``/``splits_dir`` in
+``musicality/dataformats/dataformat.yaml``).
 
 These files are what Splitter.run() reads at train/eval time — it never
 generates a split itself, so the files here are the ground truth. They're
@@ -62,7 +64,7 @@ def main():
         "--datasets",
         nargs="+",
         default=None,
-        help="Dataset names to split (default: all datasets found in data/)",
+        help=f"Dataset names to split (default: all datasets found in {DATA_DIR}/)",
     )
     parser.add_argument(
         "--val-split",
@@ -96,7 +98,7 @@ def main():
     )
 
     if not names:
-        print("No recognised mirdata datasets found in data/.")
+        print(f"No recognised mirdata datasets found in {DATA_DIR}/.")
         return
 
     beat_phase_name_suffix = "-binary" if args.binary_only else ""

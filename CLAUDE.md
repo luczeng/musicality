@@ -125,7 +125,7 @@ Hydra configs live in `configs/`:
 
 ## Datasets
 
-Downloaded data lives in `data/`. Supported datasets (via `mirdata`): ballroom, brid, hainsworth, rwc_classical, rwc_jazz, rwc_popular, groove_midi, guitarset.
+Downloaded data lives in the directory configured by `data_dir` in `musicality/dataformats/dataformat.yaml` (currently `../musicality_db/`, a sibling git+dvc repo — see `tools/setup_remote.sh`). Supported datasets (via `mirdata`): ballroom, brid, hainsworth, rwc_classical, rwc_jazz, rwc_popular, groove_midi, guitarset.
 
 ## Dependencies
 

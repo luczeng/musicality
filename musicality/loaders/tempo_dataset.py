@@ -22,7 +22,8 @@ class TempoDataset(Dataset):
     Preprocessing (e.g. mel transform) is left to the model.
 
     :param name: mirdata dataset name (e.g. ``"brid"``, ``"ballroom"``).
-    :param data_home: Path to the dataset directory. Defaults to ``data/<name>``.
+    :param data_home: Path to the dataset directory. Defaults to
+        ``DATA_DIR/<name>`` (``DATA_DIR`` from :mod:`musicality.dataformats`).
     :param sample_rate: Target sample rate. Audio is resampled if needed.
     :param duration: Clip duration in seconds. Longer clips are truncated,
         shorter clips are zero-padded.

@@ -1,7 +1,7 @@
 # Mobile Field Capture Companion
 
 An offline-first PWA + FastAPI backend for recording audio and tapping tempo
-from a phone, syncing captures into the same `data/{dataset}/tracks/` +
+from a phone, syncing captures into the same `../musicality_db/{dataset}/tracks/` +
 `annotations/*.beats` structure `tools/annotator` reads. See
 `docs/mobilecompanionfeasibility.md` for the design rationale.
 

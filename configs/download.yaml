@@ -1,4 +1,4 @@
-data_home: data
+data_home: ../musicality_db
 datasets:
   - ballroom
   - brid
@@ -9,4 +9,4 @@ datasets:
   - groove_midi
   - guitarset
   # gtzan_genre: audio hosted at opihi.cs.uvic.ca is a dead link.
-  # Download manually from Marsyas or Kaggle and place in data/gtzan_genre/.
+  # Download manually from Marsyas or Kaggle and place under data_home/gtzan_genre/ (above).

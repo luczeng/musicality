@@ -37,15 +37,18 @@ This also fetches custom dataset from the remote via DVC (currently on Infomania
 <summary><b>Datasets</b></summary>
 
 Training data comes from two sources, both read identically by every loader/tool in
-this repo:
+this repo, and both stored under the data directory configured by `data_dir` in
+[`musicality/dataformats/dataformat.yaml`](musicality/dataformats/dataformat.yaml)
+(currently `../musicality_db` — a sibling git+dvc repo, cloned by `tools/setup_remote.sh`):
 
 - **mirdata datasets** — publicly available beat/tempo-annotated datasets (ballroom,
   brid, hainsworth, rwc_classical, rwc_jazz, rwc_popular, groove_midi, guitarset),
   fetched via [mirdata](https://mirdata.readthedocs.io).
 - **Homemade datasets** — audio recorded and beat-tapped by hand with the annotation
   apps below (e.g. a `swing` dataset of hand-recorded dance tracks). These live under
-  `data/<name>/tracks/` (audio) and `data/<name>/annotations/*.beats` (tapped beats),
-  a plain directory layout rather than a mirdata dataset definition.
+  `../musicality_db/<name>/tracks/` (audio) and
+  `../musicality_db/<name>/annotations/*.beats` (tapped beats), a plain directory
+  layout rather than a mirdata dataset definition.
 
 ### Data format
 
@@ -58,12 +61,12 @@ for the full field list and layout details.
 ### Splits
 
 Train/val splits should be precomputed and stored as plain index lists under
-`data/splits/<name>/{train,val}.txt`, read by `Splitter.run()` at train/eval time.
-Note: at train time,  if `data/splits/<name>/` is missing, training
-crashes with `FileNotFoundError`. To create a split:
+`../musicality_db/splits/<name>/{train,val}.txt`, read by `Splitter.run()` at
+train/eval time. Note: at train time, if `../musicality_db/splits/<name>/` is
+missing, training crashes with `FileNotFoundError`. To create a split:
 
 ```bash
-uv run python tools/create_splits.py                          # every dataset in data/
+uv run python tools/create_splits.py                          # every dataset in ../musicality_db/
 uv run python tools/create_splits.py --datasets ballroom brid  # just these
 uv run python tools/create_splits.py --val-split 0.15 --force  # custom split, overwrite
 ```
@@ -79,16 +82,24 @@ beat-phase split:
 
 #### Version splits with DVC
 
+Splits are versioned in the separate [musicality_db](https://github.com/luczeng/musicality_db)
+repo alongside the datasets themselves, not in this repo — `uv run --project .`
+below reuses this repo's venv (which has `dvc` installed) while running the
+command against `../musicality_db`:
+
 ```bash
-uv run dvc add data/splits
-git add data/splits.dvc data/.gitignore
+cd ../musicality_db
+uv run --project ../musicality dvc add splits
+git add splits.dvc .gitignore
 git commit -m "Version train/val splits"
-uv run dvc push
+uv run --project ../musicality dvc push
+cd -
 ```
 
-On another machine, `dvc pull` (see [Fresh machine](#fresh-machine--remote-instance-eg-vastai)
-above) fetches the exact same split files, so training and evaluation line up across
-machines instead of each generating its own split locally.
+On another machine, `tools/setup_remote.sh` (or a manual `dvc pull` in
+`../musicality_db`) fetches the exact same split files, so training and
+evaluation line up across machines instead of each generating its own split
+locally.
 
 </details>
 
@@ -124,7 +135,7 @@ uv run python -m tools.annotator --dataset ballroom --track Media-105901
 
 `tools/mobile_companion/` — an offline-first PWA + FastAPI backend for recording
 audio and tapping tempo from a phone, syncing captures into the same
-`data/<dataset>/tracks/` + `annotations/*.beats` structure the desktop annotator
+`../musicality_db/<dataset>/tracks/` + `annotations/*.beats` structure the desktop annotator
 reads. Useful for field recordings (e.g. live dancing) away from a laptop. See
 `tools/mobile_companion/README.md` for setup, including remote HTTPS access via
 Tailscale.
@@ -224,7 +235,7 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 |---|---|
 | `tools/train.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
-| `tools/create_splits.py` | Create the train/val splits under `data/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
+| `tools/create_splits.py` | Create the train/val splits under `../musicality_db/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
 | `tools/eval_beat.py` | Evaluate a beat-only or beat-phase checkpoint (task auto-detected) on full-length tracks (not the fixed-duration training clips): beat F-measure, plus "1"/"last" F-measure and phase-confusion rate for beat-phase checkpoints |
 | `tools/sweep_beat_postprocess.py` | Grid-search postprocessing thresholds (`beat_threshold`/`min_distance_frames`/`gate_tolerance`) for a beat-only checkpoint, scoring each combination by mean beat F-measure |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""List datasets present in the data/ directory with their mirdata annotation types."""
+"""List datasets present in the configured data directory (``data_dir`` in
+``musicality/dataformats/dataformat.yaml``) with their mirdata annotation types."""
 
 from pathlib import Path
 

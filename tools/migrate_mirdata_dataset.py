@@ -17,7 +17,7 @@ needed. Some datasets need a couple lines in DATASET_CONFIGS below instead:
 either their mirdata Track class exposes audio under a different attribute
 name (e.g. guitarset's audio_mic_path), or the on-disk layout was flattened
 after download and doesn't match mirdata's own index (e.g. this repo's
-rwc_jazz has audio sitting flat as data/rwc_jazz/audio/RWC_J001.wav rather
+rwc_jazz has audio sitting flat as rwc_jazz/audio/RWC_J001.wav rather
 than the nested rwc-j-m01/1.wav mirdata's index expects) — in which case
 this tool falls back to locating the actual file by matching its trailing
 number against a track attribute you name (piece_number for the RWC
@@ -220,7 +220,7 @@ def migrate(dataset_name: str, force: bool) -> None:
     )
     print(
         f"[migrate] Audio itself wasn't touched — make sure every stem above "
-        f"has a matching data/{dataset_name}/tracks/<stem>.wav for the annotator to load it."
+        f"has a matching {data_home}/tracks/<stem>.wav for the annotator to load it."
     )
 
 

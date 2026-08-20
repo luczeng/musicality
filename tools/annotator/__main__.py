@@ -48,7 +48,7 @@ def main() -> None:
     else:
         datasets = list_datasets()
         if not datasets:
-            print("No datasets found in data/.")
+            print(f"No datasets found in {DATA_DIR}/.")
             sys.exit(1)
         dataset_name = datasets[0].name
         track_ids = load_dataset_tracks(dataset_name)
