@@ -49,83 +49,24 @@ this repo:
 
 ### Data format
 
-**mirdata datasets** are read entirely through
-[mirdata](https://mirdata.readthedocs.io)'s own API and on-disk layout —
-`TempoDataset`/`BeatDataset` never touch the files directly, just
-`track.audio_path`, `track.tempo`, `track.beats.times`, and
-`track.beats.positions` (1-indexed bar/count position per beat, when the
-dataset annotates it).
-
-**Homemade datasets** (recorded via the annotation apps) use a parallel,
-hand-rolled layout under `data/<dataset>/`, centralized in
-`musicality.dataformats` (`musicality/dataformats/dataformat.yaml`) rather
-than scattered as string literals across the annotator code:
-
-```
-data/<dataset>/tracks/<track_id>.wav                          # audio
-data/<dataset>/annotations/<track_id>.beats                   # beat annotations (default annotator slot)
-data/<dataset>/annotations/<track_id>.meta.json                # descriptive metadata (default annotator slot)
-data/<dataset>/annotations/<annotator_id>/<track_id>.beats     # a second annotator's take on the same track
-data/<dataset>/annotations/<annotator_id>/<track_id>.meta.json
-```
-
-`.beats` files use the same `<time> <position>` per-line format as mirdata's
-own raw beat annotations (e.g. ballroom's), so homemade and mirdata tracks
-read identically once loaded — one line per beat, seconds then 1-indexed
-bar/count position:
-
-```
-10.949773 1
-11.247052 2
-11.653333 3
-```
-
-`.meta.json` carries fields mirdata has no place for — all optional, filled in
-incrementally as an annotation is worked on, and forward-compatible (a file
-missing a newer field just falls back to that field's default on load):
-
-| Field | Meaning |
-|---|---|
-| `location` | Where the track was recorded/found |
-| `device` | Recording device (e.g. phone model, hostname) |
-| `structure` | Free-text song structure notes |
-| `duration_s` | Audio duration, in seconds |
-| `bpm_mean` / `bpm_median` / `bpm_std` | Tempo statistics derived from the tapped beats |
-| `annotator_id` | Who made this annotation — `null` for the original/default slot |
-| `section_aligned` | Whether the first tapped beat is the true start of a section (`true`/`false`), or `null` if not recorded |
-| `schema_version` | Metadata schema version (currently `2`) |
-
-Multiple people can annotate the same track independently: `annotator_id: null`
-is the original, unsuffixed slot (every file saved before multi-annotator
-support existed still resolves here — no migration needed), and each named
-annotator gets their own subdirectory holding a parallel `.beats`/`.meta.json`
-pair for the same `track_id`. Not yet used to feed training — `BeatDataset`/
-`TempoDataset` still read exclusively through mirdata; bridging homemade
-annotations into training is separate future work.
+Both sources read through the same `<time> <position>` `.beats` format plus an
+optional `.meta.json` sidecar (device, structure, tempo stats, multi-annotator
+support). See the
+[data format reference](https://luczeng.github.io/musicality/data.html#data-format)
+for the full field list and layout details.
 
 ### Splits
 
-Train/val splits are precomputed and stored as plain index lists under
+Train/val splits should be precomputed and stored as plain index lists under
 `data/splits/<name>/{train,val}.txt`, read by `Splitter.run()` at train/eval time.
-It never generates a split itself — if `data/splits/<name>/` is missing, training
-crashes with `FileNotFoundError` rather than silently creating a new (and possibly
-different) one. That's what makes a split reproducible across machines: version the
-files under `data/splits/` (e.g. via DVC, same as the audio) and pull them rather than
-regenerating locally, where a different `mirdata` version or an incomplete download
-could silently produce a different split.
-
-#### Create a split
+Note: at train time,  if `data/splits/<name>/` is missing, training
+crashes with `FileNotFoundError`. To create a split:
 
 ```bash
 uv run python tools/create_splits.py                          # every dataset in data/
 uv run python tools/create_splits.py --datasets ballroom brid  # just these
 uv run python tools/create_splits.py --val-split 0.15 --force  # custom split, overwrite
 ```
-
-Creates two splits per dataset: a tempo split (`data/splits/<name>`, from
-`TempoDataset`) and a beat-phase split (`data/splits/beat_phase-<name>`, from
-`BeatDataset`). Whichever has no samples for a given dataset (e.g. no tempo
-annotations) is skipped. Existing splits are left untouched unless `--force` is passed.
 
 #### Binary-meter-only beat-phase splits
 
@@ -135,19 +76,6 @@ triple-meter bar-position cycle (`1, 2, 3, 1, 2, 3, ...`) instead of the binary 
 targets assume. Pass `--binary-only` to drop those tracks — and any track with no
 position annotation at all, since its meter can't be confirmed — when building the
 beat-phase split:
-
-```bash
-uv run python tools/create_splits.py --datasets ballroom --binary-only
-```
-
-This saves to a separate `data/splits/beat_phase-<name>-binary` split, since it's a
-different-length dataset than the unfiltered one. Training/eval must set the matching
-flag so they load the split that actually corresponds to the dataset they build:
-
-```bash
-uv run python tools/train_beat.py binary_only=true
-uv run python tools/eval_beat.py --checkpoint <path> --dataset ballroom --binary-only
-```
 
 #### Version splits with DVC
 
@@ -302,26 +230,13 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
+| `tools/migrate_mirdata_dataset.py` | Migrate a mirdata dataset's beat annotations into this project's own `tracks/`/`annotations/` layout (see [Data format](#data-format)), so tools that only understand that layout can read it like a homemade dataset |
 | `tools/summarize_datasets.py` | Print summary statistics (song count, annotation types) for all downloaded datasets |
 | `tools/inspect_track.py` | Print metadata and annotations for a single audio file |
 | `tools/plot_tempo_histograms.py` | Plot BPM distributions across datasets |
 
 See [Annotation apps](#annotation-apps) above for `tools/annotator/` and
 `tools/mobile_companion/`.
-
-```bash
-uv run python tools/train.py
-uv run python tools/train_beat.py
-uv run python tools/create_splits.py
-uv run python tools/eval_beat.py --checkpoint <path-to-ckpt> --dataset ballroom
-uv run python tools/sweep_beat_postprocess.py --checkpoint <path-to-ckpt> --dataset ballroom
-uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
-uv run python tools/plot_beat_targets.py --dataset ballroom
-uv run python tools/download_dataset.py
-uv run python tools/summarize_datasets.py
-uv run python tools/inspect_track.py path/to/audio.wav
-uv run python tools/plot_tempo_histograms.py
-```
 
 </details>
 
