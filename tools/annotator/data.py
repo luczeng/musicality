@@ -97,6 +97,22 @@ def tempo_from_beats(beat_times: np.ndarray) -> float | None:
     return 60.0 / median_interval
 
 
+def _coerce_tempo(value) -> float | None:
+    """Coerce a mirdata Track's tempo to float.
+
+    Most datasets already return a float, but some (e.g. rwc_popular) return
+    the raw metadata string ('135') instead of casting it, which would
+    otherwise blow up formatting code (e.g. an f-string ``:.1f`` spec)
+    downstream.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def beats_per_bar(
     beat_positions: np.ndarray | None, default: int = DEFAULT_N_BEATS
 ) -> int:
@@ -418,6 +434,43 @@ def has_mirdata_annotation(dataset_name: str, track_id: str) -> bool:
         return False
 
 
+def annotation_meter_label(dataset_name: str, track_id: str) -> str:
+    """Return a concise "1..N" summary of a track's beat-position resolution.
+
+    N is the highest 1-indexed bar position seen, e.g. "1..4" for a track
+    annotated at full-bar resolution or "1..2" for one annotated at half-bar
+    (cut-time) resolution. Mirrors load_track()'s own precedence: a saved
+    .beats file (default annotator slot) wins over the dataset's built-in
+    mirdata annotation.
+
+    Returns "" if there's no beat annotation at all, "•" if beats exist but
+    carry no bar-position channel (bare timestamps only).
+    """
+    ann_path = (
+        _annotations_slot_dir(dataset_name, None)
+        / f"{track_id}{dataformats.FORMAT.beats_suffix}"
+    )
+    if ann_path.exists():
+        _, positions = _read_beats_file(ann_path)
+    elif (DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname).is_dir():
+        return ""  # custom dataset, no saved annotation, no mirdata fallback
+    else:
+        try:
+            ds = mirdata.initialize(
+                dataset_name, data_home=str(DATA_DIR / dataset_name)
+            )
+            beats = ds.track(track_id).beats
+        except Exception:
+            return ""
+        if beats is None or len(beats.times) == 0:
+            return ""
+        positions = getattr(beats, "positions", None)
+
+    if positions is None or len(positions) == 0:
+        return "•"
+    return f"1..{int(max(positions))}"
+
+
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
     tracks_dir = DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
@@ -491,7 +544,7 @@ def load_track(
         dataset_name=dataset_name,
         track_id=track_id,
         audio_path=track.audio_path,
-        tempo=getattr(track, "tempo", None),
+        tempo=_coerce_tempo(getattr(track, "tempo", None)),
         beat_times=beat_times,
         beat_positions=beat_positions,
         annotator_id=annotator_id,

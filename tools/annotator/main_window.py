@@ -47,6 +47,7 @@ from .data import (
     active_bar_index,
     active_beat_position,
     add_beat,
+    annotation_meter_label,
     annotation_path,
     bar_indices,
     beats_per_bar,
@@ -501,11 +502,12 @@ class MainWindow(QMainWindow):
         sort_bar.addWidget(self._dataset_sort_combo)
 
         self._dataset_tree = QTreeWidget()
-        self._dataset_tree.setColumnCount(3)
+        self._dataset_tree.setColumnCount(4)
         self._dataset_tree.header().hide()
         self._dataset_tree.setColumnWidth(0, 320)
         self._dataset_tree.setColumnWidth(1, 18)
         self._dataset_tree.setColumnWidth(2, 18)
+        self._dataset_tree.setColumnWidth(3, 36)
         self._dataset_tree.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -548,16 +550,25 @@ class MainWindow(QMainWindow):
         self._n_beats = beats_per_bar(self._track.beat_positions, default=self._n_beats)
         self._sync_count_buttons()
 
-        self._update_info_label()
-        self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
-
         # Inferred beats belong to the previous track's audio — clear them.
         self._inferred_beat_times = np.array([])
         self._inferred_beat_positions = None
         self._inferred_waveform.set_beats(np.array([]), None)
         self._inferred_container.setVisible(False)
 
+        # Swap in this track's audio/waveform/beats before any code below that
+        # reads per-track display fields (info label, metadata panel) — so a
+        # bad field on this particular track (e.g. a non-numeric tempo from
+        # mirdata) can't leave playback silently stuck on the previous track.
+        audio, sr = librosa.load(self._track.audio_path, sr=None, mono=True)
+        self._track_audio = audio
+        self._track_sr = sr
+        self._engine.load(audio, sr)
+        self._waveform.set_waveform(audio, sr)
         self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+        self._inferred_waveform.set_waveform(audio, sr)
+        self._update_engine_clicks()
+
         self._metronome.set_state(self._n_beats, None)
         self._tap_widget.reset()
         metadata = load_metadata(self._dataset_name, track_id) or TrackMetadata()
@@ -569,13 +580,8 @@ class MainWindow(QMainWindow):
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
 
-        audio, sr = librosa.load(self._track.audio_path, sr=None, mono=True)
-        self._track_audio = audio
-        self._track_sr = sr
-        self._engine.load(audio, sr)
-        self._waveform.set_waveform(audio, sr)
-        self._inferred_waveform.set_waveform(audio, sr)
-        self._update_engine_clicks()
+        self._update_info_label()
+        self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
 
     def _populate_dataset_list(self, *, keep_selection: bool = False) -> None:
         selected_dataset = self._dataset_name if keep_selection else None
@@ -676,18 +682,26 @@ class MainWindow(QMainWindow):
     def _set_annotation_indicator(
         item: QTreeWidgetItem, dataset_name: str, track_id: str
     ) -> None:
+        item.setToolTip(1, "Has a built-in mirdata annotation")
         if has_mirdata_annotation(dataset_name, track_id):
             item.setText(1, "●")
             item.setForeground(1, QColor("#44cc44"))
         else:
             item.setText(1, "✕")
             item.setForeground(1, QColor("#cc4444"))
+        item.setToolTip(2, "Has a saved annotation from this app")
         if has_annotation(dataset_name, track_id):
             item.setText(2, "●")
             item.setForeground(2, QColor("#44cc44"))
         else:
             item.setText(2, "✕")
             item.setForeground(2, QColor("#cc4444"))
+        item.setToolTip(
+            3,
+            "Annotated meter (1..N bar positions) — "
+            "• for beats with no position data, blank for no annotation",
+        )
+        item.setText(3, annotation_meter_label(dataset_name, track_id))
 
     def _update_annotation_indicator(self) -> None:
         """Refresh the ●/✕ for the currently loaded track without rebuilding the tree."""
