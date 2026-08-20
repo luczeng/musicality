@@ -22,8 +22,15 @@ uv pip install -e .
 : "${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY (Backblaze B2 application key) before running this script}"
 : "${WANDB_API_KEY:?Set WANDB_API_KEY before running this script}"
 
-echo "Pulling data from Backblaze..."
-uv run dvc pull
+repo_root="$PWD"
+
+echo "Pulling data from musicality_db..."
+if [ -d ../musicality_db/.git ]; then
+    git -C ../musicality_db pull
+else
+    git clone https://github.com/luczeng/musicality_db.git ../musicality_db
+fi
+(cd ../musicality_db && "$repo_root/.venv/bin/dvc" pull)
 
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"
