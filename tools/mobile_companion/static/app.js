@@ -364,6 +364,37 @@ function encodeWavPCM16(samples, sampleRate) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+function clamp(value, lo, hi) {
+  return Math.min(hi, Math.max(lo, value));
+}
+
+function peakAmplitude(audioBuffer) {
+  let peak = 0;
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i++) {
+      const abs = Math.abs(data[i]);
+      if (abs > peak) peak = abs;
+    }
+  }
+  return peak;
+}
+
+// Recordings are captured with AGC off (see startRecording — deliberate,
+// to avoid the WebRTC audio-processing pipeline's extra latency), so a
+// far-mic or quiet-venue take stays quiet all the way through upload and
+// storage. Boost it here at playback time only — this never touches the
+// stored WAV bytes, which double as training data for this repo's tempo
+// models, so playback loudness and archived amplitude stay independent.
+const PLAYBACK_TARGET_PEAK = 0.95;
+const MAX_PLAYBACK_GAIN = 12; // cap so a near-silent take isn't blown up into raw noise-floor hiss
+
+function playbackGainFor(audioBuffer) {
+  const peak = peakAmplitude(audioBuffer);
+  if (peak <= 0) return 1;
+  return clamp(PLAYBACK_TARGET_PEAK / peak, 1, MAX_PLAYBACK_GAIN);
+}
+
 const LISTEN_IDLE_LABEL = "▶ Listen";
 
 // Whichever button most recently started playback — stopListening() resets
@@ -418,8 +449,16 @@ function stopBeatDot() {
 function scheduleBeatDot(ctx, startAt, tapTimes) {
   let nextIndex = 0;
 
+  // ctx.currentTime marks when a sample is scheduled/processed, not when
+  // it's actually audible — outputLatency (falling back to the older
+  // baseLatency on browsers that don't report it yet) is the browser's own
+  // measured estimate of that gap. It reflects the real output path (built-in
+  // speaker vs. Bluetooth, which alone can add 100ms+) instead of a guessed
+  // constant, so this adapts per device/output rather than needing tuning.
+  const outputLatency = ctx.outputLatency ?? ctx.baseLatency ?? 0;
+
   function tick() {
-    const elapsed = ctx.currentTime - startAt;
+    const elapsed = ctx.currentTime - startAt + outputLatency;
     while (nextIndex < tapTimes.length && tapTimes[nextIndex] <= elapsed) {
       bip(nextIndex % N_BEAT_DOTS, nextIndex % BEATS_PER_CYCLE === 0);
       nextIndex++;
@@ -469,9 +508,19 @@ async function startListening(
   const startAt = ctx.currentTime + 0.15;
   listenSourceNodes = [];
 
+  // Gain node boosts a quiet take up toward full scale. playbackGainFor()
+  // scales by exactly (target peak / actual peak), so the loudest sample is
+  // mathematically guaranteed to land at PLAYBACK_TARGET_PEAK (< 1.0) — no
+  // limiter needed, and skipping one avoids its lookahead latency, which
+  // would otherwise delay audio reaching the speaker relative to the beat
+  // dots below (which schedule off the audio clock directly, not the graph).
+  const gainNode = ctx.createGain();
+  gainNode.gain.value = playbackGainFor(audioBuffer);
+  gainNode.connect(ctx.destination);
+
   const trackSource = ctx.createBufferSource();
   trackSource.buffer = audioBuffer;
-  trackSource.connect(ctx.destination);
+  trackSource.connect(gainNode);
   trackSource.start(startAt);
   trackSource.onended = () => {
     if (listening) stopListening();
