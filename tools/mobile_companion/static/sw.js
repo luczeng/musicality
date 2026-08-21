@@ -2,7 +2,7 @@
 // small fixes, minor for new features, major for breaking/large changes).
 // This same string is shown on the homepage footer, so a stale page is
 // visibly out of sync with the version checked into this file.
-const APP_VERSION = "13.0.0";
+const APP_VERSION = "13.3.7";
 const CACHE_NAME = `musicality-mobile-companion-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
@@ -65,6 +65,16 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  // Only GET is safe to route through the Cache API / re-fetch dance below.
+  // Forwarding a non-GET request (e.g. the multipart upload POSTs) through
+  // `fetch(event.request)` is a known-unreliable pattern on Safari/iOS: the
+  // body can arrive empty or truncated on the other end even though the
+  // fetch itself resolves with a real response — observed in practice as a
+  // sync upload getting back a 422 "file field missing" despite the phone
+  // clearly having sent a capture. Leaving respondWith uncalled here lets
+  // the browser handle those requests natively instead.
+  if (event.request.method !== "GET") return;
+
   event.respondWith(
     caches.match(event.request).then((cached) => cached || fetch(event.request))
   );

@@ -47,6 +47,13 @@ const tapCountEl = document.getElementById("tap-count");
 const tapLastEl = document.getElementById("tap-last");
 const tapRecentEl = document.getElementById("tap-recent");
 const tapAllEl = document.getElementById("tap-all");
+const beatDotEls = document.querySelectorAll(".beat-dot");
+const recordsToggleBtn = document.getElementById("records-toggle-btn");
+const recordsView = document.getElementById("records-view");
+const recordsListEl = document.getElementById("records-list");
+const recordsRefreshBtn = document.getElementById("records-refresh-btn");
+const recordsPlayBtn = document.getElementById("records-play-btn");
+const recordsStatusEl = document.getElementById("records-status");
 
 let audioCtx = null;
 let workletModulePromise = null;
@@ -283,7 +290,7 @@ async function stopRecording() {
   recordBtn.textContent = "● Record";
   tapBtn.disabled = true;
   saveBtn.disabled = false;
-  listenBtn.disabled = false;
+  listenBtn.disabled = tapTimesS.length === 0;
   statusEl.textContent = "Recording stopped. Review taps, then Save.";
 }
 
@@ -357,40 +364,44 @@ function encodeWavPCM16(samples, sampleRate) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-// Synthesizes a short decaying sine "tick" rather than shipping a click
-// sample, so the accented (beat 1) and regular clicks are just two
-// parameter sets away from each other. Peak-normalized to 1.0 — actual
-// loudness is applied afterwards via a GainNode, scaled to the recording.
-function makeClickBuffer(ctx, { freqHz, durationS }) {
-  const length = Math.ceil(ctx.sampleRate * durationS);
-  const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let i = 0; i < length; i++) {
-    const t = i / ctx.sampleRate;
-    const envelope = Math.exp(-t / (durationS / 6));
-    data[i] = Math.sin(2 * Math.PI * freqHz * t) * envelope;
-  }
-
-  return buffer;
-}
-
-function rms(audioBuffer) {
-  let sumSquares = 0;
-  let sampleCount = 0;
-
-  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
-    const data = audioBuffer.getChannelData(ch);
-    for (let i = 0; i < data.length; i++) sumSquares += data[i] * data[i];
-    sampleCount += data.length;
-  }
-
-  return Math.sqrt(sumSquares / sampleCount);
-}
-
 function clamp(value, lo, hi) {
   return Math.min(hi, Math.max(lo, value));
 }
+
+function peakAmplitude(audioBuffer) {
+  let peak = 0;
+  for (let ch = 0; ch < audioBuffer.numberOfChannels; ch++) {
+    const data = audioBuffer.getChannelData(ch);
+    for (let i = 0; i < data.length; i++) {
+      const abs = Math.abs(data[i]);
+      if (abs > peak) peak = abs;
+    }
+  }
+  return peak;
+}
+
+// Recordings are captured with AGC off (see startRecording — deliberate,
+// to avoid the WebRTC audio-processing pipeline's extra latency), so a
+// far-mic or quiet-venue take stays quiet all the way through upload and
+// storage. Boost it here at playback time only — this never touches the
+// stored WAV bytes, which double as training data for this repo's tempo
+// models, so playback loudness and archived amplitude stay independent.
+const PLAYBACK_TARGET_PEAK = 0.95;
+const MAX_PLAYBACK_GAIN = 12; // cap so a near-silent take isn't blown up into raw noise-floor hiss
+
+function playbackGainFor(audioBuffer) {
+  const peak = peakAmplitude(audioBuffer);
+  if (peak <= 0) return 1;
+  return clamp(PLAYBACK_TARGET_PEAK / peak, 1, MAX_PLAYBACK_GAIN);
+}
+
+const LISTEN_IDLE_LABEL = "▶ Listen";
+
+// Whichever button most recently started playback — stopListening() resets
+// this one, so it works correctly regardless of which caller (the listen-btn
+// handler, the records-view handler, or a natural end-of-track) triggers it.
+let activeListenButton = listenBtn;
+let activeListenIdleLabel = LISTEN_IDLE_LABEL;
 
 function stopListening() {
   for (const node of listenSourceNodes) {
@@ -403,75 +414,123 @@ function stopListening() {
   }
   listenSourceNodes = [];
   listening = false;
-  listenBtn.textContent = "▶ Listen (with clicks)";
+  activeListenButton.textContent = activeListenIdleLabel;
+  stopBeatDot();
 }
 
-// Plays the just-recorded take back with a synthesized click overlaid on
-// every tap, cycling 1..8 with beat 1 accented — no visualization, audio
-// only, so the annotator can check taps landed on the beat by ear.
-async function startListening() {
-  if (!recordedSamples || !recordSampleRate) return;
+// Fires a visual "bip" on one of the 4 beat dots at each tap time, scheduled
+// against the Web Audio clock (ctx.currentTime) rather than setTimeout, so
+// the dots stay locked to what's actually playing even under main-thread
+// jank. The 8-count phrase maps onto 4 dots by pairing counts a beat apart
+// by 4 on the same dot (dot 0 = counts 1 & 5, dot 1 = counts 2 & 6, ...) —
+// only the true count 1 (not 5) bips green, the rest bip yellow. Each bip
+// auto-reverts to idle gray shortly after, so it reads as a blink rather
+// than a color that just sits there until the next beat on that dot.
+const BIP_DURATION_MS = 130;
+const N_BEAT_DOTS = 4;
+
+let beatDotRafId = null;
+const beatDotTimeoutIds = new Array(N_BEAT_DOTS).fill(null);
+
+function stopBeatDot() {
+  if (beatDotRafId !== null) {
+    cancelAnimationFrame(beatDotRafId);
+    beatDotRafId = null;
+  }
+  for (let dotIndex = 0; dotIndex < N_BEAT_DOTS; dotIndex++) {
+    if (beatDotTimeoutIds[dotIndex] !== null) {
+      clearTimeout(beatDotTimeoutIds[dotIndex]);
+      beatDotTimeoutIds[dotIndex] = null;
+    }
+    beatDotEls[dotIndex].classList.remove("bip-one", "bip-beat");
+  }
+}
+
+function scheduleBeatDot(ctx, startAt, tapTimes) {
+  let nextIndex = 0;
+
+  // ctx.currentTime marks when a sample is scheduled/processed, not when
+  // it's actually audible — outputLatency (falling back to the older
+  // baseLatency on browsers that don't report it yet) is the browser's own
+  // measured estimate of that gap. It reflects the real output path (built-in
+  // speaker vs. Bluetooth, which alone can add 100ms+) instead of a guessed
+  // constant, so this adapts per device/output rather than needing tuning.
+  const outputLatency = ctx.outputLatency ?? ctx.baseLatency ?? 0;
+
+  function tick() {
+    const elapsed = ctx.currentTime - startAt + outputLatency;
+    while (nextIndex < tapTimes.length && tapTimes[nextIndex] <= elapsed) {
+      bip(nextIndex % N_BEAT_DOTS, nextIndex % BEATS_PER_CYCLE === 0);
+      nextIndex++;
+    }
+    if (listening) beatDotRafId = requestAnimationFrame(tick);
+  }
+  beatDotRafId = requestAnimationFrame(tick);
+}
+
+function bip(dotIndex, isOne) {
+  const dotEl = beatDotEls[dotIndex];
+  if (beatDotTimeoutIds[dotIndex] !== null) clearTimeout(beatDotTimeoutIds[dotIndex]);
+  dotEl.classList.remove("bip-one", "bip-beat");
+  void dotEl.offsetWidth; // restart the transition even for back-to-back same-type bips
+  dotEl.classList.add(isOne ? "bip-one" : "bip-beat");
+  beatDotTimeoutIds[dotIndex] = setTimeout(() => {
+    dotEl.classList.remove("bip-one", "bip-beat");
+    beatDotTimeoutIds[dotIndex] = null;
+  }, BIP_DURATION_MS);
+}
+
+// Plays a take back and drives the beat dot (see scheduleBeatDot below) in
+// sync with each tap — no click sound, watch the dot instead of listening
+// for an overlaid click, so the actual recording plays back unaltered. Takes
+// its source explicitly (rather than reading recordedSamples/tapTimesS
+// directly) so the same pipeline can replay either the just-recorded take or
+// a fetched past record. `button`/`idleLabel` identify whichever UI control
+// triggered playback, so stopListening() — called both on manual stop and on
+// natural end-of-track — resets the right one.
+async function startListening(
+  samples,
+  sampleRate,
+  tapTimes,
+  button = listenBtn,
+  idleLabel = LISTEN_IDLE_LABEL
+) {
+  if (!samples || !sampleRate) return;
+  activeListenButton = button;
+  activeListenIdleLabel = idleLabel;
 
   const ctx = getAudioContext();
   await ctx.resume();
 
-  const audioBuffer = ctx.createBuffer(1, recordedSamples.length, recordSampleRate);
-  audioBuffer.copyToChannel(recordedSamples, 0);
-  const accentClick = makeClickBuffer(ctx, { freqHz: 1800, durationS: 0.07 });
-  const regularClick = makeClickBuffer(ctx, { freqHz: 1000, durationS: 0.05 });
-
-  // Click loudness is scaled off the recording's own RMS rather than a
-  // fixed gain, so it stays proportionate whether the take was captured
-  // quiet (far mic, soft venue) or hot — clamped so a near-silent or very
-  // loud take still gets an audible-but-not-overpowering click.
-  const trackRms = rms(audioBuffer);
-  const accentGain = clamp(trackRms * 4.0, 0.12, 0.9);
-  const regularGain = clamp(trackRms * 2.5, 0.06, 0.5);
-
-  // Limiter on the mix bus, not the track itself — only clamps the rare
-  // moment a click lands on an already-loud passage, instead of altering
-  // the recording's own dynamics.
-  const limiter = ctx.createDynamicsCompressor();
-  limiter.threshold.value = -3;
-  limiter.knee.value = 0;
-  limiter.ratio.value = 20;
-  limiter.attack.value = 0.001;
-  limiter.release.value = 0.1;
-  limiter.connect(ctx.destination);
-
-  const accentGainNode = ctx.createGain();
-  accentGainNode.gain.value = accentGain;
-  accentGainNode.connect(limiter);
-
-  const regularGainNode = ctx.createGain();
-  regularGainNode.gain.value = regularGain;
-  regularGainNode.connect(limiter);
+  const audioBuffer = ctx.createBuffer(1, samples.length, sampleRate);
+  audioBuffer.copyToChannel(samples, 0);
 
   const startAt = ctx.currentTime + 0.15;
   listenSourceNodes = [];
 
+  // Gain node boosts a quiet take up toward full scale. playbackGainFor()
+  // scales by exactly (target peak / actual peak), so the loudest sample is
+  // mathematically guaranteed to land at PLAYBACK_TARGET_PEAK (< 1.0) — no
+  // limiter needed, and skipping one avoids its lookahead latency, which
+  // would otherwise delay audio reaching the speaker relative to the beat
+  // dots below (which schedule off the audio clock directly, not the graph).
+  const gainNode = ctx.createGain();
+  gainNode.gain.value = playbackGainFor(audioBuffer);
+  gainNode.connect(ctx.destination);
+
   const trackSource = ctx.createBufferSource();
   trackSource.buffer = audioBuffer;
-  trackSource.connect(limiter);
+  trackSource.connect(gainNode);
   trackSource.start(startAt);
   trackSource.onended = () => {
     if (listening) stopListening();
   };
   listenSourceNodes.push(trackSource);
 
-  tapTimesS.forEach((offsetS, i) => {
-    if (offsetS < 0) return;
-
-    const position = (i % BEATS_PER_CYCLE) + 1;
-    const clickSource = ctx.createBufferSource();
-    clickSource.buffer = position === 1 ? accentClick : regularClick;
-    clickSource.connect(position === 1 ? accentGainNode : regularGainNode);
-    clickSource.start(startAt + offsetS);
-    listenSourceNodes.push(clickSource);
-  });
+  scheduleBeatDot(ctx, startAt, tapTimes.filter((t) => t >= 0));
 
   listening = true;
-  listenBtn.textContent = "■ Stop";
+  button.textContent = "■ Stop";
 }
 
 listenBtn.addEventListener("click", async () => {
@@ -481,10 +540,86 @@ listenBtn.addEventListener("click", async () => {
   }
   try {
     statusEl.textContent = "Loading playback…";
-    await startListening();
+    await startListening(recordedSamples, recordSampleRate, tapTimesS);
     statusEl.textContent = "Listening…";
   } catch (err) {
     statusEl.textContent = `Could not play back: ${err.message}`;
+  }
+});
+
+recordsToggleBtn.addEventListener("click", async () => {
+  const opening = recordsView.classList.toggle("hidden") === false;
+  if (opening) await loadRecordsList();
+});
+
+recordsRefreshBtn.addEventListener("click", loadRecordsList);
+
+recordsListEl.addEventListener("change", () => {
+  recordsPlayBtn.disabled = !recordsListEl.value;
+});
+
+// Mirrors loadDatasetOptions() above — same fetch-and-degrade-quietly
+// pattern, since this view is only reachable manually (not on page load),
+// an unreachable server here should read as "nothing to show", not an error.
+async function loadRecordsList() {
+  const dataset = datasetInput.value.trim();
+  if (!dataset) {
+    recordsStatusEl.textContent = "Enter a dataset (Author) first.";
+    return;
+  }
+  recordsStatusEl.textContent = "Loading…";
+  recordsPlayBtn.disabled = true;
+  try {
+    const response = await fetch(`/datasets/${encodeURIComponent(dataset)}/tracks`);
+    const tracks = await response.json();
+    recordsListEl.innerHTML = "";
+    for (const t of tracks) {
+      const option = document.createElement("option");
+      option.value = t.track_id;
+      option.textContent = t.has_annotation
+        ? `${t.track_id}  (${t.meter || "•"})`
+        : `${t.track_id}  (no taps)`;
+      option.disabled = !t.has_annotation;
+      recordsListEl.appendChild(option);
+    }
+    recordsStatusEl.textContent = tracks.length ? "" : "No records in this dataset yet.";
+  } catch (err) {
+    recordsStatusEl.textContent = `Could not load records: ${err.message}`;
+  }
+}
+
+const RECORDS_PLAY_IDLE_LABEL = "▶ Play";
+
+recordsPlayBtn.addEventListener("click", async () => {
+  if (listening) {
+    stopListening();
+    return;
+  }
+  const dataset = datasetInput.value.trim();
+  const trackId = recordsListEl.value;
+  if (!dataset || !trackId) return;
+
+  try {
+    recordsStatusEl.textContent = "Loading…";
+    const [audioResponse, detail] = await Promise.all([
+      fetch(`/datasets/${encodeURIComponent(dataset)}/tracks/${encodeURIComponent(trackId)}/audio`),
+      fetch(
+        `/datasets/${encodeURIComponent(dataset)}/tracks/${encodeURIComponent(trackId)}/annotations`
+      ).then((r) => r.json()),
+    ]);
+    if (!audioResponse.ok) throw new Error(`audio fetch failed (${audioResponse.status})`);
+
+    const decoded = await getAudioContext().decodeAudioData(await audioResponse.arrayBuffer());
+    await startListening(
+      decoded.getChannelData(0),
+      decoded.sampleRate,
+      detail.tap_times,
+      recordsPlayBtn,
+      RECORDS_PLAY_IDLE_LABEL
+    );
+    recordsStatusEl.textContent = "Listening…";
+  } catch (err) {
+    recordsStatusEl.textContent = `Could not play back: ${err.message}`;
   }
 });
 
@@ -593,7 +728,7 @@ async function syncPendingCaptures() {
     syncStatusEl.textContent = `Syncing ${pending.length} capture(s)…`;
 
     let succeeded = 0;
-    let failed = 0;
+    const errors = [];
     for (const capture of pending) {
       try {
         await syncOneCapture(capture);
@@ -601,13 +736,14 @@ async function syncPendingCaptures() {
         await deletePending(capture.id);
         succeeded++;
       } catch (err) {
-        failed++;
+        errors.push(err.message);
         console.warn("[sync] capture failed:", capture.id, err);
       }
     }
 
     syncStatusEl.textContent =
-      `Synced ${succeeded}` + (failed ? `, ${failed} failed (still queued).` : ".");
+      `Synced ${succeeded}` +
+      (errors.length ? `, ${errors.length} failed (still queued): ${errors.join(" | ")}` : ".");
     await refreshPendingCount();
     return succeeded;
   } finally {
