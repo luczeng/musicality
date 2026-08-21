@@ -74,6 +74,25 @@ def datasets() -> list[dict]:
     ]
 
 
+@app.get("/datasets/{dataset}/tracks")
+def list_tracks(dataset: str) -> list[dict]:
+    try:
+        track_ids = annotator_data.load_dataset_tracks(dataset)
+    except Exception:
+        # No tracks/ dir yet and not a recognized mirdata name either — the
+        # normal state for a dataset nobody has saved a phone recording to.
+        return []
+
+    return [
+        {
+            "track_id": track_id,
+            "has_annotation": annotator_data.has_annotation(dataset, track_id),
+            "meter": annotator_data.annotation_meter_label(dataset, track_id),
+        }
+        for track_id in track_ids
+    ]
+
+
 @app.post("/datasets/{dataset}/tracks")
 async def upload_track(
     dataset: str, file: UploadFile = File(...), name: str | None = Form(None)
@@ -157,3 +176,35 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
         annotator_data.save_metadata(dataset, track_id, metadata)
 
     return {"dataset": dataset, "track_id": track_id, "tempo": track.tempo}
+
+
+@app.get("/datasets/{dataset}/tracks/{track_id}/annotations")
+def get_annotation(dataset: str, track_id: str) -> dict:
+    track = annotator_data.load_track(dataset, track_id)
+    metadata = annotator_data.load_metadata(dataset, track_id)
+    return {
+        "track_id": track_id,
+        "tap_times": track.beat_times.tolist(),
+        "tempo": annotator_data.tempo_from_beats(track.beat_times),
+        "structure": metadata.structure if metadata else None,
+        "device": metadata.device if metadata else None,
+        "duration_s": metadata.duration_s if metadata else None,
+        "bpm_mean": metadata.bpm_mean if metadata else None,
+        "bpm_median": metadata.bpm_median if metadata else None,
+        "bpm_std": metadata.bpm_std if metadata else None,
+        "section_aligned": metadata.section_aligned if metadata else None,
+    }
+
+
+@app.get("/datasets/{dataset}/tracks/{track_id}/audio")
+def get_audio(dataset: str, track_id: str) -> FileResponse:
+    path = (
+        annotator_data.DATA_DIR
+        / dataset
+        / dataformats.FORMAT.tracks_dirname
+        / f"{track_id}.wav"
+    )
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="track audio not found")
+
+    return FileResponse(path, media_type="audio/wav")

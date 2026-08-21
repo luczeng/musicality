@@ -47,6 +47,12 @@ const tapCountEl = document.getElementById("tap-count");
 const tapLastEl = document.getElementById("tap-last");
 const tapRecentEl = document.getElementById("tap-recent");
 const tapAllEl = document.getElementById("tap-all");
+const recordsToggleBtn = document.getElementById("records-toggle-btn");
+const recordsView = document.getElementById("records-view");
+const recordsListEl = document.getElementById("records-list");
+const recordsRefreshBtn = document.getElementById("records-refresh-btn");
+const recordsPlayBtn = document.getElementById("records-play-btn");
+const recordsStatusEl = document.getElementById("records-status");
 
 let audioCtx = null;
 let workletModulePromise = null;
@@ -392,6 +398,14 @@ function clamp(value, lo, hi) {
   return Math.min(hi, Math.max(lo, value));
 }
 
+const LISTEN_IDLE_LABEL = "▶ Listen (with clicks)";
+
+// Whichever button most recently started playback — stopListening() resets
+// this one, so it works correctly regardless of which caller (the listen-btn
+// handler, the records-view handler, or a natural end-of-track) triggers it.
+let activeListenButton = listenBtn;
+let activeListenIdleLabel = LISTEN_IDLE_LABEL;
+
 function stopListening() {
   for (const node of listenSourceNodes) {
     try {
@@ -403,20 +417,33 @@ function stopListening() {
   }
   listenSourceNodes = [];
   listening = false;
-  listenBtn.textContent = "▶ Listen (with clicks)";
+  activeListenButton.textContent = activeListenIdleLabel;
 }
 
-// Plays the just-recorded take back with a synthesized click overlaid on
-// every tap, cycling 1..8 with beat 1 accented — no visualization, audio
-// only, so the annotator can check taps landed on the beat by ear.
-async function startListening() {
-  if (!recordedSamples || !recordSampleRate) return;
+// Plays a take back with a synthesized click overlaid on every tap, cycling
+// 1..8 with beat 1 accented — no visualization, audio only, so the annotator
+// can check taps landed on the beat by ear. Takes its source explicitly
+// (rather than reading recordedSamples/tapTimesS directly) so the same
+// pipeline can replay either the just-recorded take or a fetched past record.
+// `button`/`idleLabel` identify whichever UI control triggered playback, so
+// stopListening() — called both on manual stop and on natural end-of-track —
+// resets the right one.
+async function startListening(
+  samples,
+  sampleRate,
+  tapTimes,
+  button = listenBtn,
+  idleLabel = LISTEN_IDLE_LABEL
+) {
+  if (!samples || !sampleRate) return;
+  activeListenButton = button;
+  activeListenIdleLabel = idleLabel;
 
   const ctx = getAudioContext();
   await ctx.resume();
 
-  const audioBuffer = ctx.createBuffer(1, recordedSamples.length, recordSampleRate);
-  audioBuffer.copyToChannel(recordedSamples, 0);
+  const audioBuffer = ctx.createBuffer(1, samples.length, sampleRate);
+  audioBuffer.copyToChannel(samples, 0);
   const accentClick = makeClickBuffer(ctx, { freqHz: 1800, durationS: 0.07 });
   const regularClick = makeClickBuffer(ctx, { freqHz: 1000, durationS: 0.05 });
 
@@ -459,7 +486,7 @@ async function startListening() {
   };
   listenSourceNodes.push(trackSource);
 
-  tapTimesS.forEach((offsetS, i) => {
+  tapTimes.forEach((offsetS, i) => {
     if (offsetS < 0) return;
 
     const position = (i % BEATS_PER_CYCLE) + 1;
@@ -471,7 +498,7 @@ async function startListening() {
   });
 
   listening = true;
-  listenBtn.textContent = "■ Stop";
+  button.textContent = "■ Stop";
 }
 
 listenBtn.addEventListener("click", async () => {
@@ -481,10 +508,86 @@ listenBtn.addEventListener("click", async () => {
   }
   try {
     statusEl.textContent = "Loading playback…";
-    await startListening();
+    await startListening(recordedSamples, recordSampleRate, tapTimesS);
     statusEl.textContent = "Listening…";
   } catch (err) {
     statusEl.textContent = `Could not play back: ${err.message}`;
+  }
+});
+
+recordsToggleBtn.addEventListener("click", async () => {
+  const opening = recordsView.classList.toggle("hidden") === false;
+  if (opening) await loadRecordsList();
+});
+
+recordsRefreshBtn.addEventListener("click", loadRecordsList);
+
+recordsListEl.addEventListener("change", () => {
+  recordsPlayBtn.disabled = !recordsListEl.value;
+});
+
+// Mirrors loadDatasetOptions() above — same fetch-and-degrade-quietly
+// pattern, since this view is only reachable manually (not on page load),
+// an unreachable server here should read as "nothing to show", not an error.
+async function loadRecordsList() {
+  const dataset = datasetInput.value.trim();
+  if (!dataset) {
+    recordsStatusEl.textContent = "Enter a dataset (Author) first.";
+    return;
+  }
+  recordsStatusEl.textContent = "Loading…";
+  recordsPlayBtn.disabled = true;
+  try {
+    const response = await fetch(`/datasets/${encodeURIComponent(dataset)}/tracks`);
+    const tracks = await response.json();
+    recordsListEl.innerHTML = "";
+    for (const t of tracks) {
+      const option = document.createElement("option");
+      option.value = t.track_id;
+      option.textContent = t.has_annotation
+        ? `${t.track_id}  (${t.meter || "•"})`
+        : `${t.track_id}  (no taps)`;
+      option.disabled = !t.has_annotation;
+      recordsListEl.appendChild(option);
+    }
+    recordsStatusEl.textContent = tracks.length ? "" : "No records in this dataset yet.";
+  } catch (err) {
+    recordsStatusEl.textContent = `Could not load records: ${err.message}`;
+  }
+}
+
+const RECORDS_PLAY_IDLE_LABEL = "▶ Play with clicks";
+
+recordsPlayBtn.addEventListener("click", async () => {
+  if (listening) {
+    stopListening();
+    return;
+  }
+  const dataset = datasetInput.value.trim();
+  const trackId = recordsListEl.value;
+  if (!dataset || !trackId) return;
+
+  try {
+    recordsStatusEl.textContent = "Loading…";
+    const [audioResponse, detail] = await Promise.all([
+      fetch(`/datasets/${encodeURIComponent(dataset)}/tracks/${encodeURIComponent(trackId)}/audio`),
+      fetch(
+        `/datasets/${encodeURIComponent(dataset)}/tracks/${encodeURIComponent(trackId)}/annotations`
+      ).then((r) => r.json()),
+    ]);
+    if (!audioResponse.ok) throw new Error(`audio fetch failed (${audioResponse.status})`);
+
+    const decoded = await getAudioContext().decodeAudioData(await audioResponse.arrayBuffer());
+    await startListening(
+      decoded.getChannelData(0),
+      decoded.sampleRate,
+      detail.tap_times,
+      recordsPlayBtn,
+      RECORDS_PLAY_IDLE_LABEL
+    );
+    recordsStatusEl.textContent = "Listening…";
+  } catch (err) {
+    recordsStatusEl.textContent = `Could not play back: ${err.message}`;
   }
 });
 

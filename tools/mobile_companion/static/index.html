@@ -28,7 +28,8 @@
       color: #aaa;
       margin-bottom: 4px;
     }
-    input {
+    input,
+    select {
       width: 100%;
       box-sizing: border-box;
       font-size: 1rem;
@@ -37,6 +38,9 @@
       border: 1px solid #444;
       color: #eee;
       border-radius: 6px;
+    }
+    select option:disabled {
+      color: #555;
     }
     button {
       font-size: 1.1rem;
@@ -67,7 +71,8 @@
       background: #3a3;
       color: #fff;
     }
-    #listen-btn {
+    #listen-btn,
+    #records-play-btn {
       background: #639;
       color: #fff;
       display: block;
@@ -106,7 +111,8 @@
       font-size: 0.95rem;
     }
     #status,
-    #pending-count {
+    #pending-count,
+    #records-status {
       font-size: 0.9rem;
       color: #aaa;
     }
@@ -138,7 +144,8 @@
       color: #aaa;
       margin: -2px 0 8px 0;
     }
-    .help-text.hidden {
+    .help-text.hidden,
+    #records-view.hidden {
       display: none;
     }
     #app-version {
@@ -223,7 +230,19 @@
     <p id="sync-status"></p>
   </section>
 
-  <p id="app-version">v13.0.0</p>
+  <section>
+    <button id="records-toggle-btn" type="button" class="toggle-btn">📼 Past records</button>
+  </section>
+
+  <section id="records-view" class="hidden">
+    <label for="records-list">Saved recordings in this dataset</label>
+    <select id="records-list" size="8"></select>
+    <button id="records-refresh-btn" type="button">Refresh</button>
+    <button id="records-play-btn" type="button" disabled>▶ Play with clicks</button>
+    <p id="records-status"></p>
+  </section>
+
+  <p id="app-version">v13.1.1</p>
 
   <script type="module" src="/static/app.js"></script>
   <script>

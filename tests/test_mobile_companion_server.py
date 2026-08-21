@@ -284,3 +284,147 @@ class TestUploadAnnotation:
             json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
         )
         assert annotator_data.load_metadata("field_recordings", "take1") is None
+
+
+class TestListTracks:
+    def test_empty_dataset_returns_empty_list(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        response = client.get("/datasets/field_recordings/tracks")
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_lists_uploaded_tracks_sorted(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": "take2"},
+        )
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": "take1"},
+        )
+        response = client.get("/datasets/field_recordings/tracks")
+        track_ids = [t["track_id"] for t in response.json()]
+        assert track_ids == ["take1", "take2"]
+
+    def test_has_annotation_reflects_saved_beats(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": "take1"},
+        )
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": "take2"},
+        )
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
+        )
+        response = client.get("/datasets/field_recordings/tracks")
+        by_id = {t["track_id"]: t for t in response.json()}
+        assert by_id["take1"]["has_annotation"] is True
+        assert by_id["take2"]["has_annotation"] is False
+
+    def test_meter_reflects_beat_positions(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": "take1"},
+        )
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0]},
+        )
+        response = client.get("/datasets/field_recordings/tracks")
+        assert response.json()[0]["meter"] == "1..8"
+
+
+class TestGetAnnotation:
+    def _upload_clip(self, dataset: str, track_id: str) -> None:
+        client.post(
+            f"/datasets/{dataset}/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": track_id},
+        )
+
+    def test_returns_200(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        response = client.get("/datasets/field_recordings/tracks/take1/annotations")
+        assert response.status_code == 200
+
+    def test_round_trips_saved_tap_times(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={"tap_times": [0.5, 1.0, 1.5, 2.0]},
+        )
+        response = client.get("/datasets/field_recordings/tracks/take1/annotations")
+        assert response.json()["tap_times"] == [0.5, 1.0, 1.5, 2.0]
+
+    def test_round_trips_metadata(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        client.post(
+            "/datasets/field_recordings/tracks/take1/annotations",
+            json={
+                "tap_times": [0.0, 0.5, 1.0, 1.5],
+                "structure": "blues",
+                "device": "iPhone 13 mini",
+                "section_aligned": True,
+            },
+        )
+        response = client.get("/datasets/field_recordings/tracks/take1/annotations")
+        body = response.json()
+        assert body["structure"] == "blues"
+        assert body["device"] == "iPhone 13 mini"
+        assert body["section_aligned"] is True
+        assert body["tempo"] == pytest.approx(120.0)
+
+    def test_track_with_no_saved_annotation_returns_empty_tap_times(
+        self, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        self._upload_clip("field_recordings", "take1")
+        response = client.get("/datasets/field_recordings/tracks/take1/annotations")
+        assert response.status_code == 200
+        assert response.json()["tap_times"] == []
+
+
+class TestGetAudio:
+    def test_returns_200_with_wav_content_type(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
+            data={"name": "take1"},
+        )
+        response = client.get("/datasets/field_recordings/tracks/take1/audio")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "audio/wav"
+
+    def test_returned_bytes_are_redecodable(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        client.post(
+            "/datasets/field_recordings/tracks",
+            files={
+                "file": ("clip.wav", _wav_bytes(duration_s=0.5, sr=22050), "audio/wav")
+            },
+            data={"name": "take1"},
+        )
+        response = client.get("/datasets/field_recordings/tracks/take1/audio")
+        audio, sr = sf.read(io.BytesIO(response.content))
+        assert sr == 44100
+        assert len(audio) == pytest.approx(0.5 * 44100, abs=100)
+
+    def test_missing_track_returns_404(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        response = client.get("/datasets/field_recordings/tracks/nope/audio")
+        assert response.status_code == 404
