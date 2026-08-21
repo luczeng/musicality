@@ -728,7 +728,7 @@ async function syncPendingCaptures() {
     syncStatusEl.textContent = `Syncing ${pending.length} capture(s)…`;
 
     let succeeded = 0;
-    let failed = 0;
+    const errors = [];
     for (const capture of pending) {
       try {
         await syncOneCapture(capture);
@@ -736,13 +736,14 @@ async function syncPendingCaptures() {
         await deletePending(capture.id);
         succeeded++;
       } catch (err) {
-        failed++;
+        errors.push(err.message);
         console.warn("[sync] capture failed:", capture.id, err);
       }
     }
 
     syncStatusEl.textContent =
-      `Synced ${succeeded}` + (failed ? `, ${failed} failed (still queued).` : ".");
+      `Synced ${succeeded}` +
+      (errors.length ? `, ${errors.length} failed (still queued): ${errors.join(" | ")}` : ".");
     await refreshPendingCount();
     return succeeded;
   } finally {
