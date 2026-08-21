@@ -154,6 +154,40 @@
       text-align: center;
       margin-top: 24px;
     }
+    #beat-indicator {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .beat-dot {
+      display: block;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #333;
+      border: 2px solid #555;
+      transition:
+        transform 0.08s ease-out,
+        background 0.08s ease-out,
+        border-color 0.08s ease-out;
+    }
+    .beat-dot.bip-one {
+      background: #3c3;
+      border-color: #6f6;
+      transform: scale(1.3);
+    }
+    .beat-dot.bip-beat {
+      background: #cc3;
+      border-color: #ff6;
+      transform: scale(1.3);
+    }
+    .beat-indicator-label {
+      font-size: 0.75rem;
+      color: #666;
+      margin-left: 4px;
+    }
   </style>
 </head>
 <body>
@@ -215,7 +249,14 @@
   </section>
 
   <section>
-    <button id="listen-btn" type="button" disabled>▶ Listen (with clicks)</button>
+    <button id="listen-btn" type="button" disabled>▶ Listen</button>
+    <div id="beat-indicator" aria-hidden="true">
+      <span class="beat-dot"></span>
+      <span class="beat-dot"></span>
+      <span class="beat-dot"></span>
+      <span class="beat-dot"></span>
+      <span class="beat-indicator-label">beat</span>
+    </div>
   </section>
 
   <section>
@@ -238,11 +279,11 @@
     <label for="records-list">Saved recordings in this dataset</label>
     <select id="records-list" size="8"></select>
     <button id="records-refresh-btn" type="button">Refresh</button>
-    <button id="records-play-btn" type="button" disabled>▶ Play with clicks</button>
+    <button id="records-play-btn" type="button" disabled>▶ Play</button>
     <p id="records-status"></p>
   </section>
 
-  <p id="app-version">v13.1.1</p>
+  <p id="app-version">v13.3.0</p>
 
   <script type="module" src="/static/app.js"></script>
   <script>
