@@ -22,8 +22,16 @@ uv pip install -e .
 : "${AWS_SECRET_ACCESS_KEY:?Set AWS_SECRET_ACCESS_KEY (Backblaze B2 application key) before running this script}"
 : "${WANDB_API_KEY:?Set WANDB_API_KEY before running this script}"
 
-echo "Pulling data from Backblaze..."
-uv run dvc pull
+repo_root="$PWD"
+db_dir="$(uv run python -c 'import yaml; from pathlib import Path; print(Path(yaml.safe_load(open("configs/download.yaml"))["data_home"]).resolve())')"
+
+echo "Pulling data from musicality_db..."
+if [ -d "$db_dir/.git" ]; then
+    git -C "$db_dir" pull
+else
+    git clone https://github.com/luczeng/musicality_db.git "$db_dir"
+fi
+(cd "$db_dir" && uv run --project "$repo_root" dvc pull)
 
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"

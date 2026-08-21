@@ -2,7 +2,9 @@ Data formats & splits
 =====================
 
 Two sources feed training data, both read identically by every loader/tool in
-this repo:
+this repo, and both stored under the data directory configured by ``data_dir``
+in ``musicality/dataformats/dataformat.yaml`` (currently ``../musicality_db`` —
+a sibling git+dvc repo, cloned by ``tools/setup_remote.sh``):
 
 - **mirdata datasets** — publicly available beat/tempo-annotated datasets
   (ballroom, brid, hainsworth, rwc_classical, rwc_jazz, rwc_popular,
@@ -10,9 +12,9 @@ this repo:
   `mirdata <https://mirdata.readthedocs.io>`_.
 - **Homemade datasets** — audio recorded and beat-tapped by hand with the
   annotation apps (e.g. a ``swing`` dataset of hand-recorded dance tracks).
-  These live under ``data/<name>/tracks/`` (audio) and
-  ``data/<name>/annotations/*.beats`` (tapped beats), a plain directory
-  layout rather than a mirdata dataset definition.
+  These live under ``../musicality_db/<name>/tracks/`` (audio) and
+  ``../musicality_db/<name>/annotations/*.beats`` (tapped beats), a plain
+  directory layout rather than a mirdata dataset definition.
 
 Data format
 -----------
@@ -25,7 +27,7 @@ Data format
 dataset annotates it).
 
 **Homemade datasets** (recorded via the annotation apps) use a parallel,
-hand-rolled layout under ``data/<dataset>/``, centralized in
+hand-rolled layout under ``../musicality_db/<dataset>/``, centralized in
 ``musicality.dataformats`` (``musicality/dataformats/dataformat.yaml``).
 
 ``.beats`` files use the same ``<time> <position>`` per-line format as

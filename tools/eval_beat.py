@@ -120,7 +120,9 @@ def main():
     parser.add_argument(
         "--dataset", default=DEFAULTS["dataset"], help="mirdata dataset name"
     )
-    parser.add_argument("--data-home", default=None, help="Defaults to data/<dataset>")
+    parser.add_argument(
+        "--data-home", default=None, help=f"Defaults to {DATA_DIR}/<dataset>"
+    )
     parser.add_argument(
         "--split", choices=["train", "val", "all"], default=DEFAULTS["split"]
     )

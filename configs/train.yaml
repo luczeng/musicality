@@ -22,7 +22,7 @@ trainer:
   check_val_every_n_epoch: 1
 data:
   name: ballroom  # mirdata dataset name
-  data_home: ${hydra:runtime.cwd}/data/ballroom
+  data_home: null  # defaults to DATA_DIR/<name> (see musicality.dataformats)
   sample_rate: 22050
   duration: 15.0  # audio clip length, in seconds
   val_split: 0.2  # fraction of data held out for validation

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Plot tempo histograms for all datasets in the data/ directory."""
+"""Plot tempo histograms for all datasets in the configured data directory
+(``data_dir`` in ``musicality/dataformats/dataformat.yaml``)."""
 
 from pathlib import Path
 
@@ -23,13 +24,17 @@ def load_tempos(name: str, path: Path) -> list[float]:
 
 def main():
     available = mirdata.list_datasets()
-    datasets = sorted(e.name for e in DATA_DIR.iterdir() if e.is_dir() and e.name in available)
+    datasets = sorted(
+        e.name for e in DATA_DIR.iterdir() if e.is_dir() and e.name in available
+    )
 
     if not datasets:
-        print("No recognised mirdata datasets found in data/.")
+        print(f"No recognised mirdata datasets found in {DATA_DIR}/.")
         return
 
-    fig, axes = plt.subplots(1, len(datasets), figsize=(5 * len(datasets), 4), sharey=False)
+    fig, axes = plt.subplots(
+        1, len(datasets), figsize=(5 * len(datasets), 4), sharey=False
+    )
     if len(datasets) == 1:
         axes = [axes]
 
@@ -45,7 +50,13 @@ def main():
         ax.set_title(f"{name}  (n={len(tempos)})")
         ax.set_xlabel("Tempo (BPM)")
         ax.set_ylabel("Count")
-        ax.axvline(sum(tempos) / len(tempos), color="red", linestyle="--", linewidth=1, label=f"mean {sum(tempos)/len(tempos):.0f}")
+        ax.axvline(
+            sum(tempos) / len(tempos),
+            color="red",
+            linestyle="--",
+            linewidth=1,
+            label=f"mean {sum(tempos) / len(tempos):.0f}",
+        )
         ax.legend(fontsize=8)
 
     fig.tight_layout()
