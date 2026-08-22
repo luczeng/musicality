@@ -11,12 +11,7 @@ import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
-from musicality.loaders.mirdata_audio import (
-    DATASET_CONFIGS,
-    DatasetConfig,
-    index_audio_by_trailing_number,
-    resolve_audio_path,
-)
+from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
 from musicality.splits.splitter import Splitter
 
 
@@ -126,12 +121,7 @@ class BeatDataset(Dataset):
 
         ds = mirdata.initialize(name, data_home=str(data_home))
 
-        config = DATASET_CONFIGS.get(name, DatasetConfig())
-        audio_by_number = (
-            index_audio_by_trailing_number(data_home)
-            if config.fallback_match_attr
-            else {}
-        )
+        audio_index = index_audio(data_home)
 
         self.samples = []
         n_skipped = 0
@@ -143,7 +133,7 @@ class BeatDataset(Dataset):
                 n_skipped += 1
                 continue
 
-            audio_path = resolve_audio_path(track, name, audio_by_number)
+            audio_path = resolve_audio_path(track, name, audio_index)
             if audio_path is None:
                 n_skipped += 1
                 continue

@@ -1,30 +1,28 @@
 #!/usr/bin/env python3
-"""Migrate a mirdata dataset's beat annotations into this project's own
-tracks/annotations layout (see README's "Data format" section), so tools
-that only understand that layout (the desktop annotator, mobile companion)
-can read the dataset like a homemade one.
+"""Migrate a mirdata dataset into this project's own tracks/annotations
+layout (see docs/source/data.rst's "Data format" section), so every other
+tool (annotator, mobile companion, training loaders) can read it like a
+homemade one — without ever touching mirdata again.
 
-Only annotations/*.beats and annotations/*.meta.json are written here —
-audio is left untouched. Point --dataset at a mirdata dataset whose audio/
-folder you're renaming to tracks/ yourself; this tool just needs to name
-each .beats/.meta.json file with the same stem the corresponding .wav file
-already has (or will have) on disk, so the annotator's tracks/<id>.wav +
-annotations/<id>.beats pairing lines up.
+Writes annotations/*.beats + annotations/*.meta.json, and moves each
+track's audio into tracks/<stem>.wav (renamed out of mirdata's own
+download layout, not copied — mirdata is never read again for a migrated
+track, so there's nothing left to keep the original copy for).
 
 Works out of the box for any mirdata dataset whose track.audio_path already
 resolves to the file on disk (e.g. ballroom, brid, groove_midi) — no config
-needed. Some datasets need a couple lines in
-musicality/loaders/mirdata_audio.py's DATASET_CONFIGS instead: either their
-mirdata Track class exposes audio under a different attribute name (e.g.
-guitarset's audio_mic_path), or the on-disk layout was flattened after
-download and doesn't match mirdata's own index (e.g. this repo's rwc_jazz
-has audio sitting flat as rwc_jazz/tracks/RWC_J001.wav rather than the
-nested rwc-j-m01/1.wav mirdata's index expects) — in which case resolution
-falls back to locating the actual file by matching its trailing number
-against a track attribute you name (piece_number for the RWC datasets),
-rather than guessing a filename convention. That same resolution logic is
-shared with musicality/loaders/{tempo_dataset,beat_dataset}.py, so training
-and this migration tool always agree on where a track's audio lives. See
+needed; re-running migration later (audio already moved into tracks/) is
+handled by the default track_id-based fallback in
+musicality/loaders/mirdata_audio.py's DATASET_CONFIGS. Some datasets need a
+couple lines in DATASET_CONFIGS instead: either their mirdata Track class
+exposes audio under a different attribute name (e.g. guitarset's
+audio_mic_path), or track_id's trailing digits don't reliably match the
+audio filename's (e.g. rwc_jazz's mirdata id RM-J001 vs. its audio's own
+RWC_J001 — piece_number matches reliably there instead). That same
+resolution logic is shared with
+musicality/loaders/{tempo_dataset,beat_dataset}.py until they're rewritten
+to read this project's own format directly, so training and this migration
+tool never disagree about where a track's audio lives in the meantime. See
 DatasetConfig's docstring for exactly what to add for a new dataset.
 
 Tracks with no beat annotation, or whose audio file can't be located
@@ -39,48 +37,29 @@ Usage
 import argparse
 
 import mirdata
-import numpy as np
 
 import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
-from musicality.loaders.mirdata_audio import (
-    DATASET_CONFIGS,
-    DatasetConfig,
-    index_audio_by_trailing_number,
-    resolve_audio_path,
-)
+from musicality.dataformats.track_io import bpm_stats
+from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
 from tools.annotator.naming import sanitize_track_name
 
 DATA_DIR = dataformats.DATA_DIR
 
 
-def _bpm_stats(
-    beat_times: np.ndarray,
-) -> tuple[float, float, float] | tuple[None, None, None]:
-    """Mean/median/std BPM from inter-beat intervals, matching the convention
-    used elsewhere in the annotator (tap_tempo_widget.py, main_window.py)."""
-    if len(beat_times) < 2:
-        return None, None, None
-
-    tempos = 60.0 / np.diff(beat_times)
-
-    return float(np.mean(tempos)), float(np.median(tempos)), float(np.std(tempos))
-
-
 def migrate(dataset_name: str, force: bool) -> None:
-
-    config = DATASET_CONFIGS.get(dataset_name, DatasetConfig())
 
     data_home = DATA_DIR / dataset_name
     ds = mirdata.initialize(dataset_name, data_home=str(data_home))
 
-    # Only pay the rglob cost when a dataset actually needs the fallback —
-    # notably skips it for groove_midi (1150 tracks, slow .beats access).
-    audio_by_number = (
-        index_audio_by_trailing_number(data_home) if config.fallback_match_attr else {}
-    )
+    # Always built: every dataset relies on the exact-track_id fallback tier
+    # to re-resolve audio a prior run already moved into tracks/ (see
+    # mirdata_audio's module docstring). A one-time rglob cost per migration
+    # run, not per training run.
+    audio_index = index_audio(data_home)
 
     n_migrated = 0
+    n_audio_moved = 0
     n_no_beats = 0
     n_unresolved_audio = 0
     n_skipped_existing = 0
@@ -99,12 +78,27 @@ def migrate(dataset_name: str, force: bool) -> None:
             n_no_beats += 1
             continue
 
-        audio_path = resolve_audio_path(track, dataset_name, audio_by_number)
+        audio_path = resolve_audio_path(track, dataset_name, audio_index)
         if audio_path is None:
             print(f"[migrate] '{track_id}': couldn't locate its audio file, skipping")
             n_unresolved_audio += 1
             continue
         stem = sanitize_track_name(audio_path.stem)
+
+        # Always ensure the audio ends up under tracks/, independent of
+        # whether its annotations need (re)writing below — so a track's
+        # audio still gets moved even if a previous run already wrote its
+        # .beats file (e.g. an interrupted run, or migrating with an older
+        # version of this tool that didn't move audio yet). A no-op once
+        # already moved: resolve_audio_path's fallback tier already found
+        # it sitting in tracks/ above, so audio_path == target here.
+        target_audio_path = (
+            data_home / dataformats.FORMAT.tracks_dirname / f"{stem}.wav"
+        )
+        if audio_path != target_audio_path:
+            target_audio_path.parent.mkdir(parents=True, exist_ok=True)
+            audio_path.rename(target_audio_path)
+            n_audio_moved += 1
 
         beats_path = (
             data_home
@@ -118,9 +112,7 @@ def migrate(dataset_name: str, force: bool) -> None:
         track_data = annotator_data.TrackData(
             dataset_name=dataset_name,
             track_id=stem,
-            audio_path=str(
-                data_home / dataformats.FORMAT.tracks_dirname / f"{stem}.wav"
-            ),
+            audio_path=str(target_audio_path),
             tempo=None,
             beat_times=track.beats.times,
             beat_positions=getattr(track.beats, "positions", None),
@@ -128,7 +120,7 @@ def migrate(dataset_name: str, force: bool) -> None:
         )
         annotator_data.save_annotations(track_data, beats_path)
 
-        bpm_mean, bpm_median, bpm_std = _bpm_stats(track.beats.times)
+        bpm_mean, bpm_median, bpm_std = bpm_stats(track.beats.times)
         duration = getattr(track, "duration", None)
         metadata = annotator_data.TrackMetadata(
             duration_s=float(duration) if duration is not None else None,
@@ -142,13 +134,10 @@ def migrate(dataset_name: str, force: bool) -> None:
 
     print(
         f"[migrate] '{dataset_name}': migrated {n_migrated}  •  "
+        f"{n_audio_moved} audio file(s) moved into tracks/  •  "
         f"{n_no_beats} skipped (no beat annotation)  •  "
         f"{n_unresolved_audio} skipped (audio not found)  •  "
         f"{n_skipped_existing} skipped (already migrated, use --force to redo)"
-    )
-    print(
-        f"[migrate] Audio itself wasn't touched — make sure every stem above "
-        f"has a matching {data_home}/tracks/<stem>.wav for the annotator to load it."
     )
 
 

@@ -34,12 +34,7 @@ from pathlib import Path
 import mirdata
 
 import musicality.dataformats as dataformats
-from musicality.loaders.mirdata_audio import (
-    DATASET_CONFIGS,
-    DatasetConfig,
-    index_audio_by_trailing_number,
-    resolve_audio_path,
-)
+from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
 from tools.annotator.naming import sanitize_track_name
 
 DATA_DIR = dataformats.DATA_DIR
@@ -81,16 +76,13 @@ def _audio_stems(dataset_name: str) -> set[str]:
         return {f.stem for f in tracks_dir.iterdir() if f.suffix.lower() == ".wav"}
 
     ds = mirdata.initialize(dataset_name, data_home=str(data_home))
-    config = DATASET_CONFIGS.get(dataset_name, DatasetConfig())
-    audio_by_number = (
-        index_audio_by_trailing_number(data_home) if config.fallback_match_attr else {}
-    )
+    audio_index = index_audio(data_home)
 
     stems: set[str] = set()
 
     for tid in ds.track_ids:
         track = ds.track(tid)
-        audio_path = resolve_audio_path(track, dataset_name, audio_by_number)
+        audio_path = resolve_audio_path(track, dataset_name, audio_index)
         if audio_path is not None:
             stems.add(sanitize_track_name(audio_path.stem))
 

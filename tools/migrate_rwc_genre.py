@@ -33,6 +33,7 @@ import soundfile
 
 import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
+from musicality.dataformats.track_io import bpm_stats
 
 DATA_DIR = dataformats.DATA_DIR
 
@@ -46,19 +47,6 @@ def _read_beat_csv(path: Path) -> tuple[np.ndarray, np.ndarray]:
         times.append(float(t))
         positions.append(int(position))
     return np.array(times, dtype=float), np.array(positions, dtype=int)
-
-
-def _bpm_stats(
-    beat_times: np.ndarray,
-) -> tuple[float, float, float] | tuple[None, None, None]:
-    """Mean/median/std BPM from inter-beat intervals, matching the convention
-    used elsewhere in the annotator (tap_tempo_widget.py, main_window.py)."""
-    if len(beat_times) < 2:
-        return None, None, None
-
-    tempos = 60.0 / np.diff(beat_times)
-
-    return float(np.mean(tempos)), float(np.median(tempos)), float(np.std(tempos))
 
 
 def migrate(dataset_name: str, force: bool) -> None:
@@ -103,7 +91,7 @@ def migrate(dataset_name: str, force: bool) -> None:
         )
         annotator_data.save_annotations(track_data, beats_path)
 
-        bpm_mean, bpm_median, bpm_std = _bpm_stats(beat_times)
+        bpm_mean, bpm_median, bpm_std = bpm_stats(beat_times)
         metadata = annotator_data.TrackMetadata(
             duration_s=soundfile.info(audio_path).duration,
             bpm_mean=bpm_mean,
