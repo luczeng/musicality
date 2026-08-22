@@ -133,6 +133,47 @@ class TestTempoDataset:
 
 
 # ---------------------------------------------------------------------------
+# Merged (manifest-driven) dataset
+# ---------------------------------------------------------------------------
+
+
+class TestMergedDataset:
+    def test_pulls_samples_from_multiple_source_datasets(self, tmp_path):
+        _write_track(tmp_path / "ballroom", "a", bpm_median=120.0)
+        _write_track(tmp_path / "brid", "b", bpm_median=90.0)
+
+        merged_dir = tmp_path / "ballroom_brid"
+        merged_dir.mkdir()
+        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
+
+        from musicality.loaders.tempo_dataset import TempoDataset
+
+        with _patch_audio():
+            ds = TempoDataset(name="ballroom_brid", data_home=merged_dir)
+
+        assert len(ds) == 2
+        audio_paths = {path for path, _ in ds.samples}
+        assert any("ballroom" in p for p in audio_paths)
+        assert any("brid" in p for p in audio_paths)
+        assert sorted(tempo for _, tempo in ds.samples) == [90.0, 120.0]
+
+    def test_skips_unresolvable_metadata_across_sources(self, tmp_path):
+        _write_track(tmp_path / "ballroom", "a", bpm_median=120.0)
+        _write_track(tmp_path / "brid", "b", bpm_median=None)
+
+        merged_dir = tmp_path / "ballroom_brid"
+        merged_dir.mkdir()
+        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
+
+        from musicality.loaders.tempo_dataset import TempoDataset
+
+        with _patch_audio():
+            ds = TempoDataset(name="ballroom_brid", data_home=merged_dir)
+
+        assert len(ds) == 1
+
+
+# ---------------------------------------------------------------------------
 # DataLoader integration
 # ---------------------------------------------------------------------------
 

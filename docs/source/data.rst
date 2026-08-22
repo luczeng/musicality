@@ -84,6 +84,34 @@ parallel ``.beats``/``.meta.json`` pair for the same ``track_id``.
 track — picking a specific annotator's take for training is separate future
 work.
 
+Merging datasets
+-----------------
+
+``tools/merge_datasets.py --datasets ballroom brid --output ballroom_brid``
+combines several already-migrated datasets into one logical dataset,
+without moving or copying any audio/annotation files. It writes a single
+manifest — ``../musicality_db/ballroom_brid/tracks.txt``, one
+``<dataset_name>/<track_id>`` line per line (the filename comes from
+``dataformat.yaml``'s ``manifest_filename``) — and fails fast if any source
+dataset hasn't been migrated yet (no ``.beats`` files at all).
+
+``TempoDataset``/``BeatDataset`` resolve this manifest transparently via
+``musicality.dataformats.track_io.list_track_refs``: passing
+``name="ballroom_brid"`` reads every ``<dataset_name>/<track_id>`` entry and
+loads each track's audio/annotations from its own source dataset's
+directory rather than from ``ballroom_brid/`` itself. A merged dataset name
+is then usable anywhere a real dataset name is — including
+``data.name: ballroom_brid`` in a training config, and
+``tools/create_splits.py --datasets ballroom_brid`` to give it its own
+train/val split — with no further code changes.
+
+The one constraint: a merged dataset's source datasets are resolved
+*sibling-relative* to its own directory (``ballroom_brid``'s parent, i.e.
+``../musicality_db``), not copied or referenced by absolute path. This is
+already how ``merge_datasets.py`` always writes a merged output, so it's
+never a concern in the normal workflow — it only matters if a manifest is
+relocated by hand.
+
 API reference
 -------------
 

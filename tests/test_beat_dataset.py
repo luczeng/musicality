@@ -274,6 +274,53 @@ class TestBeatDataset:
         assert torch.all(target[LAST] == 0.0)
 
 
+class TestMergedBeatDataset:
+    def test_pulls_samples_from_multiple_source_datasets(self, tmp_path):
+        _write_track(
+            tmp_path / "ballroom", "a", beat_times=[0.5, 1.0, 1.5], positions=[1, 2, 3]
+        )
+        _write_track(tmp_path / "brid", "b", beat_times=[0.5, 1.0])
+
+        merged_dir = tmp_path / "ballroom_brid"
+        merged_dir.mkdir()
+        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
+
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        with _patch_audio():
+            ds = BeatDataset(
+                name="ballroom_brid",
+                data_home=merged_dir,
+                sample_rate=SAMPLE_RATE,
+                duration=DURATION,
+            )
+
+        assert len(ds) == 2
+        audio_paths = {sample[0] for sample in ds.samples}
+        assert any("ballroom" in p for p in audio_paths)
+        assert any("brid" in p for p in audio_paths)
+
+    def test_skips_unresolvable_audio_across_sources(self, tmp_path):
+        _write_track(tmp_path / "ballroom", "a", beat_times=[0.5, 1.0])
+
+        merged_dir = tmp_path / "ballroom_brid"
+        merged_dir.mkdir()
+        # "brid/b" is listed but brid/ was never populated on disk.
+        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
+
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        with _patch_audio():
+            ds = BeatDataset(
+                name="ballroom_brid",
+                data_home=merged_dir,
+                sample_rate=SAMPLE_RATE,
+                duration=DURATION,
+            )
+
+        assert len(ds) == 1
+
+
 class TestGaussianSmear:
     def test_isolated_spike_peak_is_one(self):
         from musicality.loaders.beat_dataset import gaussian_smear

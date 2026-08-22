@@ -10,7 +10,7 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import (
-    list_migrated_track_ids,
+    list_track_refs,
     load_metadata,
     resolve_track_audio,
 )
@@ -31,6 +31,9 @@ class TempoDataset(Dataset):
     :param name: Dataset name (e.g. ``"rwc_popular"``, ``"swing"``) — must
         already be migrated to this project's own format (see
         ``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``).
+        Can also be a merged dataset produced by ``tools/merge_datasets.py``,
+        pulling tracks from several source datasets (see
+        :func:`musicality.dataformats.track_io.list_track_refs`).
     :param data_home: Dataset directory. Defaults to ``DATA_DIR/<name>``
         (``DATA_DIR`` from :mod:`musicality.dataformats`).
     :param sample_rate: Target sample rate. Audio is resampled if needed.
@@ -54,12 +57,16 @@ class TempoDataset(Dataset):
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing.
         self.samples = []
 
-        for stem in list_migrated_track_ids(name, data_home):
-            metadata = load_metadata(name, stem, data_home=data_home)
+        for ref in list_track_refs(name, data_home):
+            metadata = load_metadata(
+                ref.dataset_name, ref.track_id, data_home=ref.data_home
+            )
             if metadata is None or metadata.bpm_median is None:
                 continue
 
-            audio_path = resolve_track_audio(name, stem, data_home)
+            audio_path = resolve_track_audio(
+                ref.dataset_name, ref.track_id, ref.data_home
+            )
             if audio_path is not None:
                 self.samples.append((str(audio_path), metadata.bpm_median))
 

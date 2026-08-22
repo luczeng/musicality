@@ -6,7 +6,8 @@ load_metadata, and annotation_path/metadata_path are moved-as-is code
 already covered by tests/test_annotator_data.py and
 tests/test_annotator_metadata.py, which exercise the same code through
 tools.annotator.data's re-export. This file covers only what's genuinely
-new: list_migrated_track_ids, resolve_track_audio, and bpm_stats.
+new: list_migrated_track_ids, resolve_track_audio, list_track_refs, and
+bpm_stats.
 """
 
 import numpy as np
@@ -14,8 +15,10 @@ import pytest
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import (
+    TrackRef,
     bpm_stats,
     list_migrated_track_ids,
+    list_track_refs,
     resolve_track_audio,
 )
 
@@ -59,6 +62,65 @@ class TestListMigratedTrackIds:
         ann_dir.mkdir(parents=True)
         (ann_dir / "a.beats").write_text("1.0 1")
         assert list_migrated_track_ids("swing") == []
+
+
+# ---------------------------------------------------------------------------
+# list_track_refs
+# ---------------------------------------------------------------------------
+
+
+class TestListTrackRefs:
+    def test_no_manifest_falls_back_to_migrated_track_ids(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        ann_dir = tmp_path / "swing" / "annotations"
+        ann_dir.mkdir(parents=True)
+        (ann_dir / "b.beats").write_text("1.0 1")
+        (ann_dir / "a.beats").write_text("1.0 1")
+
+        refs = list_track_refs("swing")
+
+        assert refs == [
+            TrackRef("swing", "a", tmp_path / "swing"),
+            TrackRef("swing", "b", tmp_path / "swing"),
+        ]
+
+    def test_manifest_resolves_multiple_sibling_sources(self, tmp_path):
+        merged_dir = tmp_path / "merged"
+        merged_dir.mkdir()
+        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
+
+        refs = list_track_refs("merged", data_home=merged_dir)
+
+        assert refs == [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
+    def test_manifest_ignores_blank_and_whitespace_lines(self, tmp_path):
+        merged_dir = tmp_path / "merged"
+        merged_dir.mkdir()
+        (merged_dir / "tracks.txt").write_text("ballroom/a\n\n   \nbrid/b\n")
+
+        refs = list_track_refs("merged", data_home=merged_dir)
+
+        assert refs == [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
+    def test_manifest_takes_precedence_over_annotations_dir(self, tmp_path):
+        """Shouldn't happen in practice — a merged dataset has no
+        ``annotations/`` of its own — but confirms the manifest file is
+        checked before falling back to scanning ``annotations/``."""
+
+        merged_dir = tmp_path / "merged"
+        (merged_dir / "annotations").mkdir(parents=True)
+        (merged_dir / "annotations" / "x.beats").write_text("1.0 1")
+        (merged_dir / "tracks.txt").write_text("ballroom/a\n")
+
+        refs = list_track_refs("merged", data_home=merged_dir)
+
+        assert refs == [TrackRef("ballroom", "a", tmp_path / "ballroom")]
 
 
 # ---------------------------------------------------------------------------

@@ -14,9 +14,9 @@ This tool writes no audio and no annotation files of its own — only a
 ``tracks.txt`` manifest under ``<output>/``, one ``<dataset>/<track_id>``
 name per line. Audio and annotations are left exactly where they already
 live, under each source dataset's own ``tracks/``/``annotations/``
-directories; a loader consuming this manifest is expected to resolve each
-name back against its source dataset (a second step, not part of this
-tool).
+directories; ``musicality.dataformats.track_io.list_track_refs`` is what
+resolves each name back against its source dataset, transparently, when
+``TempoDataset``/``BeatDataset`` load a merged output by name.
 
 Only tracks with a saved ``.beats`` annotation, and a resolvable audio file,
 are listed — a track lacking either, even in an otherwise-migrated dataset,
@@ -34,8 +34,6 @@ from pathlib import Path
 import musicality.dataformats as dataformats
 
 DATA_DIR = dataformats.DATA_DIR
-
-MANIFEST_FILENAME = "tracks.txt"
 
 
 def _migrated_beats_files(dataset_name: str) -> list[Path]:
@@ -82,7 +80,7 @@ def merge(dataset_names: list[str], output_name: str, force: bool) -> None:
             f"(CSV-annotated ones) first."
         )
 
-    manifest_path = DATA_DIR / output_name / MANIFEST_FILENAME
+    manifest_path = DATA_DIR / output_name / dataformats.FORMAT.manifest_filename
     if manifest_path.exists() and not force:
         raise FileExistsError(
             f"{manifest_path} already exists — pass --force to overwrite it."

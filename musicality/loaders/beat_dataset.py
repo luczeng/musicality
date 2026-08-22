@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import (
-    list_migrated_track_ids,
+    list_track_refs,
     read_beats_file,
     resolve_track_audio,
 )
@@ -76,6 +76,9 @@ class BeatDataset(Dataset):
     :param name: Dataset name (e.g. ``"ballroom"``, ``"swing"``) — must
         already be migrated to this project's own format (see
         ``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``).
+        Can also be a merged dataset produced by ``tools/merge_datasets.py``,
+        pulling tracks from several source datasets (see
+        :func:`musicality.dataformats.track_io.list_track_refs`).
     :param data_home: Dataset directory. Defaults to ``DATA_DIR/<name>``
         (``DATA_DIR`` from :mod:`musicality.dataformats`).
     :param sample_rate: Target sample rate. Audio is resampled if needed.
@@ -130,16 +133,18 @@ class BeatDataset(Dataset):
         n_no_positions = 0
         n_non_binary = 0
 
-        for stem in list_migrated_track_ids(name, data_home):
-            audio_path = resolve_track_audio(name, stem, data_home)
+        for ref in list_track_refs(name, data_home):
+            audio_path = resolve_track_audio(
+                ref.dataset_name, ref.track_id, ref.data_home
+            )
             if audio_path is None:
                 n_skipped += 1
                 continue
 
             beats_path = (
-                data_home
+                ref.data_home
                 / dataformats.FORMAT.annotations_dirname
-                / f"{stem}{dataformats.FORMAT.beats_suffix}"
+                / f"{ref.track_id}{dataformats.FORMAT.beats_suffix}"
             )
             beat_times, positions = read_beats_file(beats_path)
 
