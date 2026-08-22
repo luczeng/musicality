@@ -16,7 +16,6 @@ import random
 import sys
 from pathlib import Path
 
-import mirdata
 from PySide6.QtWidgets import QApplication
 
 import musicality.dataformats as dataformats
@@ -28,9 +27,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / dataformats.load().data_dir
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Interactive track annotator.")
-    parser.add_argument(
-        "--dataset", default=None, help="mirdata dataset name (e.g. ballroom)"
-    )
+    parser.add_argument("--dataset", default=None, help="Dataset name (e.g. ballroom)")
     parser.add_argument("--track", default=None, help="Track ID (random if omitted)")
     args = parser.parse_args()
 

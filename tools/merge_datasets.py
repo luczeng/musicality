@@ -31,11 +31,7 @@ Usage
 import argparse
 from pathlib import Path
 
-import mirdata
-
 import musicality.dataformats as dataformats
-from tools.annotator.naming import sanitize_track_name
-from tools.mirdata_audio import index_audio, resolve_audio_path
 
 DATA_DIR = dataformats.DATA_DIR
 
@@ -57,36 +53,19 @@ def _migrated_beats_files(dataset_name: str) -> list[Path]:
 
 
 def _audio_stems(dataset_name: str) -> set[str]:
-    """Return every track's sanitized audio stem that actually resolves on disk
-    for *dataset_name*.
+    """Return every audio file's stem under ``tracks/`` for *dataset_name*.
 
-    A ``tracks/`` folder (homemade datasets, or a mirdata dataset flattened
-    by hand) is indexed directly. Otherwise falls back to mirdata plus the
-    same audio-resolution logic ``tools/migrate_mirdata_dataset.py`` uses,
-    so a ``.beats`` file migrated from mirdata is matched back to its audio
-    under the exact stem the migration tool named it with (mirdata's own
-    track id and the resolved audio stem often differ — e.g. rwc_jazz's
-    ``RM-J001`` vs. its audio's ``RWC_J001``).
+    Migration (``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``)
+    always places audio under ``tracks/`` alongside a track's ``.beats`` file,
+    so a migrated dataset's ``tracks/`` folder is the single source of truth
+    here — no mirdata fallback needed.
     """
 
-    data_home = DATA_DIR / dataset_name
-    tracks_dir = data_home / dataformats.FORMAT.tracks_dirname
+    tracks_dir = DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
+    if not tracks_dir.is_dir():
+        return set()
 
-    if tracks_dir.is_dir():
-        return {f.stem for f in tracks_dir.iterdir() if f.suffix.lower() == ".wav"}
-
-    ds = mirdata.initialize(dataset_name, data_home=str(data_home))
-    audio_index = index_audio(data_home)
-
-    stems: set[str] = set()
-
-    for tid in ds.track_ids:
-        track = ds.track(tid)
-        audio_path = resolve_audio_path(track, dataset_name, audio_index)
-        if audio_path is not None:
-            stems.add(sanitize_track_name(audio_path.stem))
-
-    return stems
+    return {f.stem for f in tracks_dir.iterdir() if f.suffix.lower() == ".wav"}
 
 
 def merge(dataset_names: list[str], output_name: str, force: bool) -> None:
