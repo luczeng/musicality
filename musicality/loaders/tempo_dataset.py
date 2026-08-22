@@ -9,6 +9,12 @@ import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
+from musicality.loaders.mirdata_audio import (
+    DATASET_CONFIGS,
+    DatasetConfig,
+    index_audio_by_trailing_number,
+    resolve_audio_path,
+)
 
 
 DATA_DIR = dataformats.DATA_DIR
@@ -44,13 +50,29 @@ class TempoDataset(Dataset):
 
         ds = mirdata.initialize(name, data_home=str(data_home))
 
-        # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing
-        self.samples = [
-            (ds.track(tid).audio_path, ds.track(tid).tempo)
-            for tid in ds.track_ids
-            if ds.track(tid).tempo is not None
-            and Path(ds.track(tid).audio_path).exists()
-        ]
+        config = DATASET_CONFIGS.get(name, DatasetConfig())
+        audio_by_number = (
+            index_audio_by_trailing_number(data_home)
+            if config.fallback_match_attr
+            else {}
+        )
+
+        # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing.
+        # Some mirdata datasets' Track class has no `tempo` attribute at all (e.g.
+        # rwc_jazz/rwc_classical only carry beat annotations) — getattr treats that
+        # the same as an annotated-but-empty track and skips it.
+        self.samples = []
+
+        for tid in ds.track_ids:
+            track = ds.track(tid)
+            tempo = getattr(track, "tempo", None)
+
+            if tempo is None:
+                continue
+
+            audio_path = resolve_audio_path(track, name, audio_by_number)
+            if audio_path is not None:
+                self.samples.append((str(audio_path), tempo))
 
     def __len__(self) -> int:
         return len(self.samples)

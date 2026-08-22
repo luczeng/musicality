@@ -54,6 +54,7 @@ const recordsListEl = document.getElementById("records-list");
 const recordsRefreshBtn = document.getElementById("records-refresh-btn");
 const recordsPlayBtn = document.getElementById("records-play-btn");
 const recordsStatusEl = document.getElementById("records-status");
+const appVersionEl = document.getElementById("app-version");
 
 let audioCtx = null;
 let workletModulePromise = null;
@@ -305,6 +306,7 @@ recordBtn.addEventListener("click", async () => {
     recording = true;
   } catch (err) {
     statusEl.textContent = `Could not access microphone: ${err.message}`;
+    reportClientError("record:start", err);
   }
 });
 
@@ -544,6 +546,7 @@ listenBtn.addEventListener("click", async () => {
     statusEl.textContent = "Listening…";
   } catch (err) {
     statusEl.textContent = `Could not play back: ${err.message}`;
+    reportClientError("listen:playback", err);
   }
 });
 
@@ -585,6 +588,7 @@ async function loadRecordsList() {
     recordsStatusEl.textContent = tracks.length ? "" : "No records in this dataset yet.";
   } catch (err) {
     recordsStatusEl.textContent = `Could not load records: ${err.message}`;
+    reportClientError("records:load", err, { dataset });
   }
 }
 
@@ -620,6 +624,7 @@ recordsPlayBtn.addEventListener("click", async () => {
     recordsStatusEl.textContent = "Listening…";
   } catch (err) {
     recordsStatusEl.textContent = `Could not play back: ${err.message}`;
+    reportClientError("records:play", err, { dataset, trackId });
   }
 });
 
@@ -661,6 +666,37 @@ saveBtn.addEventListener("click", async () => {
   statusEl.textContent = "Saved locally.";
   await refreshPendingCount();
 });
+
+// Best-effort report of a user-facing error to the server, so a failure is
+// visible from the machine running the server without needing physical
+// access to the phone. Must never throw or hang: reporting a failure can't
+// become a second failure on top of the one it's reporting, and a dead or
+// slow connection is often *why* the original error happened, so this is
+// time-boxed and swallows everything, including its own fetch failing.
+async function reportClientError(context, err, extra = {}) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 5000);
+  try {
+    await fetch("/client-errors", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        context,
+        message: err?.message ?? String(err),
+        stack: err?.stack ?? null,
+        appVersion: appVersionEl?.textContent ?? null,
+        userAgent: navigator.userAgent,
+        clientTime: new Date().toISOString(),
+        ...extra,
+      }),
+      signal: controller.signal,
+    });
+  } catch {
+    // Reporting is best-effort only.
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 async function syncOneCapture(capture) {
   const uploadForm = new FormData();
@@ -738,6 +774,10 @@ async function syncPendingCaptures() {
       } catch (err) {
         errors.push(err.message);
         console.warn("[sync] capture failed:", capture.id, err);
+        reportClientError("sync", err, {
+          captureId: capture.id,
+          dataset: capture.dataset,
+        });
       }
     }
 
