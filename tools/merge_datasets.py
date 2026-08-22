@@ -34,8 +34,8 @@ from pathlib import Path
 import mirdata
 
 import musicality.dataformats as dataformats
-from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
 from tools.annotator.naming import sanitize_track_name
+from tools.mirdata_audio import index_audio, resolve_audio_path
 
 DATA_DIR = dataformats.DATA_DIR
 
@@ -62,11 +62,11 @@ def _audio_stems(dataset_name: str) -> set[str]:
 
     A ``tracks/`` folder (homemade datasets, or a mirdata dataset flattened
     by hand) is indexed directly. Otherwise falls back to mirdata plus the
-    same audio-resolution logic ``tools/migrate_mirdata_dataset.py`` and the
-    training loaders use, so a ``.beats`` file migrated from mirdata is
-    matched back to its audio under the exact stem the migration tool named
-    it with (mirdata's own track id and the resolved audio stem often
-    differ — e.g. rwc_jazz's ``RM-J001`` vs. its audio's ``RWC_J001``).
+    same audio-resolution logic ``tools/migrate_mirdata_dataset.py`` uses,
+    so a ``.beats`` file migrated from mirdata is matched back to its audio
+    under the exact stem the migration tool named it with (mirdata's own
+    track id and the resolved audio stem often differ — e.g. rwc_jazz's
+    ``RM-J001`` vs. its audio's ``RWC_J001``).
     """
 
     data_home = DATA_DIR / dataset_name

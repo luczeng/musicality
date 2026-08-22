@@ -108,19 +108,26 @@ def bpm_stats(
 # ---------------------------------------------------------------------------
 
 
-def _annotations_slot_dir(dataset_name: str, annotator_id: str | None) -> Path:
+def _annotations_slot_dir(
+    dataset_name: str, annotator_id: str | None, data_home: Path | None = None
+) -> Path:
     """Return the annotations directory for one annotator's slot.
 
     ``annotator_id=None`` is the original, unsuffixed default slot, so every
     file saved before multi-annotator support existed keeps resolving to the
     same path. A non-None id is sanitized the same way track ids are, since
     it can come from free-form input (e.g. the mobile companion).
+
+    :param data_home: Dataset directory to use instead of the canonical
+        ``dataformats.DATA_DIR / dataset_name`` (e.g. a training script's
+        ``--data-home`` override). Read fresh rather than caching
+        ``dataformats.DATA_DIR`` at import time, so tests can monkeypatch it
+        (module-level snapshots wouldn't see the patch).
     """
 
-    # Read dataformats.DATA_DIR fresh rather than caching it at import time,
-    # so tests can monkeypatch it (module-level snapshots wouldn't see the
-    # patch).
-    base = dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.annotations_dirname
+    base = (data_home or dataformats.DATA_DIR / dataset_name) / (
+        dataformats.FORMAT.annotations_dirname
+    )
     if annotator_id:
         return base / sanitize_track_name(annotator_id)
     return base
@@ -139,15 +146,19 @@ def annotation_path(track: TrackData) -> Path:
 
 
 def metadata_path(
-    dataset_name: str, track_id: str, annotator_id: str | None = None
+    dataset_name: str,
+    track_id: str,
+    annotator_id: str | None = None,
+    data_home: Path | None = None,
 ) -> Path:
     """Return the canonical save path for a track's metadata (.meta.json file).
 
-    Nested under *annotator_id*'s slot; ``None`` is the default slot.
+    Nested under *annotator_id*'s slot; ``None`` is the default slot. See
+    :func:`_annotations_slot_dir` for *data_home*.
     """
 
     return (
-        _annotations_slot_dir(dataset_name, annotator_id)
+        _annotations_slot_dir(dataset_name, annotator_id, data_home)
         / f"{track_id}{dataformats.FORMAT.metadata_suffix}"
     )
 
@@ -215,11 +226,16 @@ def save_metadata(dataset_name: str, track_id: str, metadata: TrackMetadata) -> 
 
 
 def load_metadata(
-    dataset_name: str, track_id: str, annotator_id: str | None = None
+    dataset_name: str,
+    track_id: str,
+    annotator_id: str | None = None,
+    data_home: Path | None = None,
 ) -> TrackMetadata | None:
-    """Load a track's metadata for *annotator_id*'s slot, or None if unsaved."""
+    """Load a track's metadata for *annotator_id*'s slot, or None if unsaved.
+    See :func:`_annotations_slot_dir` for *data_home*.
+    """
 
-    path = metadata_path(dataset_name, track_id, annotator_id)
+    path = metadata_path(dataset_name, track_id, annotator_id, data_home)
     if not path.exists():
         return None
     return TrackMetadata(**json.loads(path.read_text()))
@@ -230,16 +246,19 @@ def load_metadata(
 # ---------------------------------------------------------------------------
 
 
-def list_migrated_track_ids(dataset_name: str) -> list[str]:
+def list_migrated_track_ids(
+    dataset_name: str, data_home: Path | None = None
+) -> list[str]:
     """Return every track id with a default-slot .beats file for *dataset_name*.
 
     Non-recursive, so annotator subdirectories (alternate annotation slots)
     are excluded. An empty result means *dataset_name* hasn't been migrated
-    to this project's own format yet.
+    to this project's own format yet. See :func:`_annotations_slot_dir` for
+    *data_home*.
     """
 
-    ann_dir = (
-        dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.annotations_dirname
+    ann_dir = (data_home or dataformats.DATA_DIR / dataset_name) / (
+        dataformats.FORMAT.annotations_dirname
     )
     if not ann_dir.is_dir():
         return []
@@ -247,13 +266,16 @@ def list_migrated_track_ids(dataset_name: str) -> list[str]:
     return sorted(p.stem for p in ann_dir.glob(f"*{dataformats.FORMAT.beats_suffix}"))
 
 
-def resolve_track_audio(dataset_name: str, track_id: str) -> Path | None:
+def resolve_track_audio(
+    dataset_name: str, track_id: str, data_home: Path | None = None
+) -> Path | None:
     """Return the on-disk audio path for *track_id* in *dataset_name*, or
-    ``None`` if no ``tracks/<track_id>.wav`` exists."""
+    ``None`` if no ``tracks/<track_id>.wav`` exists. See
+    :func:`_annotations_slot_dir` for *data_home*.
+    """
 
     path = (
-        dataformats.DATA_DIR
-        / dataset_name
+        (data_home or dataformats.DATA_DIR / dataset_name)
         / dataformats.FORMAT.tracks_dirname
         / f"{track_id}.wav"
     )
