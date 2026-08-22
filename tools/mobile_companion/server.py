@@ -8,12 +8,14 @@ from a phone are indistinguishable from ones made in the desktop app.
 from __future__ import annotations
 
 import io
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import librosa
 import numpy as np
 import soundfile as sf
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -24,6 +26,7 @@ from tools.annotator.naming import generate_track_id, sanitize_track_name
 
 _SR = 44100
 _STATIC_DIR = Path(__file__).parent / "static"
+_CLIENT_ERROR_LOG = Path(__file__).parent / "logs" / "client_errors.jsonl"
 
 app = FastAPI(title="musicality mobile companion")
 app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
@@ -59,6 +62,33 @@ def service_worker() -> FileResponse:
 
 @app.get("/health")
 def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
+@app.post("/client-errors")
+async def log_client_error(request: Request) -> dict[str, str]:
+    # No pydantic body model on purpose: the whole point of this endpoint is
+    # to capture failures, so an unexpected/malformed payload should still
+    # get logged (as raw text) rather than trigger FastAPI's own 422 — and
+    # nothing here ever raises, so a broken report can't cascade into a
+    # second failure for the client that's already failing at something else.
+    try:
+        raw = await request.body()
+        try:
+            payload = json.loads(raw) if raw else {}
+        except Exception:
+            payload = {"raw": raw.decode("utf-8", errors="replace")}
+        if not isinstance(payload, dict):
+            payload = {"payload": payload}
+
+        entry = {"received_at": datetime.now(timezone.utc).isoformat(), **payload}
+
+        _CLIENT_ERROR_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with open(_CLIENT_ERROR_LOG, "a") as f:
+            f.write(json.dumps(entry, default=str) + "\n")
+    except Exception as exc:
+        print(f"[client-errors] failed to persist report: {exc}")
+
     return {"status": "ok"}
 
 
