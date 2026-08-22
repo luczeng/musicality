@@ -1,30 +1,38 @@
-"""PyTorch Dataset and DataLoader for mirdata tempo datasets."""
+"""PyTorch Dataset and DataLoader for this project's own tempo-annotated
+datasets (see docs/source/data.rst's "Data format" section)."""
 
 from pathlib import Path
 
-import mirdata
 import torch
 import torchaudio
 import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
-from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
-
-
-DATA_DIR = dataformats.DATA_DIR
+from musicality.dataformats.track_io import (
+    list_migrated_track_ids,
+    load_metadata,
+    resolve_track_audio,
+)
 
 
 class TempoDataset(Dataset):
-    """Generic mirdata dataset returning raw waveforms and tempo labels.
+    """Dataset returning raw waveforms and tempo labels, read entirely from
+    this project's own tracks/+annotations/ format.
 
-    Loads any mirdata dataset that exposes a ``tempo`` attribute per track.
-    Tracks without a tempo annotation or missing audio are silently skipped.
-    Preprocessing (e.g. mel transform) is left to the model.
+    Loads every track with a migrated ``.beats`` annotation whose
+    ``.meta.json`` carries a ``bpm_median`` (see
+    :func:`musicality.dataformats.track_io.bpm_stats`, computed by the
+    migration tools from the beat annotation itself — there's no separate
+    ground-truth tempo field in this format). Tracks missing either are
+    silently skipped. Preprocessing (e.g. mel transform) is left to the
+    model.
 
-    :param name: mirdata dataset name (e.g. ``"brid"``, ``"ballroom"``).
-    :param data_home: Path to the dataset directory. Defaults to
-        ``DATA_DIR/<name>`` (``DATA_DIR`` from :mod:`musicality.dataformats`).
+    :param name: Dataset name (e.g. ``"rwc_popular"``, ``"swing"``) — must
+        already be migrated to this project's own format (see
+        ``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``).
+    :param data_home: Dataset directory. Defaults to ``DATA_DIR/<name>``
+        (``DATA_DIR`` from :mod:`musicality.dataformats`).
     :param sample_rate: Target sample rate. Audio is resampled if needed.
     :param duration: Clip duration in seconds. Longer clips are truncated,
         shorter clips are zero-padded.
@@ -38,31 +46,22 @@ class TempoDataset(Dataset):
         duration: float = 10.0,
     ):
         if data_home is None:
-            data_home = DATA_DIR / name
+            data_home = dataformats.DATA_DIR / name
 
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
 
-        ds = mirdata.initialize(name, data_home=str(data_home))
-
-        audio_index = index_audio(data_home)
-
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing.
-        # Some mirdata datasets' Track class has no `tempo` attribute at all (e.g.
-        # rwc_jazz/rwc_classical only carry beat annotations) — getattr treats that
-        # the same as an annotated-but-empty track and skips it.
         self.samples = []
 
-        for tid in ds.track_ids:
-            track = ds.track(tid)
-            tempo = getattr(track, "tempo", None)
-
-            if tempo is None:
+        for stem in list_migrated_track_ids(name, data_home):
+            metadata = load_metadata(name, stem, data_home=data_home)
+            if metadata is None or metadata.bpm_median is None:
                 continue
 
-            audio_path = resolve_audio_path(track, name, audio_index)
+            audio_path = resolve_track_audio(name, stem, data_home)
             if audio_path is not None:
-                self.samples.append((str(audio_path), tempo))
+                self.samples.append((str(audio_path), metadata.bpm_median))
 
     def __len__(self) -> int:
         return len(self.samples)

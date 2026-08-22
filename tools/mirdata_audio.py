@@ -27,9 +27,12 @@ longer exists), resolution falls back in two tiers:
 Onboarding a new mirdata dataset needs no config at all unless one of these
 tiers doesn't apply — see ``DatasetConfig``'s docstring.
 
-Shared by ``tools/migrate_mirdata_dataset.py`` (annotation + audio
-migration) and, until they're rewritten to read this project's own format
-directly, ``musicality/loaders/{tempo_dataset,beat_dataset}.py``.
+Used by ``tools/migrate_mirdata_dataset.py`` (annotation + audio migration)
+and ``tools/merge_datasets.py``'s mirdata fallback. Training
+(``musicality/loaders/{tempo_dataset,beat_dataset}.py``) no longer touches
+mirdata at all — it reads this project's own tracks/+annotations/ format
+directly, which is why this module lives under ``tools/`` rather than
+``musicality/``: only migration tooling still needs mirdata.
 """
 
 import re

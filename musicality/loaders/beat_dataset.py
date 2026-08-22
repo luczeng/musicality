@@ -1,9 +1,9 @@
-"""PyTorch Dataset for mirdata beat/bar-position estimation datasets."""
+"""PyTorch Dataset for this project's own beat/bar-position-annotated
+datasets (see docs/source/data.rst's "Data format" section)."""
 
 import random
 from pathlib import Path
 
-import mirdata
 import numpy as np
 import torch
 import torchaudio
@@ -11,7 +11,11 @@ import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
-from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
+from musicality.dataformats.track_io import (
+    list_migrated_track_ids,
+    read_beats_file,
+    resolve_track_audio,
+)
 from musicality.splits.splitter import Splitter
 
 
@@ -45,10 +49,11 @@ def gaussian_smear(spike: np.ndarray, sigma: float) -> np.ndarray:
 
 
 class BeatDataset(Dataset):
-    """Generic mirdata dataset returning waveforms and frame-level beat-phase targets.
+    """Dataset returning waveforms and frame-level beat-phase targets, read
+    entirely from this project's own tracks/+annotations/ format.
 
-    Loads any mirdata dataset that exposes a ``beats`` attribute per track.
-    Tracks without beat annotations or missing audio are silently skipped.
+    Loads every track with a migrated ``.beats`` annotation and a
+    resolvable ``tracks/<id>.wav``.
 
     The target is a 4-channel tensor of shape ``(4, n_frames)`` where
     ``n_frames = n_samples // hop_length``:
@@ -60,18 +65,19 @@ class BeatDataset(Dataset):
       ``group_size=4``; e.g. phrase position 8 for a phrase-annotated dataset
       with ``group_size=8``).
     - ``mask`` — constant 1.0 across all frames if this track carries position
-      annotations (``mirdata``'s ``bar_index`` unit, or an equivalent field for
-      a custom phrase-annotated dataset), else constant 0.0. Datasets without
-      position annotations (e.g. ``rwc_popular``) still contribute their
-      ``beat`` channel; the ``one``/``last`` channels should be excluded from
-      the loss for those tracks via this mask.
+      annotations, else constant 0.0. Datasets without position annotations
+      (e.g. ``rwc_popular``) still contribute their ``beat`` channel; the
+      ``one``/``last`` channels should be excluded from the loss for those
+      tracks via this mask.
 
     Each channel is Gaussian-smeared (see :func:`gaussian_smear`) rather than a
     hard 0/1 spike.
 
-    :param name: mirdata dataset name (e.g. ``"ballroom"``).
-    :param data_home: Path to the dataset directory. Defaults to
-        ``DATA_DIR/<name>`` (``DATA_DIR`` from :mod:`musicality.dataformats`).
+    :param name: Dataset name (e.g. ``"ballroom"``, ``"swing"``) — must
+        already be migrated to this project's own format (see
+        ``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``).
+    :param data_home: Dataset directory. Defaults to ``DATA_DIR/<name>``
+        (``DATA_DIR`` from :mod:`musicality.dataformats`).
     :param sample_rate: Target sample rate. Audio is resampled if needed.
     :param duration: Clip duration in seconds. Longer clips are truncated,
         shorter clips are zero-padded.
@@ -109,7 +115,7 @@ class BeatDataset(Dataset):
         random_crop: bool = False,
     ):
         if data_home is None:
-            data_home = DATA_DIR / name
+            data_home = dataformats.DATA_DIR / name
 
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
@@ -119,26 +125,24 @@ class BeatDataset(Dataset):
         self.group_size = group_size
         self.random_crop = random_crop
 
-        ds = mirdata.initialize(name, data_home=str(data_home))
-
-        audio_index = index_audio(data_home)
-
         self.samples = []
         n_skipped = 0
         n_no_positions = 0
         n_non_binary = 0
-        for tid in ds.track_ids:
-            track = ds.track(tid)
-            if track.beats is None:
-                n_skipped += 1
-                continue
 
-            audio_path = resolve_audio_path(track, name, audio_index)
+        for stem in list_migrated_track_ids(name, data_home):
+            audio_path = resolve_track_audio(name, stem, data_home)
             if audio_path is None:
                 n_skipped += 1
                 continue
 
-            positions = track.beats.positions
+            beats_path = (
+                data_home
+                / dataformats.FORMAT.annotations_dirname
+                / f"{stem}{dataformats.FORMAT.beats_suffix}"
+            )
+            beat_times, positions = read_beats_file(beats_path)
+
             has_positions = positions is not None and np.any(np.asarray(positions) > 0)
 
             if binary_only and (
@@ -150,13 +154,11 @@ class BeatDataset(Dataset):
             if not has_positions:
                 n_no_positions += 1
 
-            self.samples.append(
-                (str(audio_path), track.beats.times, positions, has_positions)
-            )
+            self.samples.append((str(audio_path), beat_times, positions, has_positions))
 
         if n_skipped:
             print(
-                f"[BeatDataset] {name}: skipped {n_skipped} track(s) with no beat annotation or missing audio"
+                f"[BeatDataset] {name}: skipped {n_skipped} track(s) with missing audio"
             )
         if n_non_binary:
             print(
@@ -254,7 +256,7 @@ def indices_for_split(
     so ``"val"`` means genuinely held-out tracks.
 
     :param dataset: The ``BeatDataset`` to select indices from.
-    :param name: mirdata dataset name (e.g. ``"ballroom"``) used to look up the split.
+    :param name: Dataset name (e.g. ``"ballroom"``) used to look up the split.
     :param split: ``"train"``, ``"val"``, or ``"all"`` (every index — no split
         file is read in this case).
     :param val_split: Fraction of the dataset held out for validation. Must

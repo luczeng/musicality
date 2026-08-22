@@ -12,17 +12,12 @@ track, so there's nothing left to keep the original copy for).
 Works out of the box for any mirdata dataset whose track.audio_path already
 resolves to the file on disk (e.g. ballroom, brid, groove_midi) — no config
 needed; re-running migration later (audio already moved into tracks/) is
-handled by the default track_id-based fallback in
-musicality/loaders/mirdata_audio.py's DATASET_CONFIGS. Some datasets need a
-couple lines in DATASET_CONFIGS instead: either their mirdata Track class
-exposes audio under a different attribute name (e.g. guitarset's
-audio_mic_path), or track_id's trailing digits don't reliably match the
-audio filename's (e.g. rwc_jazz's mirdata id RM-J001 vs. its audio's own
-RWC_J001 — piece_number matches reliably there instead). That same
-resolution logic is shared with
-musicality/loaders/{tempo_dataset,beat_dataset}.py until they're rewritten
-to read this project's own format directly, so training and this migration
-tool never disagree about where a track's audio lives in the meantime. See
+handled by the exact-track_id fallback in tools/mirdata_audio.py's
+DATASET_CONFIGS. Some datasets need a couple lines in DATASET_CONFIGS
+instead: either their mirdata Track class exposes audio under a different
+attribute name (e.g. guitarset's audio_mic_path), or track_id doesn't equal
+the audio filename's stem at all (e.g. rwc_jazz's mirdata id RM-J001 vs. its
+audio's own RWC_J001 — piece_number matches reliably there instead). See
 DatasetConfig's docstring for exactly what to add for a new dataset.
 
 Tracks with no beat annotation, or whose audio file can't be located
@@ -41,8 +36,8 @@ import mirdata
 import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
 from musicality.dataformats.track_io import bpm_stats
-from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
 from tools.annotator.naming import sanitize_track_name
+from tools.mirdata_audio import index_audio, resolve_audio_path
 
 DATA_DIR = dataformats.DATA_DIR
 
