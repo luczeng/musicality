@@ -9,12 +9,7 @@ import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
-from musicality.loaders.mirdata_audio import (
-    DATASET_CONFIGS,
-    DatasetConfig,
-    index_audio_by_trailing_number,
-    resolve_audio_path,
-)
+from musicality.loaders.mirdata_audio import index_audio, resolve_audio_path
 
 
 DATA_DIR = dataformats.DATA_DIR
@@ -50,12 +45,7 @@ class TempoDataset(Dataset):
 
         ds = mirdata.initialize(name, data_home=str(data_home))
 
-        config = DATASET_CONFIGS.get(name, DatasetConfig())
-        audio_by_number = (
-            index_audio_by_trailing_number(data_home)
-            if config.fallback_match_attr
-            else {}
-        )
+        audio_index = index_audio(data_home)
 
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing.
         # Some mirdata datasets' Track class has no `tempo` attribute at all (e.g.
@@ -70,7 +60,7 @@ class TempoDataset(Dataset):
             if tempo is None:
                 continue
 
-            audio_path = resolve_audio_path(track, name, audio_by_number)
+            audio_path = resolve_audio_path(track, name, audio_index)
             if audio_path is not None:
                 self.samples.append((str(audio_path), tempo))
 
