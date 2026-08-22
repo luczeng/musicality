@@ -7,18 +7,15 @@ track ids for the same input.
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 
-_SANITIZE_RE = re.compile(r"[^\w\-]")
+# sanitize_track_name lives in musicality.dataformats.track_io — it's also
+# needed there to build annotation paths, and musicality/ must not import
+# from tools/. Re-exported here so every existing `from tools.annotator
+# .naming import sanitize_track_name` call site keeps working unchanged.
+from musicality.dataformats.track_io import sanitize_track_name
 
-
-def sanitize_track_name(name: str) -> str:
-    """Turn free-form user input into a filesystem-safe track id.
-
-    Falls back to ``"recording"`` if *name* is empty or whitespace-only.
-    """
-    return _SANITIZE_RE.sub("_", name.strip()) or "recording"
+__all__ = ["sanitize_track_name", "generate_track_id"]
 
 
 def generate_track_id() -> str:

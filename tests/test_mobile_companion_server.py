@@ -8,6 +8,7 @@ import pytest
 import soundfile as sf
 from fastapi.testclient import TestClient
 
+import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
 from tools.mobile_companion.server import app
 
@@ -46,12 +47,12 @@ class TestHealth:
 
 class TestDatasets:
     def test_returns_200(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.get("/datasets")
         assert response.status_code == 200
 
     def test_reflects_custom_dataset(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
 
         dataset_dir = tmp_path / "field_recordings"
         tracks_dir = dataset_dir / "tracks"
@@ -69,14 +70,14 @@ class TestDatasets:
         ]
 
     def test_empty_data_dir_returns_empty_list(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.get("/datasets")
         assert response.json() == []
 
 
 class TestUploadTrack:
     def test_returns_200_with_track_id(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -89,7 +90,7 @@ class TestUploadTrack:
         }
 
     def test_writes_wav_at_expected_path(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -99,7 +100,7 @@ class TestUploadTrack:
         assert out_path.exists()
 
     def test_written_wav_is_resampled_and_redecodable(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={
@@ -113,7 +114,7 @@ class TestUploadTrack:
         assert len(audio) == pytest.approx(0.5 * 44100, abs=100)
 
     def test_mixes_down_stereo_to_mono(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _stereo_wav_bytes(), "audio/wav")},
@@ -124,7 +125,7 @@ class TestUploadTrack:
         assert audio.ndim == 1
 
     def test_no_resample_when_already_target_rate(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={
@@ -138,7 +139,7 @@ class TestUploadTrack:
         assert len(audio) == int(0.5 * 44100)
 
     def test_missing_name_generates_track_id(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -149,7 +150,7 @@ class TestUploadTrack:
         assert (tmp_path / "field_recordings" / "tracks" / f"{track_id}.wav").exists()
 
     def test_creates_tracks_dir_for_new_dataset(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         assert not (tmp_path / "new_dataset").exists()
         response = client.post(
             "/datasets/new_dataset/tracks",
@@ -160,7 +161,7 @@ class TestUploadTrack:
         assert (tmp_path / "new_dataset" / "tracks" / "first.wav").exists()
 
     def test_invalid_audio_returns_400(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", b"not audio data", "audio/wav")},
@@ -177,7 +178,7 @@ class TestUploadAnnotation:
         )
 
     def test_returns_200(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         response = client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -186,7 +187,7 @@ class TestUploadAnnotation:
         assert response.status_code == 200
 
     def test_beat_times_round_trip_via_load_track(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -196,7 +197,7 @@ class TestUploadAnnotation:
         np.testing.assert_allclose(track.beat_times, [0.5, 1.0, 1.5, 2.0])
 
     def test_sorts_out_of_order_tap_times(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -206,7 +207,7 @@ class TestUploadAnnotation:
         np.testing.assert_allclose(track.beat_times, [0.5, 1.0, 1.5])
 
     def test_returns_tempo_estimated_from_taps(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         response = client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -215,7 +216,7 @@ class TestUploadAnnotation:
         assert response.json()["tempo"] == pytest.approx(120.0)
 
     def test_saves_structure_and_device(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -232,7 +233,7 @@ class TestUploadAnnotation:
     def test_omitting_structure_and_device_saves_no_metadata(
         self, monkeypatch, tmp_path
     ):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -243,7 +244,7 @@ class TestUploadAnnotation:
     def test_preserves_existing_field_when_only_one_is_sent(
         self, monkeypatch, tmp_path
     ):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         annotator_data.save_metadata(
             "field_recordings", "take1", annotator_data.TrackMetadata(device="iPhone")
@@ -257,7 +258,7 @@ class TestUploadAnnotation:
         assert metadata.device == "iPhone"
 
     def test_saves_section_aligned_true(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -267,7 +268,7 @@ class TestUploadAnnotation:
         assert metadata.section_aligned is True
 
     def test_saves_section_aligned_false(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -277,7 +278,7 @@ class TestUploadAnnotation:
         assert metadata.section_aligned is False
 
     def test_omitting_section_aligned_saves_no_metadata(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -288,13 +289,13 @@ class TestUploadAnnotation:
 
 class TestListTracks:
     def test_empty_dataset_returns_empty_list(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.get("/datasets/field_recordings/tracks")
         assert response.status_code == 200
         assert response.json() == []
 
     def test_lists_uploaded_tracks_sorted(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -310,7 +311,7 @@ class TestListTracks:
         assert track_ids == ["take1", "take2"]
 
     def test_has_annotation_reflects_saved_beats(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -331,7 +332,7 @@ class TestListTracks:
         assert by_id["take2"]["has_annotation"] is False
 
     def test_meter_reflects_beat_positions(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -354,13 +355,13 @@ class TestGetAnnotation:
         )
 
     def test_returns_200(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         response = client.get("/datasets/field_recordings/tracks/take1/annotations")
         assert response.status_code == 200
 
     def test_round_trips_saved_tap_times(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -370,7 +371,7 @@ class TestGetAnnotation:
         assert response.json()["tap_times"] == [0.5, 1.0, 1.5, 2.0]
 
     def test_round_trips_metadata(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         client.post(
             "/datasets/field_recordings/tracks/take1/annotations",
@@ -391,7 +392,7 @@ class TestGetAnnotation:
     def test_track_with_no_saved_annotation_returns_empty_tap_times(
         self, monkeypatch, tmp_path
     ):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         self._upload_clip("field_recordings", "take1")
         response = client.get("/datasets/field_recordings/tracks/take1/annotations")
         assert response.status_code == 200
@@ -400,7 +401,7 @@ class TestGetAnnotation:
 
 class TestGetAudio:
     def test_returns_200_with_wav_content_type(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={"file": ("clip.wav", _wav_bytes(), "audio/wav")},
@@ -411,7 +412,7 @@ class TestGetAudio:
         assert response.headers["content-type"] == "audio/wav"
 
     def test_returned_bytes_are_redecodable(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         client.post(
             "/datasets/field_recordings/tracks",
             files={
@@ -425,6 +426,6 @@ class TestGetAudio:
         assert len(audio) == pytest.approx(0.5 * 44100, abs=100)
 
     def test_missing_track_returns_404(self, monkeypatch, tmp_path):
-        monkeypatch.setattr(annotator_data, "DATA_DIR", tmp_path)
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         response = client.get("/datasets/field_recordings/tracks/nope/audio")
         assert response.status_code == 404
