@@ -7,29 +7,39 @@ so they can be tested without mirdata or a filesystem.
 
 from __future__ import annotations
 
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 import mirdata
 import numpy as np
 
 import musicality.dataformats as dataformats
+from musicality.dataformats.track_io import (
+    TrackData,
+    _annotations_slot_dir,
+    annotation_path,
+    metadata_path,
+    read_beats_file,
+)
 
-from .naming import sanitize_track_name
+# Re-exported for external callers (migrate_*.py, mobile_companion/server.py)
+# that import these from tools.annotator.data rather than the shared module
+# directly — not used within this file itself.
+from musicality.dataformats.track_io import (
+    METADATA_SCHEMA_VERSION as METADATA_SCHEMA_VERSION,
+)
+from musicality.dataformats.track_io import TrackMetadata as TrackMetadata
+from musicality.dataformats.track_io import load_metadata as load_metadata
+from musicality.dataformats.track_io import save_annotations as save_annotations
+from musicality.dataformats.track_io import save_metadata as save_metadata
 
-DATA_DIR = dataformats.DATA_DIR
+# Read dataformats.DATA_DIR fresh at every call site below rather than
+# caching it in a module-level constant, so tests can monkeypatch it
+# (musicality.dataformats.track_io does the same, for the same reason).
 
 # Tapping always starts on beat 1 of an N-count phrase ("sentence" in dance
 # terms — e.g. an 8-count in swing). 8 is the default phrase length.
 DEFAULT_N_BEATS = 8
-
-# Bumped whenever TrackMetadata's on-disk shape changes. save_metadata always
-# stamps this value; TrackMetadata.schema_version defaults to 1 (the implicit
-# version of every file saved before this field existed), so a file missing
-# the key on load is correctly read as version 1 rather than "current".
-# v2 adds annotator_id and section_aligned.
-METADATA_SCHEMA_VERSION = 2
 
 
 # ---------------------------------------------------------------------------
@@ -43,44 +53,6 @@ class DatasetInfo:
     n_tracks: int
     n_annotations: int
     mtime: float
-
-
-@dataclass
-class TrackData:
-    """All annotation data for a single track."""
-
-    dataset_name: str
-    track_id: str
-    audio_path: str
-    tempo: float | None
-    beat_times: np.ndarray  # seconds, sorted ascending
-    beat_positions: np.ndarray | None  # 1-indexed bar positions, or None
-    annotator_id: str | None = None  # None = the default/legacy annotation slot
-
-
-@dataclass
-class TrackMetadata:
-    """Free-form descriptive info about a track, separate from its beats.
-
-    All fields optional — captured incrementally from either the desktop
-    annotator or the mobile companion, never required to save a recording.
-    """
-
-    location: str | None = None
-    device: str | None = None
-    structure: str | None = None
-    duration_s: float | None = None
-    bpm_mean: float | None = None
-    bpm_median: float | None = None
-    bpm_std: float | None = None
-    annotator_id: str | None = None  # who made this annotation, if known
-    # Tapping always starts at count position 1 (see cycle_positions) — that
-    # part is guaranteed, not something to confirm. section_aligned instead
-    # records whether that first tap also happens to be the true start of a
-    # section, vs. landing mid-section. True/False = confirmed either way,
-    # None = not recorded.
-    section_aligned: bool | None = None
-    schema_version: int = 1
 
 
 # ---------------------------------------------------------------------------
@@ -265,97 +237,11 @@ def remove_beat(
     )
 
 
-def _annotations_slot_dir(dataset_name: str, annotator_id: str | None) -> Path:
-    """Return the annotations directory for one annotator's slot.
-
-    ``annotator_id=None`` is the original, unsuffixed default slot, so every
-    file saved before multi-annotator support existed keeps resolving to the
-    same path. A non-None id is sanitized the same way track ids are, since
-    it can come from free-form input (e.g. the mobile companion).
-    """
-    base = DATA_DIR / dataset_name / dataformats.FORMAT.annotations_dirname
-    if annotator_id:
-        return base / sanitize_track_name(annotator_id)
-    return base
-
-
-def annotation_path(track: TrackData) -> Path:
-    """Return the canonical save path for a track's annotations (.beats file).
-
-    Nested under ``track.annotator_id``'s slot; ``None`` is the default slot.
-    """
-    return (
-        _annotations_slot_dir(track.dataset_name, track.annotator_id)
-        / f"{track.track_id}{dataformats.FORMAT.beats_suffix}"
-    )
-
-
-def metadata_path(
-    dataset_name: str, track_id: str, annotator_id: str | None = None
-) -> Path:
-    """Return the canonical save path for a track's metadata (.meta.json file).
-
-    Nested under *annotator_id*'s slot; ``None`` is the default slot.
-    """
-    return (
-        _annotations_slot_dir(dataset_name, annotator_id)
-        / f"{track_id}{dataformats.FORMAT.metadata_suffix}"
-    )
-
-
-def save_metadata(dataset_name: str, track_id: str, metadata: TrackMetadata) -> None:
-    """Persist track metadata as JSON, next to that track's .beats file.
-
-    Saved under ``metadata.annotator_id``'s slot; ``None`` is the default slot.
-    """
-    path = metadata_path(dataset_name, track_id, metadata.annotator_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    metadata.schema_version = METADATA_SCHEMA_VERSION
-    path.write_text(json.dumps(asdict(metadata), indent=2))
-
-
-def load_metadata(
-    dataset_name: str, track_id: str, annotator_id: str | None = None
-) -> TrackMetadata | None:
-    """Load a track's metadata for *annotator_id*'s slot, or None if unsaved."""
-    path = metadata_path(dataset_name, track_id, annotator_id)
-    if not path.exists():
-        return None
-    return TrackMetadata(**json.loads(path.read_text()))
-
-
 # ---------------------------------------------------------------------------
 # I/O
 # ---------------------------------------------------------------------------
 
 _AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".aiff"}
-
-
-def _read_beats_file(path: Path) -> tuple[np.ndarray, np.ndarray | None]:
-    """Read a .beats file into ``(times, positions)``.
-
-    Uses mirdata's own format — ``<time> <position>`` per line (see e.g. the
-    ballroom dataset's raw annotation files). Falls back to bare timestamps
-    (one per line, no position) for files saved before position tracking was
-    added; in that case ``positions`` is ``None``.
-    """
-    times: list[float] = []
-    positions: list[int] = []
-    has_positions = True
-    for line in path.read_text().splitlines():
-        parts = line.split()
-        if not parts:
-            continue
-        times.append(float(parts[0]))
-        if len(parts) >= 2:
-            positions.append(int(parts[1]))
-        else:
-            has_positions = False
-
-    times_arr = np.array(times, dtype=float)
-    if has_positions and len(positions) == len(times):
-        return times_arr, np.array(positions, dtype=int)
-    return times_arr, None
 
 
 def _dataset_mtime(path: Path, tracks_dir: Path) -> float:
@@ -377,14 +263,14 @@ def _dataset_mtime(path: Path, tracks_dir: Path) -> float:
 
 
 def list_datasets() -> list[DatasetInfo]:
-    """Return info for every dataset found in DATA_DIR.
+    """Return info for every dataset found in dataformats.DATA_DIR.
 
     Custom datasets (those with a ``tracks/`` subfolder) report their own
     annotation count from their ``annotations/`` subfolder.  Mirdata datasets
     report ``None`` for annotations because those are embedded in the download.
     """
     infos: list[DatasetInfo] = []
-    for path in sorted(DATA_DIR.iterdir()):
+    for path in sorted(dataformats.DATA_DIR.iterdir()):
         if not path.is_dir():
             continue
         name = path.name
@@ -415,7 +301,7 @@ def list_datasets() -> list[DatasetInfo]:
 def has_annotation(dataset_name: str, track_id: str) -> bool:
     """Return True if a saved .beats annotation file exists for this track."""
     return (
-        DATA_DIR
+        dataformats.DATA_DIR
         / dataset_name
         / dataformats.FORMAT.annotations_dirname
         / f"{track_id}{dataformats.FORMAT.beats_suffix}"
@@ -424,10 +310,14 @@ def has_annotation(dataset_name: str, track_id: str) -> bool:
 
 def has_mirdata_annotation(dataset_name: str, track_id: str) -> bool:
     """Return True if the mirdata dataset has built-in beat annotations for this track."""
-    if (DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname).is_dir():
+    if (
+        dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
+    ).is_dir():
         return False
     try:
-        ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
+        ds = mirdata.initialize(
+            dataset_name, data_home=str(dataformats.DATA_DIR / dataset_name)
+        )
         track = ds.track(track_id)
         return track.beats is not None and len(track.beats.times) > 0
     except Exception:
@@ -451,13 +341,15 @@ def annotation_meter_label(dataset_name: str, track_id: str) -> str:
         / f"{track_id}{dataformats.FORMAT.beats_suffix}"
     )
     if ann_path.exists():
-        _, positions = _read_beats_file(ann_path)
-    elif (DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname).is_dir():
+        _, positions = read_beats_file(ann_path)
+    elif (
+        dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
+    ).is_dir():
         return ""  # custom dataset, no saved annotation, no mirdata fallback
     else:
         try:
             ds = mirdata.initialize(
-                dataset_name, data_home=str(DATA_DIR / dataset_name)
+                dataset_name, data_home=str(dataformats.DATA_DIR / dataset_name)
             )
             beats = ds.track(track_id).beats
         except Exception:
@@ -473,14 +365,16 @@ def annotation_meter_label(dataset_name: str, track_id: str) -> str:
 
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
-    tracks_dir = DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
+    tracks_dir = dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
     if tracks_dir.is_dir():
         return [
             f.stem
             for f in sorted(tracks_dir.iterdir())
             if f.suffix.lower() in _AUDIO_EXTENSIONS
         ]
-    ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
+    ds = mirdata.initialize(
+        dataset_name, data_home=str(dataformats.DATA_DIR / dataset_name)
+    )
     return list(ds.track_ids)
 
 
@@ -494,7 +388,7 @@ def load_track(
     falls back to the dataset's own annotations. *annotator_id* selects
     which annotator's saved slot to read; ``None`` is the default/legacy slot.
     """
-    tracks_dir = DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
+    tracks_dir = dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
     if tracks_dir.is_dir():
         audio_path = tracks_dir / f"{track_id}.wav"
         ann_path = (
@@ -504,7 +398,7 @@ def load_track(
         beat_times: np.ndarray = np.array([])
         beat_positions: np.ndarray | None = None
         if ann_path.exists():
-            beat_times, beat_positions = _read_beats_file(ann_path)
+            beat_times, beat_positions = read_beats_file(ann_path)
         return TrackData(
             dataset_name=dataset_name,
             track_id=track_id,
@@ -515,7 +409,9 @@ def load_track(
             annotator_id=annotator_id,
         )
 
-    ds = mirdata.initialize(dataset_name, data_home=str(DATA_DIR / dataset_name))
+    ds = mirdata.initialize(
+        dataset_name, data_home=str(dataformats.DATA_DIR / dataset_name)
+    )
     track = ds.track(track_id)
 
     # Prefer our own saved annotation over the dataset's built-in beats
@@ -524,7 +420,7 @@ def load_track(
         / f"{track_id}{dataformats.FORMAT.beats_suffix}"
     )
     if ann_path.exists():
-        beat_times, beat_positions = _read_beats_file(ann_path)
+        beat_times, beat_positions = read_beats_file(ann_path)
         return TrackData(
             dataset_name=dataset_name,
             track_id=track_id,
@@ -549,24 +445,6 @@ def load_track(
         beat_positions=beat_positions,
         annotator_id=annotator_id,
     )
-
-
-def save_annotations(track: TrackData, path: Path) -> None:
-    """Persist beat annotations to a .beats file, mirdata's own format:
-    ``<time> <position>`` per line (seconds, 1-indexed bar/phrase position) —
-    see e.g. the ballroom dataset's raw annotation files.
-
-    Falls back to bare timestamps (no position column) if the track has no
-    positions.
-    """
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    positions = track.beat_positions
-    if positions is not None and len(positions) == len(track.beat_times):
-        lines = (f"{t:.6f} {p}" for t, p in zip(track.beat_times, positions))
-    else:
-        lines = (f"{t:.6f}" for t in track.beat_times)
-    path.write_text("\n".join(lines))
 
 
 def list_annotators(dataset_name: str, track_id: str) -> list[str | None]:
@@ -617,7 +495,9 @@ def delete_track(track: TrackData) -> None:
 
     Raises ValueError for mirdata datasets.
     """
-    tracks_dir = DATA_DIR / track.dataset_name / dataformats.FORMAT.tracks_dirname
+    tracks_dir = (
+        dataformats.DATA_DIR / track.dataset_name / dataformats.FORMAT.tracks_dirname
+    )
     if not tracks_dir.is_dir():
         raise ValueError("Cannot delete tracks from a mirdata dataset.")
     audio = Path(track.audio_path)
@@ -636,7 +516,9 @@ def rename_track(track: TrackData, new_id: str) -> TrackData:
     ``.beats``/``.meta.json`` still reference the old track_id afterward.
     Raises ValueError for mirdata datasets or if *new_id* is already taken.
     """
-    tracks_dir = DATA_DIR / track.dataset_name / dataformats.FORMAT.tracks_dirname
+    tracks_dir = (
+        dataformats.DATA_DIR / track.dataset_name / dataformats.FORMAT.tracks_dirname
+    )
     if not tracks_dir.is_dir():
         raise ValueError("Cannot rename tracks from a mirdata dataset.")
     old_audio = Path(track.audio_path)

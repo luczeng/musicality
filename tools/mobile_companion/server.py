@@ -147,7 +147,7 @@ async def upload_track(
         audio = librosa.resample(audio, orig_sr=sr, target_sr=_SR).astype(np.float32)
 
     track_id = sanitize_track_name(name) if name else generate_track_id()
-    tracks_dir = annotator_data.DATA_DIR / dataset / dataformats.FORMAT.tracks_dirname
+    tracks_dir = dataformats.DATA_DIR / dataset / dataformats.FORMAT.tracks_dirname
     tracks_dir.mkdir(parents=True, exist_ok=True)
     sf.write(str(tracks_dir / f"{track_id}.wav"), audio, _SR)
 
@@ -164,7 +164,7 @@ def upload_annotation(dataset: str, track_id: str, body: TapAnnotation) -> dict:
         dataset_name=dataset,
         track_id=track_id,
         audio_path=str(
-            annotator_data.DATA_DIR
+            dataformats.DATA_DIR
             / dataset
             / dataformats.FORMAT.tracks_dirname
             / f"{track_id}.wav"
@@ -229,7 +229,7 @@ def get_annotation(dataset: str, track_id: str) -> dict:
 @app.get("/datasets/{dataset}/tracks/{track_id}/audio")
 def get_audio(dataset: str, track_id: str) -> FileResponse:
     path = (
-        annotator_data.DATA_DIR
+        dataformats.DATA_DIR
         / dataset
         / dataformats.FORMAT.tracks_dirname
         / f"{track_id}.wav"

@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import musicality.dataformats as dataformats
+
 from .audio import AudioEngine
 from .inference import (
     EVAL_DEFAULTS,
@@ -40,7 +42,6 @@ from .inference import (
 )
 from .recorder import Recorder, _SR as _REC_SR
 from .data import (
-    DATA_DIR,
     DEFAULT_N_BEATS,
     TrackData,
     TrackMetadata,
@@ -841,7 +842,7 @@ class MainWindow(QMainWindow):
         else:
             dataset = self._record_dataset_edit.text().strip() or "swing"
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            save_dir = DATA_DIR / dataset / "tracks"
+            save_dir = dataformats.DATA_DIR / dataset / "tracks"
             path = self._recorder.stop(save_dir, f"recording_{timestamp}")
             self._record_btn.setText("⏺  Record")
             self._elapsed_label.setVisible(False)

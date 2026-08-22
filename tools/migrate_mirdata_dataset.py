@@ -13,16 +13,19 @@ annotations/<id>.beats pairing lines up.
 
 Works out of the box for any mirdata dataset whose track.audio_path already
 resolves to the file on disk (e.g. ballroom, brid, groove_midi) — no config
-needed. Some datasets need a couple lines in DATASET_CONFIGS below instead:
-either their mirdata Track class exposes audio under a different attribute
-name (e.g. guitarset's audio_mic_path), or the on-disk layout was flattened
-after download and doesn't match mirdata's own index (e.g. this repo's
-rwc_jazz has audio sitting flat as rwc_jazz/audio/RWC_J001.wav rather
-than the nested rwc-j-m01/1.wav mirdata's index expects) — in which case
-this tool falls back to locating the actual file by matching its trailing
-number against a track attribute you name (piece_number for the RWC
-datasets), rather than guessing a filename convention. See DatasetConfig's
-docstring for exactly what to add for a new dataset.
+needed. Some datasets need a couple lines in
+musicality/loaders/mirdata_audio.py's DATASET_CONFIGS instead: either their
+mirdata Track class exposes audio under a different attribute name (e.g.
+guitarset's audio_mic_path), or the on-disk layout was flattened after
+download and doesn't match mirdata's own index (e.g. this repo's rwc_jazz
+has audio sitting flat as rwc_jazz/tracks/RWC_J001.wav rather than the
+nested rwc-j-m01/1.wav mirdata's index expects) — in which case resolution
+falls back to locating the actual file by matching its trailing number
+against a track attribute you name (piece_number for the RWC datasets),
+rather than guessing a filename convention. That same resolution logic is
+shared with musicality/loaders/{tempo_dataset,beat_dataset}.py, so training
+and this migration tool always agree on where a track's audio lives. See
+DatasetConfig's docstring for exactly what to add for a new dataset.
 
 Tracks with no beat annotation, or whose audio file can't be located
 either way, are skipped and counted in the summary.
@@ -34,96 +37,21 @@ Usage
 """
 
 import argparse
-import re
-from dataclasses import dataclass
-from pathlib import Path
 
 import mirdata
 import numpy as np
 
 import musicality.dataformats as dataformats
 import tools.annotator.data as annotator_data
+from musicality.loaders.mirdata_audio import (
+    DATASET_CONFIGS,
+    DatasetConfig,
+    index_audio_by_trailing_number,
+    resolve_audio_path,
+)
 from tools.annotator.naming import sanitize_track_name
 
 DATA_DIR = dataformats.DATA_DIR
-
-
-@dataclass
-class DatasetConfig:
-    """Per-dataset quirks for locating a track's on-disk audio file.
-
-    Onboarding a new mirdata dataset:
-      - Most datasets need NO entry here — mirdata's own ``track.audio_path``
-        already resolves (true for ballroom, brid, groove_midi, and any new
-        dataset by default).
-      - If the dataset's mirdata Track class exposes its primary audio under
-        a different attribute (e.g. guitarset has no ``audio_path`` at all,
-        only ``audio_mic_path``/``audio_mix_path``/...), set
-        ``audio_path_attr`` to that name.
-      - If mirdata's index doesn't match how the audio actually sits on disk
-        in this repo (e.g. flattened/renamed after download — see rwc_jazz's
-        ``RWC_J001.wav`` vs. mirdata's nested ``rwc-j-m01/1.wav``), set
-        ``fallback_match_attr`` to a track attribute (e.g. ``piece_number``)
-        whose trailing digits match the on-disk filename's trailing digits.
-    """
-
-    audio_path_attr: str = "audio_path"
-    fallback_match_attr: str | None = None
-
-
-# hainsworth isn't listed: no bundled index / no data downloaded here yet,
-# and it has no piece_number to fall back on either — the default config
-# already handles it safely (every track just gets skipped as "audio not
-# found" rather than crashing).
-DATASET_CONFIGS: dict[str, DatasetConfig] = {
-    "rwc_classical": DatasetConfig(fallback_match_attr="piece_number"),
-    "rwc_jazz": DatasetConfig(fallback_match_attr="piece_number"),
-    "rwc_popular": DatasetConfig(fallback_match_attr="piece_number"),
-    "guitarset": DatasetConfig(audio_path_attr="audio_mic_path"),
-}
-
-
-def _index_audio_by_trailing_number(data_home: Path) -> dict[int, str]:
-    """Map each ``.wav``'s trailing number (e.g. ``RWC_J025.wav`` -> 25) to its stem.
-
-    Searches every ``.wav`` under *data_home*, including ``tracks/`` — this
-    tool never writes audio itself, so any file there is either a homemade
-    recording or the dataset's own audio, already renamed into place by hand.
-    """
-    by_number: dict[int, str] = {}
-    for wav in data_home.rglob("*.wav"):
-        match = re.search(r"(\d+)$", wav.stem)
-        if match:
-            by_number[int(match.group(1))] = wav.stem
-    return by_number
-
-
-def _resolve_stem(
-    track, config: DatasetConfig, audio_by_number: dict[int, str]
-) -> str | None:
-    """Return the on-disk audio filename stem for *track*, or None if unresolved.
-
-    Trusts mirdata's own audio-path attribute first (``config.audio_path_attr``,
-    ``"audio_path"`` by default). Falls back to matching the track attribute
-    named by ``config.fallback_match_attr`` (its trailing digits) against
-    *audio_by_number*, for datasets whose audio was reorganized after
-    download (see DatasetConfig's docstring).
-    """
-    audio_path = getattr(track, config.audio_path_attr)
-    if audio_path is not None and Path(audio_path).exists():
-        return Path(audio_path).stem
-
-    if config.fallback_match_attr is None:
-        return None
-
-    match_value = getattr(track, config.fallback_match_attr, None)
-    if not match_value:
-        return None
-    match = re.search(r"(\d+)", str(match_value))
-    if not match:
-        return None
-
-    return audio_by_number.get(int(match.group(1)))
 
 
 def _bpm_stats(
@@ -149,7 +77,7 @@ def migrate(dataset_name: str, force: bool) -> None:
     # Only pay the rglob cost when a dataset actually needs the fallback —
     # notably skips it for groove_midi (1150 tracks, slow .beats access).
     audio_by_number = (
-        _index_audio_by_trailing_number(data_home) if config.fallback_match_attr else {}
+        index_audio_by_trailing_number(data_home) if config.fallback_match_attr else {}
     )
 
     n_migrated = 0
@@ -171,12 +99,12 @@ def migrate(dataset_name: str, force: bool) -> None:
             n_no_beats += 1
             continue
 
-        stem = _resolve_stem(track, config, audio_by_number)
-        if stem is None:
+        audio_path = resolve_audio_path(track, dataset_name, audio_by_number)
+        if audio_path is None:
             print(f"[migrate] '{track_id}': couldn't locate its audio file, skipping")
             n_unresolved_audio += 1
             continue
-        stem = sanitize_track_name(stem)
+        stem = sanitize_track_name(audio_path.stem)
 
         beats_path = (
             data_home
