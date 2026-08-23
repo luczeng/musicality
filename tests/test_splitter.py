@@ -75,13 +75,13 @@ class TestLoadRefsFromDir:
         """No splits_dir/name involved at all — any folder with train.txt/
         val.txt works, e.g. one built ad hoc outside the canonical splits_dir."""
         monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
-        split_dir = tmp_path / "somewhere" / "my_split"
+        split_path = tmp_path / "somewhere" / "my_split"
 
         train_refs = _refs(("ballroom", "a"), ("brid", "b"))
         val_refs = _refs(("ballroom", "c"))
-        Splitter.save_refs(split_dir.parent, "my_split", train_refs, val_refs)
+        Splitter.save_refs(split_path.parent, "my_split", train_refs, val_refs)
 
-        loaded_train, loaded_val = Splitter.load_refs_from_dir(split_dir)
+        loaded_train, loaded_val = Splitter.load_refs_from_dir(split_path)
 
         assert loaded_train == train_refs
         assert loaded_val == val_refs

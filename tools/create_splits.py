@@ -35,9 +35,9 @@ SPLITS_DIR = dataformats.ROOT / _fmt.splits_dir
 
 def split_exists(name: str) -> bool:
 
-    split_dir = SPLITS_DIR / name
+    split_path = SPLITS_DIR / name
 
-    return (split_dir / "train.txt").exists() and (split_dir / "val.txt").exists()
+    return (split_path / "train.txt").exists() and (split_path / "val.txt").exists()
 
 
 def create_split(name: str, dataset, val_split: float, force: bool) -> None:

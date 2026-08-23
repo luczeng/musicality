@@ -47,7 +47,7 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
     _fmt = dataformats.load()
     splits_dir = dataformats.ROOT / _fmt.splits_dir
 
-    train_refs, val_refs = resolve_split_refs(cfg, splits_dir, cfg.data.name)
+    train_refs, val_refs = resolve_split_refs(cfg, splits_dir, cfg.data.input)
 
     train_ds = TempoDataset(
         refs=train_refs, sample_rate=cfg.data.sample_rate, duration=cfg.data.duration

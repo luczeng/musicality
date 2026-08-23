@@ -36,8 +36,7 @@ trainer:
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
 data:
-  name: ballroom  # split name (see splits_dir in musicality.dataformats) — a plain dataset name or a merged name (tools/merge_datasets.py)
-  split_dir: null  # path to a folder with train.txt/val.txt — overrides `name`/splits_dir lookup entirely when set
+  input: ballroom  # split name (looked up under splits_dir, see musicality.dataformats) or, if it contains a "/", a direct path to a folder with train.txt/val.txt
   sample_rate: 22050
   duration: 10.0
   num_workers: 4

@@ -23,7 +23,7 @@ sigma_frames: 1.5
 # Beats per group that the dataset's position annotations count across: 4 for a
 # bar-position (1-4) dataset (e.g. ballroom), 8 for a phrase-position (1-8)
 # dataset. Only changes what the "last" target/head means (positions == group_size);
-# "one" is always position 1. Override on the CLI, e.g. `group_size=8 data.name=<phrase_dataset>`.
+# "one" is always position 1. Override on the CLI, e.g. `group_size=8 data.input=<phrase_dataset>`.
 group_size: 4
 # Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. ballroom's
 # waltz/Viennese waltz tracks, which are in triple meter — 1, 2, 3 — rather
@@ -39,8 +39,7 @@ trainer:
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
 data:
-  name: ballroom  # split name (see splits_dir in musicality.dataformats) — a plain dataset name or a merged name (tools/merge_datasets.py)
-  split_dir: null  # path to a folder with train.txt/val.txt — overrides `name`/splits_dir lookup entirely when set
+  input: ballroom  # split name (looked up under splits_dir, see musicality.dataformats) or, if it contains a "/", a direct path to a folder with train.txt/val.txt
   sample_rate: 22050
   duration: 10.0  # audio clip length, in seconds
   num_workers: 4

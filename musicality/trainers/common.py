@@ -20,17 +20,24 @@ def resolve_split_refs(
 ) -> tuple[list[TrackRef], list[TrackRef]]:
     """Return ``(train_refs, val_refs)`` for a training config's ``data`` section.
 
-    ``cfg.data.split_dir``, if set, points directly at a folder containing
-    ``train.txt``/``val.txt`` — bypassing ``splits_dir``/name lookup
-    entirely, so a split doesn't need to be registered under the canonical
-    ``splits_dir`` (e.g. one built ad hoc, or living outside this repo's
-    data directory) to train on it. Falls back to
-    ``Splitter.load_refs(splits_dir, split_name)`` otherwise.
+    ``cfg.data.input`` is one field serving two purposes, told apart by
+    whether it contains a ``/``:
+
+    - A bare name (e.g. ``"ballroom"``, ``"ballroom_brid"``) — looked up
+      under the canonical ``splits_dir`` via *split_name* (which may already
+      have a trainer-specific naming convention applied, e.g.
+      ``beat_split_name``): ``Splitter.load_refs(splits_dir, split_name)``.
+    - A path (e.g. ``"../musicality_db/splits/ballroom"``, or anywhere else
+      on disk) — used directly as the split folder via
+      :meth:`~musicality.splits.splitter.Splitter.load_refs_from_dir`,
+      bypassing ``splits_dir`` and any naming convention entirely. Lets a
+      split be trained on without being "registered" under the canonical
+      ``splits_dir`` first.
     """
 
-    split_dir = cfg.data.get("split_dir")
-    if split_dir:
-        return Splitter.load_refs_from_dir(Path(split_dir))
+    input_ = cfg.data.input
+    if "/" in input_:
+        return Splitter.load_refs_from_dir(Path(input_))
 
     return Splitter.load_refs(splits_dir, split_name)
 
@@ -62,7 +69,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
 
     _fmt = dataformats.load()
     splits_dir = dataformats.ROOT / _fmt.splits_dir
-    split_name = beat_split_name(cfg.data.name, binary_only)
+    split_name = beat_split_name(cfg.data.input, binary_only)
 
     train_refs, val_refs = resolve_split_refs(cfg, splits_dir, split_name)
 

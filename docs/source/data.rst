@@ -117,25 +117,32 @@ fast, before writing anything, if a requested source doesn't have a split
 yet (run ``tools/create_splits.py`` first).
 
 A merged split name is then usable anywhere a real one is — e.g.
-``data.name: ballroom_brid`` in a training config — since
+``data.input: ballroom_brid`` in a training config — since
 ``build_dataloaders``/``build_beat_dataloaders`` load a split's refs and
 construct ``TempoDataset``/``BeatDataset`` directly via ``refs=``, with no
 distinction between a plain dataset's split and a merged one.
 
-Pointing training at a split directly
---------------------------------------
+Telling training which split to use: ``data.input``
+-----------------------------------------------------
 
-``data.name`` always resolves against the canonical ``splits_dir`` —
-``splits_dir/<name>/{train,val}.txt``. Set ``data.split_dir`` instead (in
-``configs/train.yaml``, ``beat_train.yaml``, or ``beat_only_train.yaml``, or
-on the CLI, e.g. ``data.split_dir=/path/to/my_split``) to point straight at
-*any* folder with a ``train.txt``/``val.txt`` pair — one built by
-``tools/merge_datasets.py`` but never "registered" under ``splits_dir``, one
-assembled by hand, or one living outside this repo's data directory
-entirely. When set, it takes priority over ``data.name`` and the
-``splits_dir`` lookup is skipped altogether — see
-``musicality.trainers.common.resolve_split_refs``, shared by both the tempo
-and beat trainers.
+Training configs (``configs/train.yaml``, ``beat_train.yaml``,
+``beat_only_train.yaml``) have one field, ``data.input``, for naming the
+split to train on. It's read two ways, told apart by whether it contains a
+``/``:
+
+- **A bare name** — e.g. ``data.input=ballroom`` or
+  ``data.input=ballroom_brid`` — looked up under the canonical
+  ``splits_dir``: ``splits_dir/<input>/{train,val}.txt``. This is the normal
+  case: everything ``create_splits.py`` and ``merge_datasets.py`` produce
+  lands under ``splits_dir`` automatically, so a name is all you need.
+- **A path** — e.g. ``data.input=../musicality_db/splits/ballroom`` or
+  ``data.input=/anywhere/my_split`` — used directly as the folder to read
+  ``train.txt``/``val.txt`` from, bypassing ``splits_dir`` entirely. Use
+  this for a split that isn't registered under ``splits_dir`` — one
+  assembled by hand, or one living outside this repo's data directory.
+
+See ``musicality.trainers.common.resolve_split_refs``, shared by both the
+tempo and beat trainers, for the exact dispatch.
 
 API reference
 -------------

@@ -114,9 +114,9 @@ class Splitter:
         :rtype: tuple[list, list] or None
         """
 
-        split_dir = self.splits_dir / self.name
-        train_file = split_dir / "train.txt"
-        val_file = split_dir / "val.txt"
+        split_path = self.splits_dir / self.name
+        train_file = split_path / "train.txt"
+        val_file = split_path / "val.txt"
 
         if not (train_file.exists() and val_file.exists()):
             return None
@@ -168,22 +168,22 @@ class Splitter:
             ) from None
 
     @staticmethod
-    def load_refs_from_dir(split_dir: Path) -> tuple[list[TrackRef], list[TrackRef]]:
-        """Return ``(train_refs, val_refs)`` read straight from *split_dir*'s
+    def load_refs_from_dir(split_path: Path) -> tuple[list[TrackRef], list[TrackRef]]:
+        """Return ``(train_refs, val_refs)`` read straight from *split_path*'s
         ``train.txt``/``val.txt`` — the same format :meth:`load_refs` reads,
         but for a folder anywhere on disk rather than one registered under a
         canonical ``splits_dir`` by name. Lets a training config point
-        directly at a folder of lists (``data.split_dir``) without going
-        through ``splits_dir``/``data.name`` lookup at all.
+        directly at a folder of lists (``data.input``, when it contains a
+        ``/``) without going through ``splits_dir`` lookup at all.
 
-        :raises FileNotFoundError: If *split_dir* has no ``train.txt``/``val.txt``.
+        :raises FileNotFoundError: If *split_path* has no ``train.txt``/``val.txt``.
         """
 
-        train_file = split_dir / "train.txt"
-        val_file = split_dir / "val.txt"
+        train_file = split_path / "train.txt"
+        val_file = split_path / "val.txt"
 
         if not (train_file.exists() and val_file.exists()):
-            raise FileNotFoundError(f"No split found at {split_dir}.")
+            raise FileNotFoundError(f"No split found at {split_path}.")
 
         return _read_refs(train_file), _read_refs(val_file)
 
@@ -199,8 +199,8 @@ class Splitter:
         uses internally.
         """
 
-        split_dir = splits_dir / name
-        split_dir.mkdir(parents=True, exist_ok=True)
+        split_path = splits_dir / name
+        split_path.mkdir(parents=True, exist_ok=True)
 
-        _write_refs(split_dir / "train.txt", train_refs)
-        _write_refs(split_dir / "val.txt", val_refs)
+        _write_refs(split_path / "train.txt", train_refs)
+        _write_refs(split_path / "val.txt", val_refs)
