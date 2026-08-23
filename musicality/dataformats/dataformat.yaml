@@ -4,4 +4,3 @@ tracks_dirname: tracks
 annotations_dirname: annotations
 beats_suffix: .beats
 metadata_suffix: .meta.json
-manifest_filename: tracks.txt

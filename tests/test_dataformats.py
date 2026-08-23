@@ -13,7 +13,6 @@ class TestLoad:
         assert fmt.annotations_dirname
         assert fmt.beats_suffix
         assert fmt.metadata_suffix
-        assert fmt.manifest_filename
 
     def test_annotation_layout_matches_existing_convention(self):
         fmt = dataformats.load()
@@ -22,4 +21,3 @@ class TestLoad:
         assert fmt.annotations_dirname == "annotations"
         assert fmt.beats_suffix == ".beats"
         assert fmt.metadata_suffix == ".meta.json"
-        assert fmt.manifest_filename == "tracks.txt"

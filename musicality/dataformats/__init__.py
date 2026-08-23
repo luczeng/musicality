@@ -21,9 +21,6 @@ class DataFormat:
     :param annotations_dirname: Per-dataset subfolder holding annotation sidecars.
     :param beats_suffix: File suffix for beat-time annotation files.
     :param metadata_suffix: File suffix for track metadata sidecar files.
-    :param manifest_filename: Filename of a merged dataset's track manifest
-        (see ``tools/merge_datasets.py``), stored directly under that
-        dataset's own directory.
     """
 
     data_dir: str
@@ -32,7 +29,6 @@ class DataFormat:
     annotations_dirname: str
     beats_suffix: str
     metadata_suffix: str
-    manifest_filename: str
 
 
 def load() -> DataFormat:

@@ -84,33 +84,43 @@ parallel ``.beats``/``.meta.json`` pair for the same ``track_id``.
 track — picking a specific annotator's take for training is separate future
 work.
 
+Splits
+------
+
+``tools/create_splits.py`` builds a train/val split for a migrated dataset
+and saves it under ``splits_dir/<name>/{train,val}.txt`` — one
+``<dataset_name>/<track_id>`` line per track, not a positional index, so a
+split's contents can be read back, concatenated, or merged with another
+dataset's split independently of any one dataset instance's ordering (see
+``musicality.splits.splitter.Splitter``). It creates both a tempo split
+(``<name>``) and a beat-phase split (``beat_phase-<name>``, or
+``beat_phase-<name>-binary`` with ``--binary-only``) per dataset.
+``Splitter.load_refs``/``.save_refs`` read and write this format directly;
+``TempoDataset``/``BeatDataset`` accept it straight via their ``refs=``
+argument, or ``Splitter(...).run()`` for the ``Subset``-returning form used
+during training.
+
 Merging datasets
 -----------------
 
 ``tools/merge_datasets.py --datasets ballroom brid --output ballroom_brid``
-combines several already-migrated datasets into one logical dataset,
-without moving or copying any audio/annotation files. It writes a single
-manifest — ``../musicality_db/ballroom_brid/tracks.txt``, one
-``<dataset_name>/<track_id>`` line per line (the filename comes from
-``dataformat.yaml``'s ``manifest_filename``) — and fails fast if any source
-dataset hasn't been migrated yet (no ``.beats`` files at all).
+combines several datasets' *existing* splits into one merged split, keeping
+train and val separate: each source dataset's train tracks go into the
+merged train split, and its val tracks into the merged val split — so a
+track held out for one dataset stays held out in the merge. It writes
+nothing under the source datasets' own directories, and no merged dataset
+directory of any kind — only
+``splits_dir/ballroom_brid/{train,val}.txt``, in the same format
+``create_splits.py`` produces. There's no ``--val-split`` argument: the
+merge inherits whatever ratio each source was already split at, and fails
+fast, before writing anything, if a requested source doesn't have a split
+yet (run ``tools/create_splits.py`` first).
 
-``TempoDataset``/``BeatDataset`` resolve this manifest transparently via
-``musicality.dataformats.track_io.list_track_refs``: passing
-``name="ballroom_brid"`` reads every ``<dataset_name>/<track_id>`` entry and
-loads each track's audio/annotations from its own source dataset's
-directory rather than from ``ballroom_brid/`` itself. A merged dataset name
-is then usable anywhere a real dataset name is — including
-``data.name: ballroom_brid`` in a training config, and
-``tools/create_splits.py --datasets ballroom_brid`` to give it its own
-train/val split — with no further code changes.
-
-The one constraint: a merged dataset's source datasets are resolved
-*sibling-relative* to its own directory (``ballroom_brid``'s parent, i.e.
-``../musicality_db``), not copied or referenced by absolute path. This is
-already how ``merge_datasets.py`` always writes a merged output, so it's
-never a concern in the normal workflow — it only matters if a manifest is
-relocated by hand.
+A merged split name is then usable anywhere a real one is — e.g.
+``data.name: ballroom_brid`` in a training config — since
+``build_dataloaders``/``build_beat_dataloaders`` load a split's refs and
+construct ``TempoDataset``/``BeatDataset`` directly via ``refs=``, with no
+distinction between a plain dataset's split and a merged one.
 
 API reference
 -------------

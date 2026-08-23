@@ -58,10 +58,10 @@ class TrackData:
 class TrackRef:
     """One track's identity plus where to resolve its audio/annotations from.
 
-    Returned by :func:`list_track_refs`. ``dataset_name``/``data_home`` may
-    differ from the *name* originally passed to a loader when that name
-    refers to a merged manifest (see ``tools/merge_datasets.py``) rather than
-    a single migrated dataset.
+    Returned by :func:`list_track_refs`, and the unit a
+    ``TempoDataset``/``BeatDataset`` can be built from directly via its
+    ``refs=`` constructor argument — e.g. a list of refs spanning several
+    source datasets, such as one produced by ``tools/merge_datasets.py``.
     """
 
     dataset_name: str
@@ -298,36 +298,15 @@ def resolve_track_audio(
 
 
 def list_track_refs(name: str, data_home: Path | None = None) -> list[TrackRef]:
-    """Return every track behind *name*, resolved back to its source dataset.
+    """Return every migrated track for *name*, wrapped as :class:`TrackRef`.
 
-    *name* is either a single migrated dataset (the common case — every
-    track resolves to *name* itself, same as :func:`list_migrated_track_ids`)
-    or a merged manifest produced by ``tools/merge_datasets.py``: a
-    ``<dataset_name>/<track_id>`` manifest file (named by
-    ``dataformats.FORMAT.manifest_filename``) listing tracks pulled from
-    several source datasets. Distinguished by whether that manifest file
-    exists under *data_home* — a plain migrated dataset never has one, since
-    migration only ever writes ``tracks/`` and ``annotations/``.
-
-    Manifest entries are resolved sibling-relative to *data_home*'s own
-    parent directory (``data_home.parent / source_name``), not the global
-    ``dataformats.DATA_DIR`` — so a merged dataset's source datasets must
-    live alongside its own directory. This matches how ``merge_datasets.py``
-    always writes a merged output as a sibling of its source dataset
-    directories.
+    Thin wrapper over :func:`list_migrated_track_ids` — kept as the loaders'
+    entry point since it returns ready-to-resolve refs rather than bare
+    track ids. To build a dataset from tracks spanning several source
+    datasets (e.g. a merge), pass ``refs=`` directly to
+    ``TempoDataset``/``BeatDataset`` instead of going through *name*.
     """
 
     base = data_home or dataformats.DATA_DIR / name
-    manifest_path = base / dataformats.FORMAT.manifest_filename
-
-    if manifest_path.exists():
-        refs = []
-        for line in manifest_path.read_text().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            source_name, track_id = line.split("/", 1)
-            refs.append(TrackRef(source_name, track_id, base.parent / source_name))
-        return refs
 
     return [TrackRef(name, stem, base) for stem in list_migrated_track_ids(name, base)]

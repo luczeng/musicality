@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import (
+    TrackRef,
     list_track_refs,
     load_metadata,
     resolve_track_audio,
@@ -31,11 +32,14 @@ class TempoDataset(Dataset):
     :param name: Dataset name (e.g. ``"rwc_popular"``, ``"swing"``) — must
         already be migrated to this project's own format (see
         ``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``).
-        Can also be a merged dataset produced by ``tools/merge_datasets.py``,
-        pulling tracks from several source datasets (see
-        :func:`musicality.dataformats.track_io.list_track_refs`).
+        Mutually exclusive with *refs*.
     :param data_home: Dataset directory. Defaults to ``DATA_DIR/<name>``
-        (``DATA_DIR`` from :mod:`musicality.dataformats`).
+        (``DATA_DIR`` from :mod:`musicality.dataformats`). Ignored if *refs*
+        is given.
+    :param refs: Explicit list of tracks to load, bypassing *name*/*data_home*
+        resolution entirely — e.g. tracks pulled from several source
+        datasets (see :func:`~musicality.splits.splitter.Splitter.load_refs`).
+        Mutually exclusive with *name*.
     :param sample_rate: Target sample rate. Audio is resampled if needed.
     :param duration: Clip duration in seconds. Longer clips are truncated,
         shorter clips are zero-padded.
@@ -43,21 +47,28 @@ class TempoDataset(Dataset):
 
     def __init__(
         self,
-        name: str,
+        name: str | None = None,
         data_home: Path | None = None,
+        *,
+        refs: list[TrackRef] | None = None,
         sample_rate: int = 22050,
         duration: float = 10.0,
     ):
-        if data_home is None:
-            data_home = dataformats.DATA_DIR / name
+        if refs is None:
+            if name is None:
+                raise ValueError("Must provide either `name` or `refs`.")
+            if data_home is None:
+                data_home = dataformats.DATA_DIR / name
+            refs = list_track_refs(name, data_home)
 
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
 
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing.
         self.samples = []
+        self.refs = []
 
-        for ref in list_track_refs(name, data_home):
+        for ref in refs:
             metadata = load_metadata(
                 ref.dataset_name, ref.track_id, data_home=ref.data_home
             )
@@ -69,6 +80,7 @@ class TempoDataset(Dataset):
             )
             if audio_path is not None:
                 self.samples.append((str(audio_path), metadata.bpm_median))
+                self.refs.append(ref)
 
     def __len__(self) -> int:
         return len(self.samples)

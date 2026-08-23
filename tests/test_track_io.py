@@ -70,7 +70,7 @@ class TestListMigratedTrackIds:
 
 
 class TestListTrackRefs:
-    def test_no_manifest_falls_back_to_migrated_track_ids(self, monkeypatch, tmp_path):
+    def test_wraps_migrated_track_ids(self, monkeypatch, tmp_path):
         monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         ann_dir = tmp_path / "swing" / "annotations"
         ann_dir.mkdir(parents=True)
@@ -84,43 +84,9 @@ class TestListTrackRefs:
             TrackRef("swing", "b", tmp_path / "swing"),
         ]
 
-    def test_manifest_resolves_multiple_sibling_sources(self, tmp_path):
-        merged_dir = tmp_path / "merged"
-        merged_dir.mkdir()
-        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
-
-        refs = list_track_refs("merged", data_home=merged_dir)
-
-        assert refs == [
-            TrackRef("ballroom", "a", tmp_path / "ballroom"),
-            TrackRef("brid", "b", tmp_path / "brid"),
-        ]
-
-    def test_manifest_ignores_blank_and_whitespace_lines(self, tmp_path):
-        merged_dir = tmp_path / "merged"
-        merged_dir.mkdir()
-        (merged_dir / "tracks.txt").write_text("ballroom/a\n\n   \nbrid/b\n")
-
-        refs = list_track_refs("merged", data_home=merged_dir)
-
-        assert refs == [
-            TrackRef("ballroom", "a", tmp_path / "ballroom"),
-            TrackRef("brid", "b", tmp_path / "brid"),
-        ]
-
-    def test_manifest_takes_precedence_over_annotations_dir(self, tmp_path):
-        """Shouldn't happen in practice — a merged dataset has no
-        ``annotations/`` of its own — but confirms the manifest file is
-        checked before falling back to scanning ``annotations/``."""
-
-        merged_dir = tmp_path / "merged"
-        (merged_dir / "annotations").mkdir(parents=True)
-        (merged_dir / "annotations" / "x.beats").write_text("1.0 1")
-        (merged_dir / "tracks.txt").write_text("ballroom/a\n")
-
-        refs = list_track_refs("merged", data_home=merged_dir)
-
-        assert refs == [TrackRef("ballroom", "a", tmp_path / "ballroom")]
+    def test_no_annotations_dir_returns_empty(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        assert list_track_refs("swing") == []
 
 
 # ---------------------------------------------------------------------------

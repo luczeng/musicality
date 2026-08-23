@@ -133,23 +133,25 @@ class TestTempoDataset:
 
 
 # ---------------------------------------------------------------------------
-# Merged (manifest-driven) dataset
+# refs= construction (tracks pulled from multiple source datasets)
 # ---------------------------------------------------------------------------
 
 
-class TestMergedDataset:
+class TestRefsConstruction:
     def test_pulls_samples_from_multiple_source_datasets(self, tmp_path):
         _write_track(tmp_path / "ballroom", "a", bpm_median=120.0)
         _write_track(tmp_path / "brid", "b", bpm_median=90.0)
 
-        merged_dir = tmp_path / "ballroom_brid"
-        merged_dir.mkdir()
-        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
-
+        from musicality.dataformats.track_io import TrackRef
         from musicality.loaders.tempo_dataset import TempoDataset
 
+        refs = [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
         with _patch_audio():
-            ds = TempoDataset(name="ballroom_brid", data_home=merged_dir)
+            ds = TempoDataset(refs=refs)
 
         assert len(ds) == 2
         audio_paths = {path for path, _ in ds.samples}
@@ -161,16 +163,43 @@ class TestMergedDataset:
         _write_track(tmp_path / "ballroom", "a", bpm_median=120.0)
         _write_track(tmp_path / "brid", "b", bpm_median=None)
 
-        merged_dir = tmp_path / "ballroom_brid"
-        merged_dir.mkdir()
-        (merged_dir / "tracks.txt").write_text("ballroom/a\nbrid/b\n")
-
+        from musicality.dataformats.track_io import TrackRef
         from musicality.loaders.tempo_dataset import TempoDataset
 
+        refs = [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
         with _patch_audio():
-            ds = TempoDataset(name="ballroom_brid", data_home=merged_dir)
+            ds = TempoDataset(refs=refs)
 
         assert len(ds) == 1
+
+    def test_refs_populated_in_lockstep_with_samples(self, tmp_path):
+        _write_track(tmp_path / "ballroom", "a", bpm_median=120.0)
+        _write_track(tmp_path / "brid", "b", bpm_median=None)
+
+        from musicality.dataformats.track_io import TrackRef
+        from musicality.loaders.tempo_dataset import TempoDataset
+
+        refs = [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
+        with _patch_audio():
+            ds = TempoDataset(refs=refs)
+
+        assert len(ds.refs) == len(ds.samples) == 1
+        assert ds.refs[0].dataset_name == "ballroom"
+        assert ds.refs[0].track_id == "a"
+
+    def test_requires_name_or_refs(self):
+        from musicality.loaders.tempo_dataset import TempoDataset
+
+        with pytest.raises(ValueError):
+            TempoDataset()
 
 
 # ---------------------------------------------------------------------------

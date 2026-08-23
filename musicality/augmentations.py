@@ -127,12 +127,14 @@ class TempoAugmenter:
 
 
 class AugmentedDataset(Dataset):
-    """Wraps a Subset and applies :class:`TempoAugmenter` at item-access time.
+    """Wraps a dataset and applies :class:`TempoAugmenter` at item-access time.
 
     Use this to augment only the training split while leaving the validation
-    split unchanged, since both splits share the same underlying dataset object.
+    split unchanged — the two are independent dataset instances (see
+    :func:`~musicality.trainers.train.build_dataloaders`), so wrapping one
+    has no effect on the other.
 
-    :param subset: A ``torch.utils.data.Subset`` of a :class:`TempoDataset`.
+    :param subset: A :class:`TempoDataset` (or ``torch.utils.data.Subset`` of one).
     :param augmenter: The augmenter to apply.
     :param sample_rate: Sample rate of the audio (passed to the augmenter).
     :param n_samples: Fixed clip length in samples (passed to the augmenter).
@@ -293,13 +295,15 @@ class BeatPhaseAugmenter:
 
 
 class AugmentedBeatDataset(Dataset):
-    """Wraps a Subset of :class:`~musicality.loaders.beat_dataset.BeatDataset` and
+    """Wraps a :class:`~musicality.loaders.beat_dataset.BeatDataset` and
     applies :class:`BeatPhaseAugmenter` at item-access time.
 
     Use this to augment only the training split while leaving the validation
-    split unchanged, since both splits share the same underlying dataset object.
+    split unchanged — the two are independent dataset instances (see
+    :func:`~musicality.trainers.common.build_beat_dataloaders`), so wrapping
+    one has no effect on the other.
 
-    :param subset: A ``torch.utils.data.Subset`` of a ``BeatDataset``.
+    :param subset: A ``BeatDataset`` (or ``torch.utils.data.Subset`` of one).
     :param augmenter: The augmenter to apply.
     :param sample_rate: Sample rate of the audio (passed to the augmenter).
     :param n_samples: Fixed clip length in samples (passed to the augmenter).
