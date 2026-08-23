@@ -122,6 +122,21 @@ A merged split name is then usable anywhere a real one is — e.g.
 construct ``TempoDataset``/``BeatDataset`` directly via ``refs=``, with no
 distinction between a plain dataset's split and a merged one.
 
+Pointing training at a split directly
+--------------------------------------
+
+``data.name`` always resolves against the canonical ``splits_dir`` —
+``splits_dir/<name>/{train,val}.txt``. Set ``data.split_dir`` instead (in
+``configs/train.yaml``, ``beat_train.yaml``, or ``beat_only_train.yaml``, or
+on the CLI, e.g. ``data.split_dir=/path/to/my_split``) to point straight at
+*any* folder with a ``train.txt``/``val.txt`` pair — one built by
+``tools/merge_datasets.py`` but never "registered" under ``splits_dir``, one
+assembled by hand, or one living outside this repo's data directory
+entirely. When set, it takes priority over ``data.name`` and the
+``splits_dir`` lookup is skipped altogether — see
+``musicality.trainers.common.resolve_split_refs``, shared by both the tempo
+and beat trainers.
+
 API reference
 -------------
 

@@ -1,6 +1,7 @@
 """Training-pipeline plumbing shared across the tempo, beat-phase, and beat-only trainers."""
 
 import random
+from pathlib import Path
 
 import lightning as L
 from lightning.pytorch.loggers import WandbLogger
@@ -9,8 +10,29 @@ from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
 from musicality.augmentations import AugmentedBeatDataset, build_beat_phase_augmenter
+from musicality.dataformats.track_io import TrackRef
 from musicality.loaders.beat_dataset import BeatDataset, beat_split_name
 from musicality.splits.splitter import Splitter
+
+
+def resolve_split_refs(
+    cfg: DictConfig, splits_dir: Path, split_name: str
+) -> tuple[list[TrackRef], list[TrackRef]]:
+    """Return ``(train_refs, val_refs)`` for a training config's ``data`` section.
+
+    ``cfg.data.split_dir``, if set, points directly at a folder containing
+    ``train.txt``/``val.txt`` — bypassing ``splits_dir``/name lookup
+    entirely, so a split doesn't need to be registered under the canonical
+    ``splits_dir`` (e.g. one built ad hoc, or living outside this repo's
+    data directory) to train on it. Falls back to
+    ``Splitter.load_refs(splits_dir, split_name)`` otherwise.
+    """
+
+    split_dir = cfg.data.get("split_dir")
+    if split_dir:
+        return Splitter.load_refs_from_dir(Path(split_dir))
+
+    return Splitter.load_refs(splits_dir, split_name)
 
 
 def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
@@ -42,7 +64,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
     splits_dir = dataformats.ROOT / _fmt.splits_dir
     split_name = beat_split_name(cfg.data.name, binary_only)
 
-    train_refs, val_refs = Splitter.load_refs(splits_dir, split_name)
+    train_refs, val_refs = resolve_split_refs(cfg, splits_dir, split_name)
 
     # Separate dataset instances for train/val so only the train split draws
     # a random crop window per track per epoch — val stays fixed at the

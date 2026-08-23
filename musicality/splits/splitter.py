@@ -158,16 +158,32 @@ class Splitter:
         :raises FileNotFoundError: If no split has been generated for ``name`` yet.
         """
 
-        split_dir = splits_dir / name
-        train_file = split_dir / "train.txt"
-        val_file = split_dir / "val.txt"
-
-        if not (train_file.exists() and val_file.exists()):
+        try:
+            return Splitter.load_refs_from_dir(splits_dir / name)
+        except FileNotFoundError:
             raise FileNotFoundError(
                 f"No split found for '{name}' in {splits_dir}. Run "
                 f"`uv run python tools/create_splits.py` (or "
                 f"`tools/merge_datasets.py` for a merged name) to generate it."
-            )
+            ) from None
+
+    @staticmethod
+    def load_refs_from_dir(split_dir: Path) -> tuple[list[TrackRef], list[TrackRef]]:
+        """Return ``(train_refs, val_refs)`` read straight from *split_dir*'s
+        ``train.txt``/``val.txt`` — the same format :meth:`load_refs` reads,
+        but for a folder anywhere on disk rather than one registered under a
+        canonical ``splits_dir`` by name. Lets a training config point
+        directly at a folder of lists (``data.split_dir``) without going
+        through ``splits_dir``/``data.name`` lookup at all.
+
+        :raises FileNotFoundError: If *split_dir* has no ``train.txt``/``val.txt``.
+        """
+
+        train_file = split_dir / "train.txt"
+        val_file = split_dir / "val.txt"
+
+        if not (train_file.exists() and val_file.exists()):
+            raise FileNotFoundError(f"No split found at {split_dir}.")
 
         return _read_refs(train_file), _read_refs(val_file)
 
