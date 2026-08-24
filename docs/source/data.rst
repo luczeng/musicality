@@ -26,6 +26,14 @@ bridges it into this project's format before anything else touches it:
 - ``tools/migrate_rwc_genre.py`` — for CSV-annotated datasets (e.g.
   hand-corrected RWC annotations) that already have audio under
   ``tracks/``.
+- ``tools/migrate_gtzan.py`` — for GTZAN. Its audio is downloaded
+  separately, via the data dir's own ``dl_gtzan.py`` (HuggingFace's
+  marsyas/gtzan mirror — mirdata's ``gtzan_genre`` audio host is a dead
+  link), and its beat annotations come from CPJKU's beat_this_annotations
+  project, already dropped in as this project's own ``.beats`` format.
+  The two sources number tracks with a one-off mismatch; this tool
+  resolves that offset, then moves audio into ``tracks/`` same as the
+  other tools.
 
 A dataset with no ``tracks/`` folder is treated as not-yet-migrated: the
 annotator won't list it, and ``tools.annotator.data`` raises an error
