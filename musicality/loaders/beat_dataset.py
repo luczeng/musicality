@@ -7,7 +7,6 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 import torch
-import torchaudio
 import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
@@ -226,10 +225,14 @@ class BeatDataset(Dataset):
             start = 0
             num_frames = info.frames
 
-        # frame_offset/num_frames seek straight to the crop's bytes instead
-        # of decoding the whole file, so a multi-minute track costs the same
-        # as a short one.
-        wav, sr = torchaudio.load(audio_path, frame_offset=start, num_frames=num_frames)
+        # soundfile reads raw PCM directly (start/frames seek straight to the
+        # crop's bytes) instead of going through torchaudio.load's TorchCodec
+        # backend, which pays a large fixed per-call decoder-setup cost
+        # regardless of how much audio is actually requested.
+        wav_np, sr = sf.read(
+            audio_path, start=start, frames=num_frames, dtype="float32", always_2d=True
+        )
+        wav = torch.from_numpy(wav_np.T)  # (frames, channels) -> (C, N)
 
         if wav.shape[0] > 1:
             wav = wav.mean(dim=0, keepdim=True)

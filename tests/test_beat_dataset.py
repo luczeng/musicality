@@ -45,19 +45,20 @@ def _write_track(dataset_dir, track_id, beat_times=None, positions=None):
 
 @contextmanager
 def _patch_audio(wav_shape=(1, N_SAMPLES), sr=SAMPLE_RATE):
-    """Mock both the header probe (``sf.info``) and the actual decode
-    (``torchaudio.load``), since audio content is irrelevant to this
-    loader's own logic — only the .beats file's times/positions and file
+    """Mock both the header probe (``sf.info``) and the actual read
+    (``sf.read``), since audio content is irrelevant to this loader's own
+    logic — only the .beats file's times/positions and file
     presence/absence matter here.
     """
 
-    fake_wav = torch.randn(*wav_shape)
-    fake_info = MagicMock(samplerate=sr, frames=wav_shape[-1])
+    channels, n_frames = wav_shape
+    fake_wav_np = np.random.randn(n_frames, channels).astype(np.float32)
+    fake_info = MagicMock(samplerate=sr, frames=n_frames)
 
     with (
         patch(
-            "musicality.loaders.beat_dataset.torchaudio.load",
-            return_value=(fake_wav, sr),
+            "musicality.loaders.beat_dataset.sf.read",
+            return_value=(fake_wav_np, sr),
         ),
         patch("musicality.loaders.beat_dataset.sf.info", return_value=fake_info),
     ):
