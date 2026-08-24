@@ -5,6 +5,7 @@ import random
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 import torch
 import torchaudio
 import torchaudio.transforms as T
@@ -131,6 +132,7 @@ class BeatDataset(Dataset):
             refs = list_track_refs(name, data_home)
 
         self.sample_rate = sample_rate
+        self.duration = duration
         self.n_samples = int(duration * sample_rate)
         self.hop_length = hop_length
         self.n_frames = self.n_samples // hop_length
@@ -208,7 +210,26 @@ class BeatDataset(Dataset):
 
         audio_path, beat_times, positions, has_positions = self.samples[idx]
 
-        wav, sr = torchaudio.load(audio_path)  # (C, N)
+        info = sf.info(audio_path)
+        orig_sr = info.samplerate
+        n_samples_orig = int(round(self.duration * orig_sr))
+
+        if info.frames >= n_samples_orig:
+            max_start = info.frames - n_samples_orig
+            # Fixed (non-random) crops are taken from the middle rather than
+            # the start, since intros are often sparse/atypical (e.g. no
+            # beat yet) and a less representative eval window than the rest
+            # of the track.
+            start = random.randint(0, max_start) if self.random_crop else max_start // 2
+            num_frames = n_samples_orig
+        else:
+            start = 0
+            num_frames = info.frames
+
+        # frame_offset/num_frames seek straight to the crop's bytes instead
+        # of decoding the whole file, so a multi-minute track costs the same
+        # as a short one.
+        wav, sr = torchaudio.load(audio_path, frame_offset=start, num_frames=num_frames)
 
         if wav.shape[0] > 1:
             wav = wav.mean(dim=0, keepdim=True)
@@ -217,20 +238,13 @@ class BeatDataset(Dataset):
             wav = T.Resample(sr, self.sample_rate)(wav)
 
         if wav.shape[1] >= self.n_samples:
-            max_start = wav.shape[1] - self.n_samples
-            # Fixed (non-random) crops are taken from the middle rather than
-            # the start, since intros are often sparse/atypical (e.g. no
-            # beat yet) and a less representative eval window than the rest
-            # of the track.
-            start = random.randint(0, max_start) if self.random_crop else max_start // 2
-            wav = wav[:, start : start + self.n_samples]
+            wav = wav[:, : self.n_samples]
         else:
-            start = 0
             wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
 
         # Shift annotation times to be relative to the cropped window's start,
         # so frame indices computed below line up with the cropped audio.
-        beat_times = beat_times - start / self.sample_rate
+        beat_times = beat_times - start / orig_sr
 
         if has_positions:
             positions = np.asarray(positions)
