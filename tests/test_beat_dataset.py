@@ -274,6 +274,70 @@ class TestBeatDataset:
         assert torch.all(target[LAST] == 0.0)
 
 
+class TestRefsConstruction:
+    def test_pulls_samples_from_multiple_source_datasets(self, tmp_path):
+        _write_track(
+            tmp_path / "ballroom", "a", beat_times=[0.5, 1.0, 1.5], positions=[1, 2, 3]
+        )
+        _write_track(tmp_path / "brid", "b", beat_times=[0.5, 1.0])
+
+        from musicality.dataformats.track_io import TrackRef
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        refs = [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
+        with _patch_audio():
+            ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
+
+        assert len(ds) == 2
+        audio_paths = {sample[0] for sample in ds.samples}
+        assert any("ballroom" in p for p in audio_paths)
+        assert any("brid" in p for p in audio_paths)
+
+    def test_skips_unresolvable_audio_across_sources(self, tmp_path):
+        _write_track(tmp_path / "ballroom", "a", beat_times=[0.5, 1.0])
+
+        from musicality.dataformats.track_io import TrackRef
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        # "brid/b" is listed but brid/ was never populated on disk.
+        refs = [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
+        with _patch_audio():
+            ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
+
+        assert len(ds) == 1
+
+    def test_refs_populated_in_lockstep_with_samples(self, tmp_path):
+        _write_track(tmp_path / "ballroom", "a", beat_times=[0.5, 1.0])
+
+        from musicality.dataformats.track_io import TrackRef
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        refs = [
+            TrackRef("ballroom", "a", tmp_path / "ballroom"),
+            TrackRef("brid", "b", tmp_path / "brid"),
+        ]
+
+        with _patch_audio():
+            ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
+
+        assert len(ds.refs) == len(ds.samples) == 1
+        assert ds.refs[0].dataset_name == "ballroom"
+
+    def test_requires_name_or_refs(self):
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        with pytest.raises(ValueError):
+            BeatDataset()
+
+
 class TestGaussianSmear:
     def test_isolated_spike_peak_is_one(self):
         from musicality.loaders.beat_dataset import gaussian_smear

@@ -84,6 +84,66 @@ parallel ``.beats``/``.meta.json`` pair for the same ``track_id``.
 track — picking a specific annotator's take for training is separate future
 work.
 
+Splits
+------
+
+``tools/create_splits.py`` builds a train/val split for a migrated dataset
+and saves it under ``splits_dir/<name>/{train,val}.txt`` — one
+``<dataset_name>/<track_id>`` line per track, not a positional index, so a
+split's contents can be read back, concatenated, or merged with another
+dataset's split independently of any one dataset instance's ordering (see
+``musicality.splits.splitter.Splitter``). It creates both a tempo split
+(``<name>``) and a beat-phase split (``beat_phase-<name>``, or
+``beat_phase-<name>-binary`` with ``--binary-only``) per dataset.
+``Splitter.load_refs``/``.save_refs`` read and write this format directly;
+``TempoDataset``/``BeatDataset`` accept it straight via their ``refs=``
+argument, or ``Splitter(...).run()`` for the ``Subset``-returning form used
+during training.
+
+Merging datasets
+-----------------
+
+``tools/merge_datasets.py --datasets ballroom brid --output ballroom_brid``
+combines several datasets' *existing* splits into one merged split, keeping
+train and val separate: each source dataset's train tracks go into the
+merged train split, and its val tracks into the merged val split — so a
+track held out for one dataset stays held out in the merge. It writes
+nothing under the source datasets' own directories, and no merged dataset
+directory of any kind — only
+``splits_dir/ballroom_brid/{train,val}.txt``, in the same format
+``create_splits.py`` produces. There's no ``--val-split`` argument: the
+merge inherits whatever ratio each source was already split at, and fails
+fast, before writing anything, if a requested source doesn't have a split
+yet (run ``tools/create_splits.py`` first).
+
+A merged split name is then usable anywhere a real one is — e.g.
+``data.input: ballroom_brid`` in a training config — since
+``build_dataloaders``/``build_beat_dataloaders`` load a split's refs and
+construct ``TempoDataset``/``BeatDataset`` directly via ``refs=``, with no
+distinction between a plain dataset's split and a merged one.
+
+Telling training which split to use: ``data.input``
+-----------------------------------------------------
+
+Training configs (``configs/train.yaml``, ``beat_train.yaml``,
+``beat_only_train.yaml``) have one field, ``data.input``, for naming the
+split to train on. It's read two ways, told apart by whether it contains a
+``/``:
+
+- **A bare name** — e.g. ``data.input=ballroom`` or
+  ``data.input=ballroom_brid`` — looked up under the canonical
+  ``splits_dir``: ``splits_dir/<input>/{train,val}.txt``. This is the normal
+  case: everything ``create_splits.py`` and ``merge_datasets.py`` produce
+  lands under ``splits_dir`` automatically, so a name is all you need.
+- **A path** — e.g. ``data.input=../musicality_db/splits/ballroom`` or
+  ``data.input=/anywhere/my_split`` — used directly as the folder to read
+  ``train.txt``/``val.txt`` from, bypassing ``splits_dir`` entirely. Use
+  this for a split that isn't registered under ``splits_dir`` — one
+  assembled by hand, or one living outside this repo's data directory.
+
+See ``musicality.trainers.common.resolve_split_refs``, shared by both the
+tempo and beat trainers, for the exact dispatch.
+
 API reference
 -------------
 

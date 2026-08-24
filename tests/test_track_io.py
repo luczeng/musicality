@@ -6,7 +6,8 @@ load_metadata, and annotation_path/metadata_path are moved-as-is code
 already covered by tests/test_annotator_data.py and
 tests/test_annotator_metadata.py, which exercise the same code through
 tools.annotator.data's re-export. This file covers only what's genuinely
-new: list_migrated_track_ids, resolve_track_audio, and bpm_stats.
+new: list_migrated_track_ids, resolve_track_audio, list_track_refs, and
+bpm_stats.
 """
 
 import numpy as np
@@ -14,8 +15,10 @@ import pytest
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import (
+    TrackRef,
     bpm_stats,
     list_migrated_track_ids,
+    list_track_refs,
     resolve_track_audio,
 )
 
@@ -59,6 +62,31 @@ class TestListMigratedTrackIds:
         ann_dir.mkdir(parents=True)
         (ann_dir / "a.beats").write_text("1.0 1")
         assert list_migrated_track_ids("swing") == []
+
+
+# ---------------------------------------------------------------------------
+# list_track_refs
+# ---------------------------------------------------------------------------
+
+
+class TestListTrackRefs:
+    def test_wraps_migrated_track_ids(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        ann_dir = tmp_path / "swing" / "annotations"
+        ann_dir.mkdir(parents=True)
+        (ann_dir / "b.beats").write_text("1.0 1")
+        (ann_dir / "a.beats").write_text("1.0 1")
+
+        refs = list_track_refs("swing")
+
+        assert refs == [
+            TrackRef("swing", "a", tmp_path / "swing"),
+            TrackRef("swing", "b", tmp_path / "swing"),
+        ]
+
+    def test_no_annotations_dir_returns_empty(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        assert list_track_refs("swing") == []
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,21 @@ class TrackData:
 
 
 @dataclass
+class TrackRef:
+    """One track's identity plus where to resolve its audio/annotations from.
+
+    Returned by :func:`list_track_refs`, and the unit a
+    ``TempoDataset``/``BeatDataset`` can be built from directly via its
+    ``refs=`` constructor argument — e.g. a list of refs spanning several
+    source datasets, such as one produced by ``tools/merge_datasets.py``.
+    """
+
+    dataset_name: str
+    track_id: str
+    data_home: Path
+
+
+@dataclass
 class TrackMetadata:
     """Free-form descriptive info about a track, separate from its beats.
 
@@ -280,3 +295,18 @@ def resolve_track_audio(
         / f"{track_id}.wav"
     )
     return path if path.exists() else None
+
+
+def list_track_refs(name: str, data_home: Path | None = None) -> list[TrackRef]:
+    """Return every migrated track for *name*, wrapped as :class:`TrackRef`.
+
+    Thin wrapper over :func:`list_migrated_track_ids` — kept as the loaders'
+    entry point since it returns ready-to-resolve refs rather than bare
+    track ids. To build a dataset from tracks spanning several source
+    datasets (e.g. a merge), pass ``refs=`` directly to
+    ``TempoDataset``/``BeatDataset`` instead of going through *name*.
+    """
+
+    base = data_home or dataformats.DATA_DIR / name
+
+    return [TrackRef(name, stem, base) for stem in list_migrated_track_ids(name, base)]

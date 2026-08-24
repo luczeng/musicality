@@ -12,7 +12,8 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import (
-    list_migrated_track_ids,
+    TrackRef,
+    list_track_refs,
     read_beats_file,
     resolve_track_audio,
 )
@@ -76,8 +77,14 @@ class BeatDataset(Dataset):
     :param name: Dataset name (e.g. ``"ballroom"``, ``"swing"``) — must
         already be migrated to this project's own format (see
         ``tools/migrate_mirdata_dataset.py`` / ``tools/migrate_rwc_genre.py``).
+        Mutually exclusive with *refs*.
     :param data_home: Dataset directory. Defaults to ``DATA_DIR/<name>``
-        (``DATA_DIR`` from :mod:`musicality.dataformats`).
+        (``DATA_DIR`` from :mod:`musicality.dataformats`). Ignored if *refs*
+        is given.
+    :param refs: Explicit list of tracks to load, bypassing *name*/*data_home*
+        resolution entirely — e.g. tracks pulled from several source
+        datasets (see :func:`~musicality.splits.splitter.Splitter.load_refs`).
+        Mutually exclusive with *name*.
     :param sample_rate: Target sample rate. Audio is resampled if needed.
     :param duration: Clip duration in seconds. Longer clips are truncated,
         shorter clips are zero-padded.
@@ -104,8 +111,10 @@ class BeatDataset(Dataset):
 
     def __init__(
         self,
-        name: str,
+        name: str | None = None,
         data_home: Path | None = None,
+        *,
+        refs: list[TrackRef] | None = None,
         sample_rate: int = 22050,
         duration: float = 10.0,
         hop_length: int = 512,
@@ -114,8 +123,12 @@ class BeatDataset(Dataset):
         binary_only: bool = False,
         random_crop: bool = False,
     ):
-        if data_home is None:
-            data_home = dataformats.DATA_DIR / name
+        if refs is None:
+            if name is None:
+                raise ValueError("Must provide either `name` or `refs`.")
+            if data_home is None:
+                data_home = dataformats.DATA_DIR / name
+            refs = list_track_refs(name, data_home)
 
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
@@ -126,20 +139,23 @@ class BeatDataset(Dataset):
         self.random_crop = random_crop
 
         self.samples = []
+        self.refs = []
         n_skipped = 0
         n_no_positions = 0
         n_non_binary = 0
 
-        for stem in list_migrated_track_ids(name, data_home):
-            audio_path = resolve_track_audio(name, stem, data_home)
+        for ref in refs:
+            audio_path = resolve_track_audio(
+                ref.dataset_name, ref.track_id, ref.data_home
+            )
             if audio_path is None:
                 n_skipped += 1
                 continue
 
             beats_path = (
-                data_home
+                ref.data_home
                 / dataformats.FORMAT.annotations_dirname
-                / f"{stem}{dataformats.FORMAT.beats_suffix}"
+                / f"{ref.track_id}{dataformats.FORMAT.beats_suffix}"
             )
             beat_times, positions = read_beats_file(beats_path)
 
@@ -155,18 +171,21 @@ class BeatDataset(Dataset):
                 n_no_positions += 1
 
             self.samples.append((str(audio_path), beat_times, positions, has_positions))
+            self.refs.append(ref)
+
+        label = name if name is not None else "<refs>"
 
         if n_skipped:
             print(
-                f"[BeatDataset] {name}: skipped {n_skipped} track(s) with missing audio"
+                f"[BeatDataset] {label}: skipped {n_skipped} track(s) with missing audio"
             )
         if n_non_binary:
             print(
-                f"[BeatDataset] {name}: skipped {n_non_binary} non-binary-meter track(s) (binary_only=True)"
+                f"[BeatDataset] {label}: skipped {n_non_binary} non-binary-meter track(s) (binary_only=True)"
             )
         if n_no_positions:
             print(
-                f"[BeatDataset] {name}: {n_no_positions} track(s) have no position annotation (one/last masked)"
+                f"[BeatDataset] {label}: {n_no_positions} track(s) have no position annotation (one/last masked)"
             )
 
     def __len__(self) -> int:
