@@ -1,13 +1,9 @@
 data_home: ../musicality_db
 datasets:
   - ballroom
-  - brid
-  - hainsworth
   - rwc_classical
   - rwc_jazz
   - rwc_popular
-  - groove_midi
-  - guitarset
   # gtzan_genre: mirdata's loader has a dead audio link (opihi.cs.uvic.ca).
   # Use data_home/dl_gtzan.py instead (HuggingFace marsyas/gtzan mirror) to
   # populate data_home/gtzan/, drop in beat annotations under

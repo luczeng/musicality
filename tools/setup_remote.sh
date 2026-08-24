@@ -24,6 +24,7 @@ uv pip install -e .
 
 repo_root="$PWD"
 db_dir="$(uv run python -c 'import yaml; from pathlib import Path; print(Path(yaml.safe_load(open("configs/download.yaml"))["data_home"]).resolve())')"
+datasets="$(uv run python -c 'import yaml; print(" ".join(yaml.safe_load(open("configs/download.yaml"))["datasets"]))')"
 
 echo "Pulling data from musicality_db..."
 if [ -d "$db_dir/.git" ]; then
@@ -31,7 +32,10 @@ if [ -d "$db_dir/.git" ]; then
 else
     git clone https://github.com/luczeng/musicality_db.git "$db_dir"
 fi
-(cd "$db_dir" && uv run --project "$repo_root" dvc pull)
+# Scoped to configs/download.yaml's dataset list (plus splits, needed
+# regardless of which datasets are trained on) rather than a bare `dvc pull`
+# — a fresh remote instance shouldn't have to pull every dataset in the repo.
+(cd "$db_dir" && uv run --project "$repo_root" dvc pull splits $datasets)
 
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"
