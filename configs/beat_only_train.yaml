@@ -17,7 +17,7 @@ weight_decay: 1e-4
 # true-negative rate) instead of a pooled mean, which is dominated by the
 # true-negative rate since beat frames are a small minority.
 balanced: true
-batch_size: 16
+batch_size: 2
 n_mels: 128
 hop_length: 512
 sigma_frames: 1.5

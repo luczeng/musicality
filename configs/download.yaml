@@ -8,5 +8,7 @@ datasets:
   - rwc_popular
   - groove_midi
   - guitarset
-  # gtzan_genre: audio hosted at opihi.cs.uvic.ca is a dead link.
-  # Download manually from Marsyas or Kaggle and place under data_home/gtzan_genre/ (above).
+  # gtzan_genre: mirdata's loader has a dead audio link (opihi.cs.uvic.ca).
+  # Use data_home/dl_gtzan.py instead (HuggingFace marsyas/gtzan mirror) to
+  # populate data_home/gtzan/, drop in beat annotations under
+  # gtzan/annotations/beats/, then tools/migrate_gtzan.py.

@@ -559,7 +559,13 @@ class MainWindow(QMainWindow):
         # reads per-track display fields (info label, metadata panel) — so a
         # bad field on this particular track (e.g. a non-numeric tempo from
         # mirdata) can't leave playback silently stuck on the previous track.
-        audio, sr = librosa.load(self._track.audio_path, sr=None, mono=True)
+        # Resample to a fixed rate rather than preserving each track's native
+        # sr: some datasets' native rate (e.g. gtzan's 22050 Hz) doesn't
+        # match the audio device's own rate, and letting the OS resample
+        # on-the-fly during playback (rather than once here, in software)
+        # produces audible noise on some hardware. _REC_SR (44100) matches
+        # what every other dataset here already uses natively.
+        audio, sr = librosa.load(self._track.audio_path, sr=_REC_SR, mono=True)
         self._track_audio = audio
         self._track_sr = sr
         self._engine.load(audio, sr)
