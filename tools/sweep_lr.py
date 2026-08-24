@@ -16,7 +16,7 @@ Usage
 
     # pass through any other Hydra override to every run in the sweep
     uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 \\
-        --overrides trainer.max_epochs=5 train_subsample=0.2 data.name=ballroom
+        --overrides trainer.max_epochs=5 train_subsample=0.2 data.input=ballroom
 
     # save the comparison table to disk instead of only printing it
     uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
@@ -31,35 +31,22 @@ import wandb
 from hydra import compose, initialize
 from omegaconf import DictConfig
 
-import musicality.dataformats as dataformats
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.trainers.train_beat_phase import (
     build_callbacks,
-    build_dataloaders,
     build_module,
     build_trainer,
 )
+from musicality.trainers.common import build_beat_dataloaders
 
 SEED = 42
 
 
 def _compose(overrides: list[str]) -> DictConfig:
-    """Compose ``beat_train`` with ``overrides``, then patch ``data.data_home``.
-
-    The yaml default for ``data.data_home`` is a ``${hydra:runtime.cwd}``
-    interpolation, which only resolves inside a ``@hydra.main``-managed run
-    (it needs `HydraConfig` to be set). This script uses the Compose API
-    directly instead, so replace it with an equivalent plain path — unless
-    the caller already overrode ``data.data_home`` explicitly.
-    """
+    """Compose ``beat_train`` with ``overrides``."""
 
     with initialize(version_base="1.3", config_path="../configs"):
         cfg = compose(config_name="beat_train", overrides=overrides)
-
-    if not any(o.startswith("data.data_home=") for o in overrides):
-        cfg.data.data_home = str(
-            dataformats.ROOT / dataformats.load().data_dir / cfg.data.name
-        )
 
     return cfg
 
@@ -160,7 +147,7 @@ def main():
         "--overrides",
         nargs="*",
         default=[],
-        help="Extra Hydra overrides applied to every run, e.g. trainer.max_epochs=5 data.name=ballroom",
+        help="Extra Hydra overrides applied to every run, e.g. trainer.max_epochs=5 data.input=ballroom",
     )
     parser.add_argument(
         "--output",
@@ -173,11 +160,11 @@ def main():
     base_cfg = _compose(args.overrides)
 
     print(
-        f"[sweep_lr] dataset={base_cfg.data.name}  group_size={base_cfg.group_size}  lrs={args.lrs}"
+        f"[sweep_lr] dataset={base_cfg.data.input}  group_size={base_cfg.group_size}  lrs={args.lrs}"
     )
 
     L.seed_everything(SEED)
-    train_loader, val_loader, n_train, n_val = build_dataloaders(base_cfg)
+    train_loader, val_loader, n_train, n_val = build_beat_dataloaders(base_cfg)
 
     results = {}
     for lr in args.lrs:

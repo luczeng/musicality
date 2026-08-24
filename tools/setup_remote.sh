@@ -40,22 +40,4 @@ fi
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"
 
-echo "Fetching mirdata indices for DVC-pulled datasets..."
-uv run python - <<'EOF'
-import yaml
-from pathlib import Path
-
-import mirdata
-
-cfg = yaml.safe_load(Path("configs/download.yaml").read_text())
-data_home = Path(cfg["data_home"])
-
-for name in cfg["datasets"]:
-    if not (data_home / f"{name}.dvc").exists():
-        continue
-    print(f"  {name}")
-    ds = mirdata.initialize(name, data_home=str(data_home / name))
-    ds.download(partial_download=["index"])
-EOF
-
 echo "Setup complete — ready to train."
