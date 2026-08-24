@@ -32,6 +32,10 @@ if [ -d "$db_dir/.git" ]; then
 else
     git clone https://github.com/luczeng/musicality_db.git "$db_dir"
 fi
+# --local (not committed) so this only affects this instance: symlinking cache
+# objects into the checkout avoids DVC's default copy, which otherwise doubles
+# disk usage (full copy in .dvc/cache plus full copy in the checked-out dirs).
+(cd "$db_dir" && uv run --project "$repo_root" dvc config --local cache.type symlink)
 # Scoped to configs/download.yaml's dataset list (plus splits, needed
 # regardless of which datasets are trained on) rather than a bare `dvc pull`
 # — a fresh remote instance shouldn't have to pull every dataset in the repo.
