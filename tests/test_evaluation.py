@@ -8,6 +8,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import torch
+
 from musicality.evaluation import DATA_DIR, DEFAULTS, BeatEvaluator
 
 
@@ -176,6 +178,94 @@ class TestBeatEvaluatorReturnValue:
             ).run()
 
             assert results == track_results
+
+
+class TestBeatEvaluatorLoad:
+    def test_memoized_across_repeated_calls(self):
+        with _mocked(n_tracks=3) as mocks:
+            evaluator = BeatEvaluator(
+                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+            )
+            evaluator.load()
+            evaluator.load()
+
+            assert mocks["load_module"].call_count == 1
+            assert mocks["BeatDataset"].call_count == 1
+            assert mocks["indices_for_split"].call_count == 1
+
+    def test_run_reuses_load(self):
+        with _mocked(n_tracks=3) as mocks:
+            evaluator = BeatEvaluator(
+                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+            )
+            evaluator.load()
+            evaluator.run()
+
+            assert mocks["load_module"].call_count == 1
+            assert mocks["BeatDataset"].call_count == 1
+
+
+class TestBeatEvaluatorComputeTrackProbs:
+    def _cached(self, task, n_frames=10, n_tracks=2):
+        logits_shape = (1, 3, n_frames) if task == "beat_phase" else (1, n_frames)
+        module = MagicMock(return_value=torch.randn(*logits_shape))
+
+        with (
+            patch("musicality.evaluation.load_module", return_value=(module, task)),
+            patch(
+                "musicality.evaluation.BeatDataset",
+                return_value=_fake_dataset(n_tracks),
+            ),
+            patch(
+                "musicality.evaluation.indices_for_split",
+                return_value=list(range(n_tracks)),
+            ),
+            patch(
+                "musicality.evaluation.load_track_waveform",
+                return_value=torch.zeros(1, 1000),
+            ),
+        ):
+            evaluator = BeatEvaluator(
+                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+            )
+            return evaluator.compute_track_probs()
+
+    def test_beat_only_keeps_the_single_channel(self):
+        cached = self._cached(task="beat_only", n_frames=10)
+
+        assert len(cached) == 2
+        beat_times, probs = cached[0]
+        assert probs.shape == (10,)
+
+    def test_beat_phase_slices_out_the_beat_channel(self):
+        cached = self._cached(task="beat_phase", n_frames=10)
+
+        beat_times, probs = cached[0]
+        assert probs.shape == (10,)
+
+    def test_shares_load_with_a_prior_load_call(self):
+        with (
+            patch(
+                "musicality.evaluation.load_module",
+                return_value=(MagicMock(return_value=torch.randn(1, 5)), "beat_only"),
+            ) as load_module,
+            patch(
+                "musicality.evaluation.BeatDataset", return_value=_fake_dataset(1)
+            ) as beat_dataset,
+            patch("musicality.evaluation.indices_for_split", return_value=[0]),
+            patch(
+                "musicality.evaluation.load_track_waveform",
+                return_value=torch.zeros(1, 1000),
+            ),
+        ):
+            evaluator = BeatEvaluator(
+                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+            )
+            evaluator.load()
+            evaluator.compute_track_probs()
+
+            assert load_module.call_count == 1
+            assert beat_dataset.call_count == 1
 
 
 class TestBeatEvaluatorVerbose:

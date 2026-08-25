@@ -8,6 +8,7 @@ which is a thin CLI wrapper around it.
 from pathlib import Path
 
 import numpy as np
+import torch
 import yaml
 
 import musicality.dataformats as dataformats
@@ -149,12 +150,67 @@ class BeatEvaluator:
         self.limit = limit
         self.device = device
         self.verbose = verbose
+        self._loaded = None
+
+    def load(self) -> tuple:
+        """Load the checkpoint (auto-detecting task) and build the dataset +
+        selected split indices. Memoized — safe to call more than once.
+
+        :returns: ``(module, task, dataset, indices)``.
+        """
+
+        if self._loaded is None:
+            module, task = load_module(self.checkpoint, self.device)
+            dataset = BeatDataset(
+                name=self.dataset_name,
+                data_home=self.data_home,
+                sample_rate=self.sample_rate,
+                hop_length=self.hop_length,
+                group_size=self.group_size if self.group_size is not None else 4,
+                binary_only=self.binary_only,
+            )
+            indices = indices_for_split(
+                dataset, self.dataset_name, self.split, self.val_split, self.binary_only
+            )
+            if self.limit is not None:
+                indices = indices[: self.limit]
+            self._loaded = (module, task, dataset, indices)
+
+        return self._loaded
+
+    @torch.no_grad()
+    def compute_track_probs(self) -> list[tuple]:
+        """Run the model once per track, returning cached
+        ``(beat_times, beat_probs)`` pairs — just the beat channel, even for
+        beat-phase checkpoints (this sweep-friendly readout doesn't score
+        bar-position). Lets a caller (e.g. a postprocessing hyperparameter
+        sweep) re-score many parameter combinations cheaply without
+        re-running the model."""
+
+        module, task, dataset, indices = self.load()
+
+        cached = []
+        for i in indices:
+            audio_path, beat_times, _positions, _has_positions = dataset.samples[i]
+
+            wav = (
+                load_track_waveform(audio_path, self.sample_rate)
+                .unsqueeze(0)
+                .to(self.device)
+            )
+            logits = module(wav)  # (1, T') beat-only, or (1, 3, T') beat-phase
+            probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',) or (3, T')
+            beat_probs = probs[0] if task == "beat_phase" else probs
+
+            cached.append((beat_times, beat_probs))
+
+        return cached
 
     def run(self) -> list[dict]:
         """Evaluate every track in the selected split and return one result
         dict per track (see :func:`evaluate_track`)."""
 
-        module, task = load_module(self.checkpoint, self.device)
+        module, task, dataset, indices = self.load()
         task_defaults = DEFAULTS[task]
 
         group_size = (
@@ -182,21 +238,6 @@ class BeatEvaluator:
             if self.anchor_threshold is not None
             else task_defaults.get("anchor_threshold", 0.5)
         )
-
-        dataset = BeatDataset(
-            name=self.dataset_name,
-            data_home=self.data_home,
-            sample_rate=self.sample_rate,
-            hop_length=self.hop_length,
-            group_size=group_size,
-            binary_only=self.binary_only,
-        )
-
-        indices = indices_for_split(
-            dataset, self.dataset_name, self.split, self.val_split, self.binary_only
-        )
-        if self.limit is not None:
-            indices = indices[: self.limit]
 
         if self.verbose:
             print(

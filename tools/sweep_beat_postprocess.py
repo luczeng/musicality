@@ -35,48 +35,17 @@ import csv
 import itertools
 from pathlib import Path
 
-import torch
 import yaml
 
 import musicality.dataformats as dataformats
-from musicality.inference import load_module, load_track_waveform
-from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
+from musicality.evaluation import DATA_DIR, BeatEvaluator
 from musicality.metrics.f_measure import beat_f_measure
 from musicality.postprocess import readout_beat_only
-
-DATA_DIR = Path(__file__).parent.parent / dataformats.load().data_dir
 
 # Default CLI values — see configs/sweep_beat_postprocess.yaml for what each means.
 DEFAULTS = yaml.safe_load(
     (dataformats.ROOT / "configs" / "sweep_beat_postprocess.yaml").read_text()
 )
-
-
-@torch.no_grad()
-def compute_track_probs(
-    module,
-    task: str,
-    dataset: BeatDataset,
-    indices: list[int],
-    sample_rate: int,
-    device: torch.device,
-) -> list[tuple]:
-    """Run the model once per track, returning cached ``(beat_times, beat_probs)``
-    pairs — just the beat channel, even for beat-phase checkpoints, since
-    this sweep's grid only affects peak-picking/gating."""
-
-    cached = []
-    for i in indices:
-        audio_path, beat_times, _positions, _has_positions = dataset.samples[i]
-
-        wav = load_track_waveform(audio_path, sample_rate).unsqueeze(0).to(device)
-        logits = module(wav)  # (1, T') beat-only, or (1, 3, T') beat-phase
-        probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',) or (3, T')
-        beat_probs = probs[0] if task == "beat_phase" else probs
-
-        cached.append((beat_times, beat_probs))
-
-    return cached
 
 
 def score_combo(
@@ -186,31 +155,25 @@ def main():
     )
     args = parser.parse_args()
 
-    data_home = Path(args.data_home) if args.data_home else DATA_DIR / args.dataset
-    dataset = BeatDataset(
-        name=args.dataset,
-        data_home=data_home,
+    evaluator = BeatEvaluator(
+        checkpoint=args.checkpoint,
+        dataset=args.dataset,
+        data_home=args.data_home,
+        split=args.split,
+        val_split=args.val_split,
         sample_rate=args.sample_rate,
         hop_length=args.hop_length,
         binary_only=args.binary_only,
+        limit=args.limit,
+        device=args.device,
     )
-
-    indices = indices_for_split(
-        dataset, args.dataset, args.split, args.val_split, args.binary_only
-    )
-    if args.limit is not None:
-        indices = indices[: args.limit]
-
-    device = torch.device(args.device)
-    module, task = load_module(args.checkpoint, device)
+    _module, task, _dataset, indices = evaluator.load()
 
     print(
         f"[sweep_postprocess] caching frame probabilities for {len(indices)} "
         f"track(s) from '{args.dataset}' (split={args.split}, task={task})"
     )
-    cached = compute_track_probs(
-        module, task, dataset, indices, args.sample_rate, device
-    )
+    cached = evaluator.compute_track_probs()
 
     fps = args.sample_rate / args.hop_length
     grid = list(
