@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
-"""Sweep beat-only postprocessing hyperparameters (``beat_threshold``,
+"""Sweep beat-detection postprocessing hyperparameters (``beat_threshold``,
 ``min_distance_frames``, ``gate_tolerance``) against a checkpoint, scoring
 each combination by mean beat F-measure.
+
+Works with both beat-only and beat-phase checkpoints (task auto-detected,
+like :mod:`tools.eval_beat`) — the swept grid only drives
+:func:`~musicality.postprocess.pick_peaks`/:func:`~musicality.postprocess.gate_periodicity`,
+which is identical for both tasks, so a beat-phase checkpoint's beat channel
+is scored the same way as a beat-only checkpoint's single output. The
+bar-position ``anchor_threshold`` isn't part of this sweep's grid.
 
 Runs the model once per track (the expensive part) and caches the resulting
 frame probabilities, then re-scores every parameter combination against
@@ -48,22 +55,26 @@ DEFAULTS = yaml.safe_load(
 @torch.no_grad()
 def compute_track_probs(
     module,
+    task: str,
     dataset: BeatDataset,
     indices: list[int],
     sample_rate: int,
     device: torch.device,
 ) -> list[tuple]:
-    """Run the model once per track, returning cached ``(beat_times, probs)`` pairs."""
+    """Run the model once per track, returning cached ``(beat_times, beat_probs)``
+    pairs — just the beat channel, even for beat-phase checkpoints, since
+    this sweep's grid only affects peak-picking/gating."""
 
     cached = []
     for i in indices:
         audio_path, beat_times, _positions, _has_positions = dataset.samples[i]
 
         wav = load_track_waveform(audio_path, sample_rate).unsqueeze(0).to(device)
-        logits = module(wav)  # (1, T')
-        probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',)
+        logits = module(wav)  # (1, T') beat-only, or (1, 3, T') beat-phase
+        probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',) or (3, T')
+        beat_probs = probs[0] if task == "beat_phase" else probs
 
-        cached.append((beat_times, probs))
+        cached.append((beat_times, beat_probs))
 
     return cached
 
@@ -100,7 +111,7 @@ def score_combo(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Sweep beat-only postprocessing hyperparameters against a checkpoint."
+        description="Sweep beat-detection postprocessing hyperparameters against a beat-only or beat-phase checkpoint."
     )
     parser.add_argument(
         "--checkpoint", required=True, help="Path to a Lightning .ckpt file"
@@ -192,18 +203,14 @@ def main():
 
     device = torch.device(args.device)
     module, task = load_module(args.checkpoint, device)
-    if task != "beat_only":
-        raise SystemExit(
-            f"tools/sweep_beat_postprocess.py only supports beat-only checkpoints "
-            f"(its grid and readout_beat_only() call are beat-only-specific) — "
-            f"got task={task!r}. Use tools/eval_beat.py for beat-phase checkpoints."
-        )
 
     print(
         f"[sweep_postprocess] caching frame probabilities for {len(indices)} "
-        f"track(s) from '{args.dataset}' (split={args.split})"
+        f"track(s) from '{args.dataset}' (split={args.split}, task={task})"
     )
-    cached = compute_track_probs(module, dataset, indices, args.sample_rate, device)
+    cached = compute_track_probs(
+        module, task, dataset, indices, args.sample_rate, device
+    )
 
     fps = args.sample_rate / args.hop_length
     grid = list(
