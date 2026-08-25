@@ -237,7 +237,7 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
 | `tools/create_splits.py` | Create the train/val splits under `../musicality_db/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
 | `tools/eval_beat.py` | Evaluate a beat-only or beat-phase checkpoint (task auto-detected) on full-length tracks (not the fixed-duration training clips): beat F-measure, plus "1"/"last" F-measure and phase-confusion rate for beat-phase checkpoints |
-| `tools/sweep_beat_postprocess.py` | Grid-search postprocessing thresholds (`beat_threshold`/`min_distance_frames`/`gate_tolerance`) for a beat-only checkpoint, scoring each combination by mean beat F-measure |
+| `tools/sweep_beat_postprocess.py` | Grid-search postprocessing thresholds for a beat-only or beat-phase checkpoint (task auto-detected): beat-detection thresholds (`beat_threshold`/`min_distance_frames`/`gate_tolerance`), scored by mean beat F-measure, plus `anchor_threshold` for beat-phase checkpoints, scored by mean "1"/"last" F-measure |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
