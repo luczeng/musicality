@@ -176,6 +176,17 @@ def label_bar_position(
     anchor wins. Beats before the first confident anchor are left unresolved
     (``None``).
 
+    Because a resync only happens on a confident vote, ``anchor_threshold``
+    is a two-sided tuning knob, not a "higher is always safer" one: too low,
+    and a noisy false-positive vote (a probability bump on a beat that isn't
+    actually the anchor position) triggers a spurious resync that corrupts
+    every beat until the next vote — one bad anchor wrecks a long stretch,
+    not just itself. Too high, and even genuine anchors stop clearing the
+    bar, so the count never resyncs (or never starts) and beats go
+    unresolved instead. Empirically this gives a real interior optimum
+    rather than a monotonic curve — see ``tools/sweep_beat_postprocess.py``,
+    which grid-searches this against real F-measure.
+
     :param beat_times: Gated beat timestamps (seconds), sorted.
     :param one_probs: Per-frame "one" probability curve, shape ``(T,)``.
     :param last_probs: Per-frame "last" (position ``group_size``) probability
@@ -183,7 +194,8 @@ def label_bar_position(
     :param fps: Frames per second (``sample_rate / hop_length``), used to map
         a beat time to its nearest frame.
     :param anchor_threshold: Minimum probability for a beat to be trusted as
-        a confident 1/``group_size`` anchor.
+        a confident 1/``group_size`` anchor. Non-monotonic optimum — see the
+        tradeoff above.
     :param group_size: Number of positions per group — ``4`` for bar position
         (default), ``8`` for phrase position.
     :returns: One entry per beat time: ``1``..``group_size``, or ``None``.
