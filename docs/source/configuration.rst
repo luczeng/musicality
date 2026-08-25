@@ -12,6 +12,12 @@ Tempo training (``configs/train.yaml``)
 .. literalinclude:: ../../configs/train.yaml
    :language: yaml
 
+Beat-only training (``configs/beat_only_train.yaml``)
+-----------------------------------------------------
+
+.. literalinclude:: ../../configs/beat_only_train.yaml
+   :language: yaml
+
 Beat-phase training (``configs/beat_train.yaml``)
 -----------------------------------------------------
 
