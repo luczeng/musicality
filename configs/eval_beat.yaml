@@ -1,6 +1,5 @@
 # Defaults for tools/eval_beat.py — every key below is overridable via the
 # matching --flag on the command line (e.g. `--beat-threshold 0.4`).
-
 dataset: ballroom  # mirdata dataset name
 split: val  # train | val | all
 val_split: 0.2  # fraction of the dataset held out for validation — must match how the split was created
@@ -8,7 +7,6 @@ sample_rate: 22050  # audio sample rate the checkpoint was trained at
 hop_length: 512  # frame hop size, in samples — must match the checkpoint's training config
 tolerance: 0.07  # F-measure matching window, seconds
 device: cpu  # torch device to run inference on
-
 # Postprocessing (musicality/postprocess.py) defaults, selected automatically by
 # the checkpoint's detected task (musicality.inference.detect_task) unless
 # overridden via the matching --flag.

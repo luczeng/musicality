@@ -221,9 +221,10 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 <summary><b>Leaderboard</b></summary>
 
 
-| Dataset | Task | Split | Beat F-measure |
-|---|---|---|---|
-| ballroom (binary meter) | Beat detection (beat-only) | val, 104 tracks | 0.896 |
+| Dataset | Task | Network | Split | Beat F-measure | "1"/"last" F-measure |
+|---|---|---|---|---|---|
+| ballroom (binary meter) | Beat detection (beat-only) | TCN | val, 104 tracks | 0.896 | — |
+| ballroom (binary meter) | Beat detection (phase) | TCN | val, 104 tracks | 0.916 | 0.695 |
 
 
 </details>
