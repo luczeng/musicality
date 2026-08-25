@@ -20,9 +20,13 @@ beat_only:
   min_distance_frames: 4  # pick_peaks: minimum frame gap enforced between returned peaks
   gate_tolerance: 0.1  # gate_periodicity: relative slack around an integer multiple of the current beat period
 beat_phase:
-  # Untuned defaults — no sweep has been run for the beat-phase (one/last) heads yet.
-  beat_threshold: 0.3  # pick_peaks: minimum probability to be considered a peak at all
-  min_distance_frames: 1  # pick_peaks: minimum frame gap enforced between returned peaks
-  gate_tolerance: 0.2  # gate_periodicity: relative slack around an integer multiple of the current beat period
-  anchor_threshold: 0.5  # label_bar_position: minimum probability for a beat to be trusted as a confident "1"/"last" anchor
+  # Tuned via tools/sweep_beat_postprocess.py against a real checkpoint
+  # (checkpoints_beat/checkpoints_beat/lr_sweep/lr_0.03/beat-phase-epoch=126-val/loss=1.6565.ckpt,
+  # binary_only=True, ballroom val split): mean beat F-measure 0.916,
+  # mean('1','last') F-measure 0.695 (f_one=0.697 f_last=0.692 confusion=0.253)
+  # — rerun the sweep and update these if the checkpoint/dataset changes materially.
+  beat_threshold: 0.5  # pick_peaks: minimum probability to be considered a peak at all
+  min_distance_frames: 4  # pick_peaks: minimum frame gap enforced between returned peaks
+  gate_tolerance: 0.1  # gate_periodicity: relative slack around an integer multiple of the current beat period
+  anchor_threshold: 0.8  # label_bar_position: minimum probability for a beat to be trusted as a confident "1"/"last" anchor
   group_size: 4  # beats per group: 4 for bar position (default), 8 for phrase position

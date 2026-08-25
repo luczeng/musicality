@@ -230,18 +230,19 @@ class TestBeatEvaluatorComputeTrackProbs:
             )
             return evaluator.compute_track_probs()
 
-    def test_beat_only_keeps_the_single_channel(self):
+    def test_beat_only_returns_raw_1d_probs(self):
         cached = self._cached(task="beat_only", n_frames=10)
 
         assert len(cached) == 2
-        beat_times, probs = cached[0]
+        beat_times, positions, has_positions, probs = cached[0]
         assert probs.shape == (10,)
+        assert has_positions is False
 
-    def test_beat_phase_slices_out_the_beat_channel(self):
+    def test_beat_phase_keeps_all_channels(self):
         cached = self._cached(task="beat_phase", n_frames=10)
 
-        beat_times, probs = cached[0]
-        assert probs.shape == (10,)
+        beat_times, positions, has_positions, probs = cached[0]
+        assert probs.shape == (3, 10)
 
     def test_shares_load_with_a_prior_load_call(self):
         with (

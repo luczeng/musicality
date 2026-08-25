@@ -181,17 +181,18 @@ class BeatEvaluator:
     @torch.no_grad()
     def compute_track_probs(self) -> list[tuple]:
         """Run the model once per track, returning cached
-        ``(beat_times, beat_probs)`` pairs — just the beat channel, even for
-        beat-phase checkpoints (this sweep-friendly readout doesn't score
-        bar-position). Lets a caller (e.g. a postprocessing hyperparameter
-        sweep) re-score many parameter combinations cheaply without
-        re-running the model."""
+        ``(beat_times, positions, has_positions, probs)`` tuples — the raw
+        per-track model output, unsliced (shape ``(T,)`` for beat-only,
+        ``(3, T)`` for beat-phase), plus the reference annotations needed to
+        score it. Lets a caller (e.g. a postprocessing hyperparameter sweep)
+        re-score many parameter combinations cheaply without re-running the
+        model."""
 
-        module, task, dataset, indices = self.load()
+        module, _task, dataset, indices = self.load()
 
         cached = []
         for i in indices:
-            audio_path, beat_times, _positions, _has_positions = dataset.samples[i]
+            audio_path, beat_times, positions, has_positions = dataset.samples[i]
 
             wav = (
                 load_track_waveform(audio_path, self.sample_rate)
@@ -200,9 +201,8 @@ class BeatEvaluator:
             )
             logits = module(wav)  # (1, T') beat-only, or (1, 3, T') beat-phase
             probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',) or (3, T')
-            beat_probs = probs[0] if task == "beat_phase" else probs
 
-            cached.append((beat_times, beat_probs))
+            cached.append((beat_times, positions, has_positions, probs))
 
         return cached
 
