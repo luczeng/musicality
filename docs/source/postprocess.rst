@@ -1,9 +1,8 @@
-Other
-=====
+Postprocessing
+==============
 
 .. autosummary::
    :toctree: generated
    :recursive:
 
    ~musicality.postprocess
-   ~musicality.inference

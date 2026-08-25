@@ -60,10 +60,17 @@ matches the observed 0.371 phase-confusion rate well: weak anchor
 precision/recall compounds into long mislabeled stretches, rather than
 isolated errors.
 
-**Not yet investigated / next step:** sweep `anchor_threshold` in
-`readout()`/`label_bar_position()` and inspect real val-track drift via
-`eval_beat_phase.py` before assuming this is purely a representation
-(model) problem rather than a postprocessing one.
+**Update:** swept `anchor_threshold` jointly with the beat-detection grid via
+`tools/sweep_beat_postprocess.py` against a later checkpoint
+(`checkpoints_beat/checkpoints_beat/lr_sweep/lr_0.03/beat-phase-epoch=126-val/loss=1.6565.ckpt`,
+`binary_only=True`, ballroom val split). Confirms this is at least partly
+postprocessing-limited, not purely a representation problem: the sweep found
+a real interior optimum rather than "higher is always better" — `0.7` scored
+f_one=0.679/f_last=0.682, `0.8` scored f_one=0.697/f_last=0.692 (best),
+`0.9` scored f_one=0.698/f_last=0.676 (worse than `0.8`), exactly the
+two-sided tradeoff described above (too low = noisy false votes corrupt long
+stretches; too high = even real anchors stop firing). Tuned value now lives
+in `configs/eval_beat.yaml`'s `beat_phase.anchor_threshold` (`0.8`).
 
 ## 4. `pos_weight` investigation
 
@@ -165,7 +172,10 @@ the same way.
 - [ ] Retrain on ballroom with `pos_weight: [5.0, 18.0, 25.0]`.
 - [ ] Re-run `tools/eval_beat_phase.py` and compare F-measure / phase
       confusion against the 0.726 / 0.488 / 0.519 / 0.371 baseline above.
-- [ ] Sweep `anchor_threshold` in `musicality/postprocess.py:readout` — check
+- [x] Sweep `anchor_threshold` in `musicality/postprocess.py:readout` — check
       whether the F-measure gap is more postprocessing- or model-limited.
+      Done via `tools/sweep_beat_postprocess.py`; see §3 update above — a real
+      interior optimum was found (not boundary-saturated), so at least
+      partly postprocessing-limited.
 - [ ] Decide on `binary_only` (data-loss vs. cleaner `last` signal) based on
       actual val-split results, not just the frame-balance numbers above.
