@@ -12,6 +12,14 @@ Currently supports:
 - Beat estimation
 - Tempo phase estimation
 
+## Roadmap
+
+- [ ] App
+- [ ] Real time inference
+- [ ] Bayesian methods
+- [ ] Phrasing, chords methods
+- [x] Tempo, beat and beat phase loaders and trainers. Corresponding dataformats. Basic nets and postprocessing tools. Mobile and local annotation apps. 
+
 <details id="setup">
 <summary><b>Setup</b></summary>
 
@@ -221,9 +229,10 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 <summary><b>Leaderboard</b></summary>
 
 
-| Dataset | Task | Split | Beat F-measure |
-|---|---|---|---|
-| ballroom (binary meter) | Beat detection (beat-only) | val, 104 tracks | 0.896 |
+| Dataset | Task | Network | Split | Beat F-measure | "1" F-measure | "last" F-measure |
+|---|---|---|---|---|---|---|
+| ballroom (binary meter) | Beat detection (beat-only) | TCN | val, 104 tracks | 0.896 | — | — |
+| ballroom (binary meter) | Beat detection (phase) | TCN | val, 104 tracks | 0.916 | 0.697 | 0.692 |
 
 
 </details>
