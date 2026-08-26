@@ -12,6 +12,14 @@ Currently supports:
 - Beat estimation
 - Tempo phase estimation
 
+## Roadmap
+
+- [ ] App
+- [ ] Real time inference
+- [ ] Bayesian methods
+- [ ] Phrasing, chords methods
+- [x] Tempo, beat and beat phase loaders and trainers. Corresponding dataformats. Basic nets and postprocessing tools. Mobile and local annotation apps. 
+
 <details id="setup">
 <summary><b>Setup</b></summary>
 
