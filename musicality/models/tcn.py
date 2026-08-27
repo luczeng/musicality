@@ -23,15 +23,20 @@ class PositionalEncoding(nn.Module):
         else:
             raise ValueError("channels must be even")
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        :param x: ``(B, T, C)``
-        :returns: ``x`` plus the positional encoding, same shape.
-        """
+        # Cache keyed by (T, device, dtype) — the encoding is a deterministic
+        # function of those alone, so it's cheap to reuse across forward calls
+        # instead of rebuilding the meshgrid/pow/sin/cos every time. A plain
+        # attribute (not a registered buffer) on purpose: it's derived, not
+        # learned, so it shouldn't appear in state_dict/checkpoints, and this
+        # way a stale cache from before a `.to(device)` call is naturally
+        # detected and rebuilt below rather than silently going stale.
+        self._cached_encoding: torch.Tensor | None = None
 
-        B, T, C = x.shape
-        vec_channels = torch.arange(0, C, 1)
-        vec_times = torch.arange(0, T, 1)
+    def _build_encoding(
+        self, T: int, device: torch.device, dtype: torch.dtype
+    ) -> torch.Tensor:
+        vec_channels = torch.arange(0, self.num_channels, device=device)
+        vec_times = torch.arange(0, T, device=device)
         channels, times = torch.meshgrid(vec_channels, vec_times, indexing="xy")
 
         denom = torch.pow(10000, 2 * (channels // 2) / self.num_channels)
@@ -39,9 +44,27 @@ class PositionalEncoding(nn.Module):
 
         grid[:, ::2] = torch.sin(grid[:, ::2])
         grid[:, 1::2] = torch.cos(grid[:, 1::2])
-        grid = grid.unsqueeze(0).expand(B, -1, -1)
 
-        return x + grid
+        return grid.to(dtype)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        :param x: ``(B, T, C)``
+        :returns: ``x`` plus the positional encoding, same shape.
+        """
+
+        _, T, _ = x.shape
+        cache = self._cached_encoding
+        if (
+            cache is None
+            or cache.shape[0] != T
+            or cache.device != x.device
+            or cache.dtype != x.dtype
+        ):
+            cache = self._build_encoding(T, x.device, x.dtype)
+            self._cached_encoding = cache
+
+        return x + cache.unsqueeze(0)
 
 
 class SelfAttentionBlock(nn.Module):
@@ -76,6 +99,12 @@ class SelfAttentionBlock(nn.Module):
         :param x: ``(B, T, C)``
         """
 
+        # No key_padding_mask: assumes every frame in x is real audio, no
+        # padding — true today since BeatDataset always crops/pads to a fixed
+        # duration before batching. If variable-length batches or chunked
+        # inference (see docs/beat_phase_context_ideas.md) are added later,
+        # a mask needs to be threaded through here, or attention will
+        # silently attend into padding frames.
         h, _ = self.mha(x, x, x)
         h = h + x
         h = self.norm1(h)
