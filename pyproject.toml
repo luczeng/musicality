@@ -44,6 +44,9 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 exclude = ["data"]
 
+[tool.ruff.lint]
+extend-select = ["RUF059"]  # flag unused variables from tuple unpacking, e.g. `B, T, C = x.shape`
+
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore:You are trying to `self.log\\(\\)` but the `self.trainer` reference is not registered",

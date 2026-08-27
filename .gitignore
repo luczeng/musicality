@@ -36,5 +36,5 @@ wandb/
 .DS_Store
 
 # Claude Code
-.claude/settings.local.json
+.claude/
 AGENTS.md
