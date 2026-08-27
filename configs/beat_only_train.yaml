@@ -37,7 +37,7 @@ trainer:
 data:
   input: ballroom  # split name (looked up under splits_dir, see musicality.dataformats) or, if it contains a "/", a direct path to a folder with train.txt/val.txt
   sample_rate: 22050
-  duration: 20.0
+  duration: 16.0
   num_workers: 4
   random_crop: true  # train: draw a random offset window per track each access; val is always a fixed window from the track's middle (avoids intros)
 augmentations:

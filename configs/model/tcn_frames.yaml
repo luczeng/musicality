@@ -10,3 +10,13 @@ dropout: 0.2
 # what's set here — listed for documentation only.
 frame_level: true
 n_outputs: 3
+# Self-attention head for the one/last channels (see docs/beat_phase_context_ideas.md):
+# gives them context beyond the trunk's fixed dilated-conv receptive field. The
+# beat channel is unaffected — it always reads straight off the trunk. Off by
+# default to keep existing runs unchanged; enable via `model.use_self_attention=true`.
+# Note: needs training clips longer than the trunk's own receptive field
+# (~11.9s at the defaults above) to have any long-range context to draw on —
+# see docs/beat_phase_context_ideas.md's "Decision" section before enabling.
+use_self_attention: true
+n_attn_layers: 1
+n_attn_heads: 4
