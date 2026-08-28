@@ -1,6 +1,7 @@
 """PyTorch Dataset and DataLoader for this project's own tempo-annotated
 datasets (see docs/source/data.rst's "Data format" section)."""
 
+import random
 from pathlib import Path
 
 import torch
@@ -89,7 +90,11 @@ class TempoDataset(Dataset):
 
         audio_path, tempo = self.samples[idx]
 
-        wav, sr = torchaudio.load(audio_path)  # (C, N)
+        try:
+            wav, sr = torchaudio.load(audio_path)  # (C, N)
+        except RuntimeError as e:
+            print(f"[TempoDataset] failed to decode {audio_path!r} ({e}); skipping")
+            return self.__getitem__(random.randrange(len(self)))
 
         # Mix down to mono
         if wav.shape[0] > 1:

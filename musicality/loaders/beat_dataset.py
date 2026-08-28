@@ -208,7 +208,11 @@ class BeatDataset(Dataset):
 
         audio_path, beat_times, positions, has_positions = self.samples[idx]
 
-        wav, sr = torchaudio.load(audio_path)  # (C, N)
+        try:
+            wav, sr = torchaudio.load(audio_path)  # (C, N)
+        except RuntimeError as e:
+            print(f"[BeatDataset] failed to decode {audio_path!r} ({e}); skipping")
+            return self.__getitem__(random.randrange(len(self)))
 
         if wav.shape[0] > 1:
             wav = wav.mean(dim=0, keepdim=True)
