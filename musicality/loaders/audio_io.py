@@ -27,11 +27,14 @@ import torchaudio.transforms as T
 
 CropMode = Literal["start", "middle", "random"]
 
-# Resample kernels are expensive to build (each computes a windowed-sinc
-# filter), so keep one per (source rate, target rate) pair instead of
-# rebuilding it on every crop. Module-level rather than per-dataset because
-# DataLoader workers are separate processes: each fills its own cache lazily,
-# and a dataset instance holding one would only make itself harder to pickle.
+# One resampler per (source rate, target rate) pair. Build cost depends
+# entirely on gcd(orig, target): it is negligible for the corpus's own
+# 44100 -> 22050 (a 2-row kernel, ~0.07 ms) but 1-2 ms for awkward ratios such
+# as 48000 or 32000 -> 22050 (320- and 640-row kernels). So this is cheap
+# insurance against a non-44.1 kHz source entering the corpus, not a speedup
+# on today's data. Module-level rather than per-dataset because DataLoader
+# workers are separate processes: each fills its own cache lazily, and a
+# dataset instance holding one would only make itself harder to pickle.
 _RESAMPLERS: dict[tuple[int, int], T.Resample] = {}
 
 
