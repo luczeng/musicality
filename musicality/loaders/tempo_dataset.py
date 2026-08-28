@@ -5,8 +5,6 @@ import random
 from pathlib import Path
 
 import torch
-import torchaudio
-import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
@@ -16,6 +14,7 @@ from musicality.dataformats.track_io import (
     load_metadata,
     resolve_track_audio,
 )
+from musicality.loaders.audio_io import load_crop
 
 
 class TempoDataset(Dataset):
@@ -42,8 +41,8 @@ class TempoDataset(Dataset):
         datasets (see :func:`~musicality.splits.splitter.Splitter.load_refs`).
         Mutually exclusive with *name*.
     :param sample_rate: Target sample rate. Audio is resampled if needed.
-    :param duration: Clip duration in seconds. Longer clips are truncated,
-        shorter clips are zero-padded.
+    :param duration: Clip duration in seconds. The clip is taken from the
+        start of the track; shorter tracks are zero-padded.
     """
 
     def __init__(
@@ -91,24 +90,14 @@ class TempoDataset(Dataset):
         audio_path, tempo = self.samples[idx]
 
         try:
-            wav, sr = torchaudio.load(audio_path)  # (C, N)
+            # Only the crop's bytes are read off disk, so cost is independent
+            # of track length (see musicality.loaders.audio_io).
+            wav, _ = load_crop(
+                audio_path, self.sample_rate, self.n_samples, crop="start"
+            )
         except RuntimeError as e:
             print(f"[TempoDataset] failed to decode {audio_path!r} ({e}); skipping")
             return self.__getitem__(random.randrange(len(self)))
-
-        # Mix down to mono
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-
-        # Resample if needed
-        if sr != self.sample_rate:
-            wav = T.Resample(sr, self.sample_rate)(wav)
-
-        # Truncate or zero-pad to fixed length
-        if wav.shape[1] >= self.n_samples:
-            wav = wav[:, : self.n_samples]
-        else:
-            wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
 
         label = torch.tensor(tempo, dtype=torch.float32)
 
