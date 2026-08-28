@@ -4,6 +4,7 @@ datasets (see docs/source/data.rst's "Data format" section)."""
 import random
 from pathlib import Path
 
+import soundfile as sf
 import torch
 import torchaudio
 import torchaudio.transforms as T
@@ -96,7 +97,14 @@ class TempoDataset(Dataset):
         audio_path, tempo = self.samples[idx]
 
         try:
-            wav, sr = torchaudio.load(audio_path)  # (C, N)
+            # Read just the header to learn the track's native length/rate,
+            # then decode only the `duration`-second window we actually need
+            # — tracks can run several minutes, so decoding the whole file
+            # just to crop it down afterwards wastes most of the work.
+            info = sf.info(audio_path)
+            native_n_samples = int(round(self.n_samples / self.sample_rate * info.samplerate))
+            num_frames = min(native_n_samples, info.frames)
+            wav, sr = torchaudio.load(audio_path, frame_offset=0, num_frames=num_frames)
         except RuntimeError as e:
             print(f"[TempoDataset] failed to decode {audio_path!r} ({e}); skipping")
             return self.__getitem__(random.randrange(len(self)))

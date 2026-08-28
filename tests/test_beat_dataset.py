@@ -1,10 +1,11 @@
 """Tests for musicality.loaders.beat_dataset — real tracks/+annotations/
-fixtures on disk (torchaudio.load is mocked, since audio content is
-irrelevant to this loader's own logic — only the .beats file's times/
-positions and file presence/absence matter here).
+fixtures on disk (torchaudio.load and soundfile.info are mocked, since audio
+content is irrelevant to this loader's own logic — only the .beats file's
+times/positions and file presence/absence matter here).
 """
 
-from unittest.mock import patch
+from contextlib import contextmanager
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import torch
@@ -44,12 +45,18 @@ def _write_track(dataset_dir, track_id, beat_times=None, positions=None):
     (ann_dir / f"{track_id}.beats").write_text("\n".join(lines))
 
 
+@contextmanager
 def _patch_audio(wav_shape=(1, N_SAMPLES), sr=SAMPLE_RATE):
     fake_wav = torch.randn(*wav_shape)
-    return patch(
-        "musicality.loaders.beat_dataset.torchaudio.load",
-        return_value=(fake_wav, sr),
-    )
+    fake_info = MagicMock(frames=wav_shape[-1], samplerate=sr)
+    with (
+        patch(
+            "musicality.loaders.beat_dataset.torchaudio.load",
+            return_value=(fake_wav, sr),
+        ),
+        patch("musicality.loaders.beat_dataset.sf.info", return_value=fake_info),
+    ):
+        yield
 
 
 class TestBeatDataset:

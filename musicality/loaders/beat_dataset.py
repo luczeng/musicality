@@ -5,6 +5,7 @@ import random
 from pathlib import Path
 
 import numpy as np
+import soundfile as sf
 import torch
 import torchaudio
 import torchaudio.transforms as T
@@ -138,6 +139,11 @@ class BeatDataset(Dataset):
         self.group_size = group_size
         self.random_crop = random_crop
 
+        # Resample transforms are expensive to build (they compute a sinc
+        # filter kernel) — cache one per source sample rate instead of
+        # rebuilding it on every __getitem__ call.
+        self._resamplers: dict[int, T.Resample] = {}
+
         self.samples = []
         self.refs = []
         n_skipped = 0
@@ -209,7 +215,31 @@ class BeatDataset(Dataset):
         audio_path, beat_times, positions, has_positions = self.samples[idx]
 
         try:
-            wav, sr = torchaudio.load(audio_path)  # (C, N)
+            # Read just the header to learn the track's native length/rate,
+            # then decode only the `duration`-second window we actually need
+            # — tracks can run several minutes (e.g. jtd), so decoding the
+            # whole file just to crop it down afterwards wastes most of the
+            # work.
+            info = sf.info(audio_path)
+            native_n_samples = int(round(self.n_samples / self.sample_rate * info.samplerate))
+
+            if info.frames > native_n_samples:
+                max_start = info.frames - native_n_samples
+                # Fixed (non-random) crops are taken from the middle rather
+                # than the start, since intros are often sparse/atypical
+                # (e.g. no beat yet) and a less representative eval window
+                # than the rest of the track.
+                start = (
+                    random.randint(0, max_start) if self.random_crop else max_start // 2
+                )
+                num_frames = native_n_samples
+            else:
+                start = 0
+                num_frames = info.frames
+
+            wav, sr = torchaudio.load(
+                audio_path, frame_offset=start, num_frames=num_frames
+            )  # (C, N)
         except RuntimeError as e:
             print(f"[BeatDataset] failed to decode {audio_path!r} ({e}); skipping")
             return self.__getitem__(random.randrange(len(self)))
@@ -218,23 +248,23 @@ class BeatDataset(Dataset):
             wav = wav.mean(dim=0, keepdim=True)
 
         if sr != self.sample_rate:
-            wav = T.Resample(sr, self.sample_rate)(wav)
+            resampler = self._resamplers.get(sr)
+            if resampler is None:
+                resampler = T.Resample(sr, self.sample_rate)
+                self._resamplers[sr] = resampler
+            wav = resampler(wav)
 
+        # Truncate or zero-pad to the exact fixed length (rounding in the
+        # native-samples conversion above, or a track shorter than
+        # `duration`, can leave `wav` a frame or two off `n_samples`).
         if wav.shape[1] >= self.n_samples:
-            max_start = wav.shape[1] - self.n_samples
-            # Fixed (non-random) crops are taken from the middle rather than
-            # the start, since intros are often sparse/atypical (e.g. no
-            # beat yet) and a less representative eval window than the rest
-            # of the track.
-            start = random.randint(0, max_start) if self.random_crop else max_start // 2
-            wav = wav[:, start : start + self.n_samples]
+            wav = wav[:, : self.n_samples]
         else:
-            start = 0
             wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
 
         # Shift annotation times to be relative to the cropped window's start,
         # so frame indices computed below line up with the cropped audio.
-        beat_times = beat_times - start / self.sample_rate
+        beat_times = beat_times - start / sr
 
         if has_positions:
             positions = np.asarray(positions)
