@@ -8,7 +8,7 @@ import time
 import librosa
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QFontDatabase
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -53,6 +53,8 @@ from .data import (
     bar_indices,
     beats_per_bar,
     cycle_positions,
+    dataset_bpm_summary,
+    format_bpm_histogram,
     has_annotation,
     is_accent_beat,
     list_datasets,
@@ -118,6 +120,7 @@ class MainWindow(QMainWindow):
         self._dataset_name = dataset_name
         self._track_ids = track_ids
         self._index = index
+        self._summary_dataset_name: str | None = None
         self._track: TrackData | None = None
         self._track_audio: np.ndarray | None = None
         self._track_sr: int = 44100
@@ -443,6 +446,17 @@ class MainWindow(QMainWindow):
         self._metadata_label.setStyleSheet("color: #aaaaaa;")
         self._metadata_label.setWordWrap(True)
 
+        self._dataset_summary_divider = QFrame()
+        self._dataset_summary_divider.setFrameShape(QFrame.Shape.HLine)
+        self._dataset_summary_divider.setFrameShadow(QFrame.Shadow.Sunken)
+
+        self._dataset_summary_label = QLabel()
+        self._dataset_summary_label.setStyleSheet("color: #aaaaaa;")
+        self._dataset_summary_label.setWordWrap(False)
+        self._dataset_summary_label.setFont(
+            QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
+        )
+
         # Left: every button/slider/combo that changes something (playback,
         # recording, speed, accents, structure, delete/rename). Right:
         # read-only track info — beat-derived analytics (_stats_label) and
@@ -469,6 +483,8 @@ class MainWindow(QMainWindow):
         info_column.addWidget(self._track_label)
         info_column.addWidget(self._stats_label)
         info_column.addWidget(self._metadata_label)
+        info_column.addWidget(self._dataset_summary_divider)
+        info_column.addWidget(self._dataset_summary_label)
         info_column.addStretch()
 
         divider = QFrame()
@@ -586,6 +602,7 @@ class MainWindow(QMainWindow):
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
 
         self._update_info_label()
+        self._update_dataset_summary(self._dataset_name)
         self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
 
     def _populate_dataset_list(self, *, keep_selection: bool = False) -> None:
@@ -645,7 +662,10 @@ class MainWindow(QMainWindow):
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
         parent = item.parent()
         if parent is None:
-            return  # dataset header — expand/collapse handled by Qt
+            # Dataset header — expand/collapse handled by Qt, but selecting it
+            # should still surface that dataset's summary.
+            self._update_dataset_summary(item.data(0, Qt.ItemDataRole.UserRole))
+            return
         dataset_name = parent.data(0, Qt.ItemDataRole.UserRole)
         track_id = item.data(0, Qt.ItemDataRole.UserRole)
         if dataset_name != self._dataset_name:
@@ -656,6 +676,28 @@ class MainWindow(QMainWindow):
             self._track_ids = load_dataset_tracks(dataset_name)
         if track_id in self._track_ids:
             self._load_track(self._track_ids.index(track_id))
+        self._update_dataset_summary(dataset_name)
+
+    def _update_dataset_summary(self, dataset_name: str) -> None:
+        """Refresh the dataset summary section, unless it's already showing
+        *dataset_name* — recomputing scans every annotation file in the
+        dataset, so it's skipped on same-dataset track clicks/navigation."""
+        if dataset_name == self._summary_dataset_name:
+            return
+        self._summary_dataset_name = dataset_name
+        summary = dataset_bpm_summary(dataset_name)
+        lines = [
+            dataset_name,
+            f"{summary.n_annotated} annotated songs",
+        ]
+        if summary.mean_bpm is not None:
+            lines.append(
+                f"mean {summary.mean_bpm:.1f}  •  med {summary.median_bpm:.1f} BPM"
+            )
+            lines.extend(format_bpm_histogram(summary.bucket_counts))
+        else:
+            lines.append("no BPM data")
+        self._dataset_summary_label.setText("\n".join(lines))
 
     def _on_tree_context_menu(self, pos) -> None:
         item = self._dataset_tree.itemAt(pos)

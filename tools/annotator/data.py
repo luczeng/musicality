@@ -17,6 +17,7 @@ from musicality.dataformats.track_io import (
     TrackData,
     _annotations_slot_dir,
     annotation_path,
+    list_migrated_track_ids,
     metadata_path,
     read_beats_file,
 )
@@ -278,6 +279,79 @@ def list_datasets() -> list[DatasetInfo]:
             DatasetInfo(name=name, n_tracks=n_tracks, n_annotations=n_ann, mtime=mtime)
         )
     return infos
+
+
+# Upper edge of each BPM bucket except the last, which is open-ended
+# (">= 270"). A tempo falls in bucket i iff it's < BPM_BUCKET_EDGES[i]
+# (or, for the last bucket, >= BPM_BUCKET_EDGES[-1]).
+BPM_BUCKET_EDGES = tuple(range(60, 271, 30))
+BPM_BUCKET_LABELS = (
+    [f"<{BPM_BUCKET_EDGES[0]}"]
+    + [f"<{edge}" for edge in BPM_BUCKET_EDGES[1:]]
+    + [f"≥{BPM_BUCKET_EDGES[-1]}"]
+)
+
+
+@dataclass
+class DatasetBpmSummary:
+    n_annotated: int
+    mean_bpm: float | None
+    median_bpm: float | None
+    bucket_counts: list[int]  # aligned with BPM_BUCKET_LABELS
+
+
+def format_bpm_histogram(bucket_counts: list[int], bar_width: int = 20) -> list[str]:
+    """Return one ``▓░`` bar-chart line per BPM bucket, e.g.::
+
+        <120 ▓▓▓▓▓▓▓▓▓░░░░░░░░░░░ 311/698 ( 44.6%)
+
+    *bucket_counts* must align with :data:`BPM_BUCKET_LABELS`. Percentages
+    are of the total across all buckets (0% bars if the total is 0).
+    """
+    total = sum(bucket_counts)
+    label_width = max(len(label) for label in BPM_BUCKET_LABELS)
+    lines = []
+    for label, count in zip(BPM_BUCKET_LABELS, bucket_counts):
+        pct = (100.0 * count / total) if total else 0.0
+        filled = round(bar_width * count / total) if total else 0
+        bar = "▓" * filled + "░" * (bar_width - filled)
+        lines.append(f"{label:<{label_width}} {bar} {count}/{total} ({pct:5.1f}%)")
+    return lines
+
+
+def dataset_bpm_summary(dataset_name: str) -> DatasetBpmSummary:
+    """Return per-dataset BPM stats: count, mean, median, and a histogram
+    over :data:`BPM_BUCKET_LABELS`.
+
+    Each annotated track contributes the single tempo estimate
+    ``tempo_from_beats`` would show for it individually, so the dataset-level
+    mean/median/histogram aggregate one BPM per song rather than pooling raw
+    inter-beat intervals across the whole dataset. Tracks with fewer than 2
+    beats don't yield a tempo and are excluded from the BPM aggregate (but
+    still count toward ``n_annotated``).
+    """
+    track_ids = list_migrated_track_ids(dataset_name)
+    ann_dir = _annotations_slot_dir(dataset_name, None)
+    tempos = []
+    for track_id in track_ids:
+        beat_times, _ = read_beats_file(
+            ann_dir / f"{track_id}{dataformats.FORMAT.beats_suffix}"
+        )
+        tempo = tempo_from_beats(beat_times)
+        if tempo is not None:
+            tempos.append(tempo)
+    n_buckets = len(BPM_BUCKET_LABELS)
+    if not tempos:
+        return DatasetBpmSummary(len(track_ids), None, None, [0] * n_buckets)
+    bucket_counts = [0] * n_buckets
+    for tempo in tempos:
+        bucket_counts[int(np.searchsorted(BPM_BUCKET_EDGES, tempo, side="right"))] += 1
+    return DatasetBpmSummary(
+        n_annotated=len(track_ids),
+        mean_bpm=float(np.mean(tempos)),
+        median_bpm=float(np.median(tempos)),
+        bucket_counts=bucket_counts,
+    )
 
 
 def has_annotation(dataset_name: str, track_id: str) -> bool:
