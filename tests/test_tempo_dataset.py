@@ -42,10 +42,12 @@ def _patch_audio(wav_shape=(2, N_SAMPLES), sr=SAMPLE_RATE):
         patch(
             "musicality.loaders.tempo_dataset.torchaudio.load",
             return_value=(fake_wav, sr),
-        ),
-        patch("musicality.loaders.tempo_dataset.sf.info", return_value=fake_info),
+        ) as load_mock,
+        patch(
+            "musicality.loaders.tempo_dataset.sf.info", return_value=fake_info
+        ) as info_mock,
     ):
-        yield
+        yield load_mock, info_mock
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +140,24 @@ class TestTempoDataset:
             ds = TempoDataset(name="brid", data_home=dataset_dir, sample_rate=22050)
             wav, _ = ds[0]
         assert wav.shape[0] == 1
+
+    def test_cache_in_memory_decodes_each_track_once(self, tmp_path):
+        """With cache_in_memory=True, disk decode happens at construction time
+        (once per track) rather than on every access."""
+        dataset_dir = tmp_path / "brid"
+        _write_track(dataset_dir, "t1", bpm_median=100.0)
+        from musicality.loaders.tempo_dataset import TempoDataset
+
+        with _patch_audio() as (load_mock, _info_mock):
+            ds = TempoDataset(name="brid", data_home=dataset_dir, cache_in_memory=True)
+            assert load_mock.call_count == 1  # decoded during __init__'s preload
+
+            wav1, _ = ds[0]
+            wav2, _ = ds[0]
+            assert load_mock.call_count == 1  # not re-decoded on access
+
+        assert wav1.shape == (1, N_SAMPLES)
+        assert torch.equal(wav1, wav2)
 
 
 # ---------------------------------------------------------------------------

@@ -40,6 +40,7 @@ data:
   duration: 16.0
   num_workers: 4
   random_crop: true  # train: draw a random offset window per track each access; val is always a fixed window from the track's middle (avoids intros)
+  cache_in_memory: false  # decode every track once into RAM instead of re-reading from disk each epoch (needs enough RAM for the whole dataset at sample_rate)
 augmentations:
   enabled: true
   time_stretch:

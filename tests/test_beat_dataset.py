@@ -53,10 +53,12 @@ def _patch_audio(wav_shape=(1, N_SAMPLES), sr=SAMPLE_RATE):
         patch(
             "musicality.loaders.beat_dataset.torchaudio.load",
             return_value=(fake_wav, sr),
-        ),
-        patch("musicality.loaders.beat_dataset.sf.info", return_value=fake_info),
+        ) as load_mock,
+        patch(
+            "musicality.loaders.beat_dataset.sf.info", return_value=fake_info
+        ) as info_mock,
     ):
-        yield
+        yield load_mock, info_mock
 
 
 class TestBeatDataset:
@@ -279,6 +281,37 @@ class TestBeatDataset:
         assert torch.all(target[MASK] == 0.0)
         assert torch.all(target[ONE] == 0.0)
         assert torch.all(target[LAST] == 0.0)
+
+    def test_cache_in_memory_decodes_each_track_once(self, tmp_path):
+        """With cache_in_memory=True, disk decode happens at construction time
+        (once per track) rather than on every access, and repeated accesses
+        still crop correctly from the cached full-length waveform."""
+        dataset_dir = tmp_path / "ballroom"
+        beat_times = [0.5, 1.0, 1.5]
+        _write_track(dataset_dir, "t1", beat_times=beat_times, positions=[1, 2, 3])
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        with _patch_audio() as (load_mock, _info_mock):
+            ds = BeatDataset(
+                name="ballroom",
+                data_home=dataset_dir,
+                sample_rate=SAMPLE_RATE,
+                duration=DURATION,
+                hop_length=HOP_LENGTH,
+                cache_in_memory=True,
+            )
+            assert load_mock.call_count == 1  # decoded during __init__'s preload
+
+            wav1, target1 = ds[0]
+            wav2, target2 = ds[0]
+            assert load_mock.call_count == 1  # not re-decoded on access
+
+        assert wav1.shape == (1, N_SAMPLES)
+        assert torch.equal(wav1, wav2)
+        for t in beat_times:
+            frame = round(t * SAMPLE_RATE / HOP_LENGTH)
+            assert target1[BEAT, frame].item() == pytest.approx(1.0)
+            assert target2[BEAT, frame].item() == pytest.approx(1.0)
 
 
 class TestRefsConstruction:

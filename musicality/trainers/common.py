@@ -65,6 +65,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
         sigma_frames=cfg.sigma_frames,
         group_size=cfg.get("group_size", 4),
         binary_only=binary_only,
+        cache_in_memory=cfg.data.get("cache_in_memory", False),
     )
 
     _fmt = dataformats.load()

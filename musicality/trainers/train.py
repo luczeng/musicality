@@ -49,11 +49,19 @@ def build_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int
 
     train_refs, val_refs = resolve_split_refs(cfg, splits_dir, cfg.data.input)
 
+    cache_in_memory = cfg.data.get("cache_in_memory", False)
+
     train_ds = TempoDataset(
-        refs=train_refs, sample_rate=cfg.data.sample_rate, duration=cfg.data.duration
+        refs=train_refs,
+        sample_rate=cfg.data.sample_rate,
+        duration=cfg.data.duration,
+        cache_in_memory=cache_in_memory,
     )
     val_ds = TempoDataset(
-        refs=val_refs, sample_rate=cfg.data.sample_rate, duration=cfg.data.duration
+        refs=val_refs,
+        sample_rate=cfg.data.sample_rate,
+        duration=cfg.data.duration,
+        cache_in_memory=cache_in_memory,
     )
 
     augmenter = build_augmenter(cfg.augmentations) if cfg.get("augmentations") else None

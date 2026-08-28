@@ -25,6 +25,7 @@ data:
   sample_rate: 22050
   duration: 15.0  # audio clip length, in seconds
   num_workers: 4
+  cache_in_memory: false  # decode every track once into RAM instead of re-reading from disk each epoch (needs enough RAM for the whole dataset at sample_rate)
 augmentations:
   enabled: true
   time_stretch:

@@ -108,6 +108,18 @@ class BeatDataset(Dataset):
         epochs). If ``False``, always take a fixed window from the middle of
         the track — deterministic/reproducible for validation, and more
         representative than the start, which is often a sparse intro.
+    :param cache_in_memory: If ``True``, decode every track's full audio
+        (mono-mixed, resampled) once up front and keep it in RAM for the
+        life of the dataset — the crop window is then drawn from the
+        cached tensor instead of re-decoding from disk on every access.
+        Needs enough RAM to hold every track at ``sample_rate`` (roughly
+        ``sample_rate * 4 bytes`` per second of audio, summed across the
+        dataset) — meant for large-RAM machines training over many
+        epochs, where re-reading from disk/network storage every epoch is
+        the bottleneck. Only benefits repeated access (i.e. more than one
+        epoch); relies on the multiprocessing fork start method (the
+        Linux default) for the cache to be shared rather than duplicated
+        across ``DataLoader`` workers.
     """
 
     def __init__(
@@ -123,6 +135,7 @@ class BeatDataset(Dataset):
         group_size: int = 4,
         binary_only: bool = False,
         random_crop: bool = False,
+        cache_in_memory: bool = False,
     ):
         if refs is None:
             if name is None:
@@ -138,11 +151,16 @@ class BeatDataset(Dataset):
         self.sigma_frames = sigma_frames
         self.group_size = group_size
         self.random_crop = random_crop
+        self.cache_in_memory = cache_in_memory
 
         # Resample transforms are expensive to build (they compute a sinc
         # filter kernel) — cache one per source sample rate instead of
         # rebuilding it on every __getitem__ call.
         self._resamplers: dict[int, T.Resample] = {}
+
+        # Populated up front when cache_in_memory=True (keyed by index into
+        # self.samples); consulted lazily otherwise.
+        self._cache: dict[int, torch.Tensor] = {}
 
         self.samples = []
         self.refs = []
@@ -194,6 +212,9 @@ class BeatDataset(Dataset):
                 f"[BeatDataset] {label}: {n_no_positions} track(s) have no position annotation (one/last masked)"
             )
 
+        if self.cache_in_memory:
+            self._preload()
+
     def __len__(self) -> int:
         return len(self.samples)
 
@@ -210,61 +231,116 @@ class BeatDataset(Dataset):
 
         return spike
 
+    def _resample(self, wav: torch.Tensor, sr: int) -> torch.Tensor:
+        if sr == self.sample_rate:
+            return wav
+        resampler = self._resamplers.get(sr)
+        if resampler is None:
+            resampler = T.Resample(sr, self.sample_rate)
+            self._resamplers[sr] = resampler
+        return resampler(wav)
+
+    def _decode_full(self, audio_path: str) -> torch.Tensor:
+        """Decode a track's entire audio, mixed to mono and resampled."""
+
+        wav, sr = torchaudio.load(audio_path)
+        if wav.shape[0] > 1:
+            wav = wav.mean(dim=0, keepdim=True)
+        return self._resample(wav, sr)
+
+    def _crop_or_pad(self, wav: torch.Tensor) -> tuple[torch.Tensor, int]:
+        """Crop (or zero-pad) an already-resampled full-length waveform to
+        ``n_samples``, returning ``(wav, start)`` — ``start`` is the crop's
+        offset into ``wav``, in samples at ``self.sample_rate``.
+        """
+
+        if wav.shape[1] >= self.n_samples:
+            max_start = wav.shape[1] - self.n_samples
+            # Fixed (non-random) crops are taken from the middle rather
+            # than the start, since intros are often sparse/atypical
+            # (e.g. no beat yet) and a less representative eval window
+            # than the rest of the track.
+            start = random.randint(0, max_start) if self.random_crop else max_start // 2
+            return wav[:, start : start + self.n_samples], start
+
+        return torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1])), 0
+
+    def _preload(self) -> None:
+        print(f"[BeatDataset] caching {len(self.samples)} tracks in RAM...")
+
+        for i, (audio_path, *_rest) in enumerate(self.samples):
+            try:
+                self._cache[i] = self._decode_full(audio_path)
+            except RuntimeError as e:
+                print(
+                    f"[BeatDataset] failed to decode {audio_path!r} ({e}); "
+                    "will retry lazily at access time"
+                )
+
+            if (i + 1) % 200 == 0:
+                print(f"[BeatDataset]   {i + 1}/{len(self.samples)} cached")
+
+        print(f"[BeatDataset] cached {len(self._cache)}/{len(self.samples)} tracks in RAM")
+
     def __getitem__(self, idx: int):
 
         audio_path, beat_times, positions, has_positions = self.samples[idx]
 
         try:
-            # Read just the header to learn the track's native length/rate,
-            # then decode only the `duration`-second window we actually need
-            # — tracks can run several minutes (e.g. jtd), so decoding the
-            # whole file just to crop it down afterwards wastes most of the
-            # work.
-            info = sf.info(audio_path)
-            native_n_samples = int(round(self.n_samples / self.sample_rate * info.samplerate))
-
-            if info.frames > native_n_samples:
-                max_start = info.frames - native_n_samples
-                # Fixed (non-random) crops are taken from the middle rather
-                # than the start, since intros are often sparse/atypical
-                # (e.g. no beat yet) and a less representative eval window
-                # than the rest of the track.
-                start = (
-                    random.randint(0, max_start) if self.random_crop else max_start // 2
-                )
-                num_frames = native_n_samples
+            if self.cache_in_memory:
+                wav = self._cache.get(idx)
+                if wav is None:
+                    wav = self._decode_full(audio_path)
+                    self._cache[idx] = wav
+                wav, start = self._crop_or_pad(wav)
+                start_seconds = start / self.sample_rate
             else:
-                start = 0
-                num_frames = info.frames
+                # Read just the header to learn the track's native
+                # length/rate, then decode only the `duration`-second
+                # window we actually need — tracks can run several minutes
+                # (e.g. jtd), so decoding the whole file just to crop it
+                # down afterwards wastes most of the work.
+                info = sf.info(audio_path)
+                native_n_samples = int(
+                    round(self.n_samples / self.sample_rate * info.samplerate)
+                )
 
-            wav, sr = torchaudio.load(
-                audio_path, frame_offset=start, num_frames=num_frames
-            )  # (C, N)
+                if info.frames > native_n_samples:
+                    max_start = info.frames - native_n_samples
+                    start_native = (
+                        random.randint(0, max_start)
+                        if self.random_crop
+                        else max_start // 2
+                    )
+                    num_frames = native_n_samples
+                else:
+                    start_native = 0
+                    num_frames = info.frames
+
+                wav, sr = torchaudio.load(
+                    audio_path, frame_offset=start_native, num_frames=num_frames
+                )  # (C, N)
+                if wav.shape[0] > 1:
+                    wav = wav.mean(dim=0, keepdim=True)
+                wav = self._resample(wav, sr)
+
+                # Truncate or zero-pad to the exact fixed length (rounding in
+                # the native-samples conversion above, or a track shorter
+                # than `duration`, can leave `wav` a frame or two off
+                # `n_samples`).
+                if wav.shape[1] >= self.n_samples:
+                    wav = wav[:, : self.n_samples]
+                else:
+                    wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
+
+                start_seconds = start_native / sr
         except RuntimeError as e:
             print(f"[BeatDataset] failed to decode {audio_path!r} ({e}); skipping")
             return self.__getitem__(random.randrange(len(self)))
 
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-
-        if sr != self.sample_rate:
-            resampler = self._resamplers.get(sr)
-            if resampler is None:
-                resampler = T.Resample(sr, self.sample_rate)
-                self._resamplers[sr] = resampler
-            wav = resampler(wav)
-
-        # Truncate or zero-pad to the exact fixed length (rounding in the
-        # native-samples conversion above, or a track shorter than
-        # `duration`, can leave `wav` a frame or two off `n_samples`).
-        if wav.shape[1] >= self.n_samples:
-            wav = wav[:, : self.n_samples]
-        else:
-            wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
-
         # Shift annotation times to be relative to the cropped window's start,
         # so frame indices computed below line up with the cropped audio.
-        beat_times = beat_times - start / sr
+        beat_times = beat_times - start_seconds
 
         if has_positions:
             positions = np.asarray(positions)
