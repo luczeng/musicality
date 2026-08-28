@@ -65,6 +65,11 @@ class TempoDataset(Dataset):
         self.sample_rate = sample_rate
         self.n_samples = int(duration * sample_rate)
 
+        # Resample transforms are expensive to build (they compute a sinc
+        # filter kernel) — cache one per source sample rate instead of
+        # rebuilding it on every __getitem__ call.
+        self._resamplers: dict[int, T.Resample] = {}
+
         # Store only (audio_path, tempo) to keep the dataset picklable for multiprocessing.
         self.samples = []
         self.refs = []
@@ -102,7 +107,11 @@ class TempoDataset(Dataset):
 
         # Resample if needed
         if sr != self.sample_rate:
-            wav = T.Resample(sr, self.sample_rate)(wav)
+            resampler = self._resamplers.get(sr)
+            if resampler is None:
+                resampler = T.Resample(sr, self.sample_rate)
+                self._resamplers[sr] = resampler
+            wav = resampler(wav)
 
         # Truncate or zero-pad to fixed length
         if wav.shape[1] >= self.n_samples:
