@@ -81,7 +81,25 @@ def parse_args() -> argparse.Namespace:
         help="Defaults to the tuned value for the checkpoint's detected task",
     )
     parser.add_argument(
-        "--anchor-threshold", type=float, default=None, help="beat-phase only"
+        "--anchor-threshold",
+        type=float,
+        default=None,
+        help="beat-phase only, and only when --decoder greedy",
+    )
+    parser.add_argument(
+        "--decoder",
+        choices=["greedy", "global"],
+        default=None,
+        help=(
+            "Bar-position stage (beat-phase only). Defaults to the tuned value "
+            "in configs/eval_beat.yaml."
+        ),
+    )
+    parser.add_argument(
+        "--switch-penalty",
+        type=float,
+        default=None,
+        help="--decoder global only: log-cost of a mid-track phase resync",
     )
     parser.add_argument(
         "--limit",
@@ -113,6 +131,8 @@ def main():
         min_distance_frames=args.min_distance_frames,
         gate_tolerance=args.gate_tolerance,
         anchor_threshold=args.anchor_threshold,
+        decoder=args.decoder,
+        switch_penalty=args.switch_penalty,
         limit=args.limit,
         device=args.device,
     )

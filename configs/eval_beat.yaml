@@ -18,13 +18,28 @@ beat_only:
   min_distance_frames: 4  # pick_peaks: minimum frame gap enforced between returned peaks
   gate_tolerance: 0.1  # gate_periodicity: relative slack around an integer multiple of the current beat period
 beat_phase:
-  # Tuned via tools/sweep_beat_postprocess.py against a real checkpoint
-  # (checkpoints_beat/checkpoints_beat/lr_sweep/lr_0.03/beat-phase-epoch=126-val/loss=1.6565.ckpt,
-  # binary_only=True, ballroom val split): mean beat F-measure 0.916,
-  # mean('1','last') F-measure 0.695 (f_one=0.697 f_last=0.692 confusion=0.253)
-  # — rerun the sweep and update these if the checkpoint/dataset changes materially.
+  # Beat-detection knobs tuned via tools/sweep_beat_postprocess.py against a real
+  # checkpoint (checkpoints_beat/loss=1.6565.ckpt, binary_only=True, ballroom val
+  # split): mean beat F-measure 0.916.
   beat_threshold: 0.5  # pick_peaks: minimum probability to be considered a peak at all
   min_distance_frames: 4  # pick_peaks: minimum frame gap enforced between returned peaks
   gate_tolerance: 0.1  # gate_periodicity: relative slack around an integer multiple of the current beat period
-  anchor_threshold: 0.8  # label_bar_position: minimum probability for a beat to be trusted as a confident "1"/"last" anchor
   group_size: 4  # beats per group: 4 for bar position (default), 8 for phrase position
+  # Bar-position stage. `global` runs postprocess.label_bar_position_global (a
+  # whole-track maximum-likelihood decode over the soft one/last probabilities);
+  # `greedy` runs the older count-forward label_bar_position. Measured on the
+  # same checkpoint with no retraining (tools/diagnose_beat_phase.py, switch
+  # penalty tuned on train and reported on val):
+  #
+  #   decoder                  f_one   f_last  confusion
+  #   greedy (anchor=0.8)      0.697   0.692     0.253
+  #   global (switch=2.0)      0.756   0.730     0.185
+  #
+  # See docs/beat_phase_improvement_review.md for why the greedy decoder loses.
+  decoder: global
+  # label_bar_position_global: log-cost of a mid-track phase resync. `null`
+  # forbids resyncs entirely (exact single-offset decode); lower values resync
+  # more eagerly. Interior optimum — on val, 0.25 scores 0.274 confusion and
+  # 40.0 scores 0.219, both worse than 2.0's 0.185.
+  switch_penalty: 2.0
+  anchor_threshold: 0.8  # label_bar_position (decoder: greedy only): minimum probability for a beat to be trusted as a confident "1"/"last" anchor

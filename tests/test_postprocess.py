@@ -9,6 +9,7 @@ from musicality.loaders.beat_dataset import gaussian_smear
 from musicality.postprocess import (
     gate_periodicity,
     label_bar_position,
+    label_bar_position_global,
     pick_peaks,
     readout,
 )
@@ -246,3 +247,192 @@ class TestReadout:
         assert len(events) == 16
         got_labels = [e["beat_in_bar"] for e in events]
         assert got_labels == [1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 4, 5, 6, 7, 8]
+
+
+class TestLabelBarPositionGlobal:
+    """musicality.postprocess.label_bar_position_global — whole-track decode."""
+
+    @staticmethod
+    def _curves(n_frames, one_frames, last_frames, p=0.9, floor=0.02):
+        one = np.full(n_frames, floor)
+        last = np.full(n_frames, floor)
+        one[one_frames] = p
+        last[last_frames] = p
+        return one, last
+
+    def test_recovers_phase_from_clean_evidence(self):
+        fps = 10.0
+        beat_times = np.arange(16) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+        one, last = self._curves(200, frames[0::4], frames[3::4])
+
+        labels = label_bar_position_global(beat_times, one, last, fps)
+
+        assert labels == [(i % 4) + 1 for i in range(16)]
+
+    def test_labels_every_beat_including_ones_before_the_first_anchor(self):
+        """Unlike label_bar_position, there is no leading run of None."""
+
+        fps = 10.0
+        beat_times = np.arange(16) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+        # No usable evidence until well into the track.
+        one, last = self._curves(200, frames[8::4], frames[11::4])
+
+        greedy = label_bar_position(beat_times, one, last, fps)
+        glob = label_bar_position_global(beat_times, one, last, fps)
+
+        assert greedy[0] is None
+        assert all(isinstance(v, int) for v in glob)
+        assert glob == [(i % 4) + 1 for i in range(16)]
+
+    def test_outvotes_a_single_false_anchor(self):
+        """The failure mode the greedy decoder cannot recover from: one strong
+        wrong vote corrupts every beat after it, while a global decode weighs
+        it against all the other evidence."""
+
+        fps = 10.0
+        beat_times = np.arange(24) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+
+        # Strong, correct anchors for the first 10 beats; after that the
+        # evidence is real but too weak to clear anchor_threshold, so nothing
+        # can resync the greedy count once it has been knocked off.
+        one, last = self._curves(400, frames[0:10:4], frames[3:10:4])
+        one[frames[12::4]] = 0.3
+        last[frames[11::4]] = 0.3
+        one[frames[10]] = 0.99  # beat 10 is position 3 — a confident lie
+
+        greedy = label_bar_position(beat_times, one, last, fps, anchor_threshold=0.5)
+        glob = label_bar_position_global(beat_times, one, last, fps)
+
+        truth = [(i % 4) + 1 for i in range(24)]
+        assert greedy[10] == 1 and greedy[10] != truth[10]
+        assert greedy[10:] != truth[10:]  # corruption persists after the lie
+        assert glob == truth
+
+    def test_uses_soft_evidence_the_greedy_decoder_thresholds_away(self):
+        fps = 10.0
+        beat_times = np.arange(16) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+        # Every anchor sits below anchor_threshold, so the greedy decoder
+        # never resyncs and resolves nothing at all.
+        one, last = self._curves(200, frames[0::4], frames[3::4], p=0.3, floor=0.05)
+
+        greedy = label_bar_position(beat_times, one, last, fps, anchor_threshold=0.5)
+        glob = label_bar_position_global(beat_times, one, last, fps)
+
+        assert all(v is None for v in greedy)
+        assert glob == [(i % 4) + 1 for i in range(16)]
+
+    def test_viterbi_can_follow_a_mid_track_phase_change(self):
+        fps = 10.0
+        beat_times = np.arange(32) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+        # Phase 0 for the first 16 beats, then shifted by two.
+        ones = list(frames[0:16:4]) + list(frames[18::4])
+        lasts = list(frames[3:16:4]) + list(frames[17::4])
+        one, last = self._curves(400, ones, lasts, p=0.95, floor=0.01)
+
+        strict = label_bar_position_global(beat_times, one, last, fps)
+        loose = label_bar_position_global(
+            beat_times, one, last, fps, switch_penalty=2.0
+        )
+
+        truth = [(i % 4) + 1 if i < 16 else ((i + 2) % 4) + 1 for i in range(32)]
+        assert strict != truth  # a single offset cannot express the change
+        assert loose == truth
+
+    def test_large_switch_penalty_matches_the_exact_decode(self):
+        fps = 10.0
+        beat_times = np.arange(24) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+        one, last = self._curves(400, frames[0::4], frames[3::4])
+
+        exact = label_bar_position_global(beat_times, one, last, fps)
+        penalized = label_bar_position_global(
+            beat_times, one, last, fps, switch_penalty=1e6
+        )
+
+        assert penalized == exact
+
+    def test_empty_and_saturated_inputs(self):
+        assert (
+            label_bar_position_global(np.array([]), np.zeros(10), np.zeros(10), 10.0)
+            == []
+        )
+
+        # Saturated 0.0/1.0 must not produce inf/nan scores.
+        beat_times = np.arange(8) * 0.5
+        one = np.zeros(100)
+        last = np.zeros(100)
+        one[np.round(beat_times * 10).astype(int)[0::4]] = 1.0
+
+        labels = label_bar_position_global(beat_times, one, last, 10.0)
+        assert labels == [(i % 4) + 1 for i in range(8)]
+
+    def test_rejects_group_size_below_two(self):
+        with pytest.raises(ValueError, match="group_size"):
+            label_bar_position_global(
+                np.array([0.0]), np.zeros(10), np.zeros(10), 10.0, group_size=1
+            )
+
+    def test_group_size_eight(self):
+        fps = 10.0
+        beat_times = np.arange(24) * 0.5
+        frames = np.round(beat_times * fps).astype(int)
+        one, last = self._curves(400, frames[0::8], frames[7::8])
+
+        labels = label_bar_position_global(beat_times, one, last, fps, group_size=8)
+
+        assert labels == [(i % 8) + 1 for i in range(24)]
+
+
+class TestReadoutDecoderSelection:
+    """musicality.postprocess.readout — decoder= routing."""
+
+    @staticmethod
+    def _probs(n_frames=400, fps=10.0, period=0.5, n_beats=24):
+        beat_times = np.arange(n_beats) * period
+        frames = np.round(beat_times * fps).astype(int)
+        beat = np.full(n_frames, 0.02)
+        beat[frames] = 0.95
+        one = np.full(n_frames, 0.02)
+        last = np.full(n_frames, 0.02)
+        one[frames[0::4]] = 0.9
+        last[frames[3::4]] = 0.9
+        return beat, one, last, fps
+
+    def test_global_decoder_labels_every_beat(self):
+        beat, one, last, fps = self._probs()
+
+        events = readout(beat, one, last, fps=fps, decoder="global")
+
+        assert events
+        assert all(e["beat_in_bar"] is not None for e in events)
+
+    def test_greedy_remains_the_default(self):
+        beat, one, last, fps = self._probs()
+
+        assert readout(beat, one, last, fps=fps) == readout(
+            beat, one, last, fps=fps, decoder="greedy"
+        )
+
+    def test_switch_penalty_is_threaded_through(self):
+        beat, one, last, fps = self._probs()
+
+        strict = readout(beat, one, last, fps=fps, decoder="global")
+        loose = readout(beat, one, last, fps=fps, decoder="global", switch_penalty=0.01)
+
+        # A near-zero resync cost lets the decode chase noise, so it should not
+        # generally agree with the exact single-offset decode.
+        assert [e["beat_in_bar"] for e in strict] == [
+            (i % 4) + 1 for i in range(len(strict))
+        ]
+        assert len(loose) == len(strict)
+
+    def test_unknown_decoder_raises(self):
+        beat, one, last, fps = self._probs()
+
+        with pytest.raises(ValueError, match="Unknown decoder"):
+            readout(beat, one, last, fps=fps, decoder="bogus")

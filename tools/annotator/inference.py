@@ -100,6 +100,8 @@ def infer_beats(
     min_distance_frames: int = 1,
     gate_tolerance: float = 0.2,
     anchor_threshold: float = 0.5,
+    decoder: str = "greedy",
+    switch_penalty: float | None = None,
     device: str = "cpu",
 ) -> tuple[np.ndarray, np.ndarray]:
     """Run *module* on a full track and decode beat times + bar positions.
@@ -112,6 +114,11 @@ def infer_beats(
     :param sr: Sample rate of *audio* — resampled to :data:`SAMPLE_RATE` if it differs.
     :param group_size: Beats per group the model's "one"/"last" heads were trained
         against — ``4`` for bar position (the current checkpoints' convention).
+    :param decoder: Bar-position stage — ``"greedy"`` or ``"global"``. Forwarded
+        to :func:`musicality.inference.run_inference`; callers should pass the
+        tuned value from ``configs/eval_beat.yaml``.
+    :param switch_penalty: Forwarded to :func:`musicality.inference.run_inference`.
+        Only used when ``decoder="global"``.
     :returns: ``(beat_times, beat_positions)`` — seconds and 1-indexed bar
         positions, following the same convention as manually annotated beats.
     :raises ValueError: *task* isn't ``"beat_phase"``.
@@ -139,6 +146,8 @@ def infer_beats(
         gate_tolerance=gate_tolerance,
         anchor_threshold=anchor_threshold,
         group_size=group_size,
+        decoder=decoder,
+        switch_penalty=switch_penalty,
     )
 
     beat_times = np.array([e["time"] for e in events], dtype=float)

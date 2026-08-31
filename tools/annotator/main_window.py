@@ -809,6 +809,8 @@ class MainWindow(QMainWindow):
                 min_distance_frames=task_defaults["min_distance_frames"],
                 gate_tolerance=task_defaults["gate_tolerance"],
                 anchor_threshold=task_defaults.get("anchor_threshold", 0.5),
+                decoder=task_defaults.get("decoder", "greedy"),
+                switch_penalty=task_defaults.get("switch_penalty"),
             )
         finally:
             QApplication.restoreOverrideCursor()
