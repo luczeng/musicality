@@ -40,6 +40,8 @@ def evaluate_track(
     gate_tolerance: float,
     anchor_threshold: float,
     group_size: int,
+    decoder: str = "greedy",
+    switch_penalty: float | None = None,
 ) -> dict:
     """Run the model on one full track and score its readout against the
     reference. Always returns the same four keys — ``f_one``/``f_last``/
@@ -60,6 +62,8 @@ def evaluate_track(
         gate_tolerance=gate_tolerance,
         anchor_threshold=anchor_threshold,
         group_size=group_size,
+        decoder=decoder,
+        switch_penalty=switch_penalty,
     )
 
     events = result if task == "beat_phase" else None
@@ -128,6 +132,8 @@ class BeatEvaluator:
         min_distance_frames: int | None = None,
         gate_tolerance: float | None = None,
         anchor_threshold: float | None = None,
+        decoder: str | None = None,
+        switch_penalty: float | None = None,
         limit: int | None = None,
         device: str = "cpu",
         verbose: bool = True,
@@ -147,6 +153,8 @@ class BeatEvaluator:
         self.min_distance_frames = min_distance_frames
         self.gate_tolerance = gate_tolerance
         self.anchor_threshold = anchor_threshold
+        self.decoder = decoder
+        self.switch_penalty = switch_penalty
         self.limit = limit
         self.device = device
         self.verbose = verbose
@@ -238,6 +246,18 @@ class BeatEvaluator:
             if self.anchor_threshold is not None
             else task_defaults.get("anchor_threshold", 0.5)
         )
+        decoder = (
+            self.decoder
+            if self.decoder is not None
+            else task_defaults.get("decoder", "greedy")
+        )
+        # `None` is itself a meaningful switch_penalty (the exact, no-resync
+        # decode), so the config value is what selects it — not a sentinel.
+        switch_penalty = (
+            self.switch_penalty
+            if self.switch_penalty is not None
+            else task_defaults.get("switch_penalty")
+        )
 
         if self.verbose:
             print(
@@ -266,6 +286,8 @@ class BeatEvaluator:
                 gate_tolerance,
                 anchor_threshold,
                 group_size,
+                decoder=decoder,
+                switch_penalty=switch_penalty,
             )
             results.append(r)
 

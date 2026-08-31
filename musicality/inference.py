@@ -121,6 +121,8 @@ def run_inference(
     gate_tolerance: float = 0.2,
     anchor_threshold: float = 0.5,
     group_size: int = 4,
+    decoder: str = "greedy",
+    switch_penalty: float | None = None,
 ) -> list[dict] | np.ndarray:
     """Run *module* on one full-track waveform and decode it via the readout
     function matching *task*.
@@ -130,9 +132,13 @@ def run_inference(
     :param wav: Mono waveform, shape ``(1, N)`` (e.g. from
         :func:`load_track_waveform`) — batched and moved to *device* internally.
     :param fps: Frames per second (``sample_rate / hop_length``).
-    :param anchor_threshold, group_size: Forwarded to
+    :param anchor_threshold, group_size, decoder, switch_penalty: Forwarded to
         :func:`~musicality.postprocess.readout`'s bar-position stage only —
-        ignored when ``task="beat_only"``.
+        ignored when ``task="beat_only"``. ``decoder="global"`` uses the
+        whole-track maximum-likelihood decode
+        (:func:`~musicality.postprocess.label_bar_position_global`) instead of
+        the greedy count-forward one, which measurably lowers phase confusion
+        on the same probabilities — see docs/beat_phase_improvement_review.md.
     :returns: :func:`~musicality.postprocess.readout`'s ``list[dict]`` for
         beat-phase, or :func:`~musicality.postprocess.readout_beat_only`'s
         ``np.ndarray`` for beat-only.
@@ -153,6 +159,8 @@ def run_inference(
             gate_tolerance=gate_tolerance,
             anchor_threshold=anchor_threshold,
             group_size=group_size,
+            decoder=decoder,
+            switch_penalty=switch_penalty,
         )
 
     if task == "beat_only":
