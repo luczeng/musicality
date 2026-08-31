@@ -1,12 +1,15 @@
 """Tests for musicality.loaders.beat_dataset — real tracks/+annotations/
-fixtures on disk (torchaudio.load is mocked, since audio content is
-irrelevant to this loader's own logic — only the .beats file's times/
-positions and file presence/absence matter here).
+fixtures on disk, audio included. Audio *content* is irrelevant to this
+loader's own logic (only the .beats file's times/positions and file
+presence/absence matter here), but the files have to be real and decodable,
+since the loader reads crops straight off disk through soundfile.
+
+Fixture tracks are exactly DURATION long by default, so the crop window
+starts at 0 and annotation times land on the frames the assertions expect.
 """
 
-from unittest.mock import patch
-
 import numpy as np
+import soundfile as sf
 import torch
 import pytest
 
@@ -19,7 +22,15 @@ N_FRAMES = N_SAMPLES // HOP_LENGTH
 BEAT, ONE, LAST, MASK = range(4)
 
 
-def _write_track(dataset_dir, track_id, beat_times=None, positions=None):
+def _write_track(
+    dataset_dir,
+    track_id,
+    beat_times=None,
+    positions=None,
+    duration=DURATION,
+    sr=SAMPLE_RATE,
+    channels=1,
+):
     """Create tracks/<id>.wav + annotations/<id>.beats for one track.
 
     If beat_times is None, no audio or .beats file is written at all
@@ -36,20 +47,14 @@ def _write_track(dataset_dir, track_id, beat_times=None, positions=None):
     tracks_dir.mkdir(parents=True, exist_ok=True)
     ann_dir.mkdir(parents=True, exist_ok=True)
 
-    (tracks_dir / f"{track_id}.wav").write_bytes(b"")
+    noise = (np.random.randn(int(duration * sr), channels) * 0.1).astype(np.float32)
+    sf.write(tracks_dir / f"{track_id}.wav", noise, sr, subtype="PCM_16")
+
     if positions is not None:
         lines = (f"{t:.6f} {p}" for t, p in zip(beat_times, positions))
     else:
         lines = (f"{t:.6f}" for t in beat_times)
     (ann_dir / f"{track_id}.beats").write_text("\n".join(lines))
-
-
-def _patch_audio(wav_shape=(1, N_SAMPLES), sr=SAMPLE_RATE):
-    fake_wav = torch.randn(*wav_shape)
-    return patch(
-        "musicality.loaders.beat_dataset.torchaudio.load",
-        return_value=(fake_wav, sr),
-    )
 
 
 class TestBeatDataset:
@@ -60,13 +65,12 @@ class TestBeatDataset:
             _write_track(dataset_dir, f"t{i}", beat_times=[0.5 * j for j in range(8)])
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
         assert len(ds) == 4
 
     def test_skips_missing_beats(self, tmp_path):
@@ -76,13 +80,12 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t2", beat_times=None)
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
         assert len(ds) == 1
 
     def test_output_shapes(self, tmp_path):
@@ -96,15 +99,14 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=[0.5, 1.0, 1.5], positions=[1, 2, 3])
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-                hop_length=HOP_LENGTH,
-            )
-            wav, target = ds[0]
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+        )
+        wav, target = ds[0]
 
         assert wav.shape == (1, N_SAMPLES)
         assert target.shape == (4, N_FRAMES)
@@ -119,15 +121,14 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=beat_times)
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-                hop_length=HOP_LENGTH,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+        )
+        _, target = ds[0]
 
         for t in beat_times:
             frame = round(t * SAMPLE_RATE / HOP_LENGTH)
@@ -144,14 +145,13 @@ class TestBeatDataset:
         )
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
+        _, target = ds[0]
 
         assert target.min().item() >= 0.0
         assert target.max().item() <= 1.0
@@ -162,14 +162,13 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=[DURATION + 1.0])
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
+        _, target = ds[0]
 
         assert target[BEAT].sum().item() == pytest.approx(0.0)
 
@@ -181,15 +180,14 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=beat_times, positions=positions)
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-                hop_length=HOP_LENGTH,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+        )
+        _, target = ds[0]
 
         one_frames = [
             round(t * SAMPLE_RATE / HOP_LENGTH)
@@ -220,16 +218,15 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=beat_times, positions=positions)
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="my_phrase_dataset",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-                hop_length=HOP_LENGTH,
-                group_size=8,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="my_phrase_dataset",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+            group_size=8,
+        )
+        _, target = ds[0]
 
         frame_at_pos4 = round(beat_times[3] * SAMPLE_RATE / HOP_LENGTH)
         frame_at_pos8 = round(beat_times[7] * SAMPLE_RATE / HOP_LENGTH)
@@ -243,14 +240,13 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=[0.5, 1.0], positions=[1, 2])
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
+        _, target = ds[0]
 
         assert torch.all(target[MASK] == 1.0)
 
@@ -260,14 +256,13 @@ class TestBeatDataset:
         _write_track(dataset_dir, "t1", beat_times=[0.5, 1.0], positions=None)
         from musicality.loaders.beat_dataset import BeatDataset
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="rwc_popular",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
-            _, target = ds[0]
+        ds = BeatDataset(
+            name="rwc_popular",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
+        _, target = ds[0]
 
         assert torch.all(target[MASK] == 0.0)
         assert torch.all(target[ONE] == 0.0)
@@ -289,8 +284,7 @@ class TestRefsConstruction:
             TrackRef("brid", "b", tmp_path / "brid"),
         ]
 
-        with _patch_audio():
-            ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
+        ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
 
         assert len(ds) == 2
         audio_paths = {sample[0] for sample in ds.samples}
@@ -309,8 +303,7 @@ class TestRefsConstruction:
             TrackRef("brid", "b", tmp_path / "brid"),
         ]
 
-        with _patch_audio():
-            ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
+        ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
 
         assert len(ds) == 1
 
@@ -325,8 +318,7 @@ class TestRefsConstruction:
             TrackRef("brid", "b", tmp_path / "brid"),
         ]
 
-        with _patch_audio():
-            ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
+        ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
 
         assert len(ds.refs) == len(ds.samples) == 1
         assert ds.refs[0].dataset_name == "ballroom"
@@ -393,15 +385,69 @@ class TestDataLoader:
                 positions=[1, 2, 3, 4],
             )
 
-        with _patch_audio():
-            ds = BeatDataset(
-                name="ballroom",
-                data_home=dataset_dir,
-                sample_rate=SAMPLE_RATE,
-                duration=DURATION,
-            )
-            loader = DataLoader(ds, batch_size=4, shuffle=False)
-            wav, target = next(iter(loader))
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+        )
+        loader = DataLoader(ds, batch_size=4, shuffle=False)
+        wav, target = next(iter(loader))
 
         assert wav.shape == (4, 1, N_SAMPLES)
         assert target.shape == (4, 4, N_FRAMES)
+
+
+class TestCropWindow:
+    """The crop is read at an offset into the track, so annotation times have
+    to be shifted onto the cropped window (see musicality.loaders.audio_io)."""
+
+    BEAT_TIMES = [0.5 * i for i in range(1, 40)]  # 0.5 s .. 19.5 s
+
+    def _dataset(self, tmp_path, random_crop):
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        dataset_dir = tmp_path / "ballroom"
+        _write_track(dataset_dir, "t1", beat_times=self.BEAT_TIMES, duration=20.0)
+
+        return BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+            random_crop=random_crop,
+        )
+
+    def test_fixed_crop_shifts_beat_times_to_middle_window(self, tmp_path):
+        """A 20 s track cropped to 5 s starts at 7.5 s, so the beat at 8.0 s
+        must land on the frame for 0.5 s into the clip."""
+        ds = self._dataset(tmp_path, random_crop=False)
+        _, target = ds[0]
+
+        start = (20.0 - DURATION) / 2
+        for t in self.BEAT_TIMES:
+            rel = t - start
+            if 0.0 <= rel < DURATION:
+                frame = round(rel * SAMPLE_RATE / HOP_LENGTH)
+                if frame < N_FRAMES:
+                    assert target[BEAT, frame].item() == pytest.approx(1.0)
+
+    def test_fixed_crop_is_deterministic(self, tmp_path):
+        ds = self._dataset(tmp_path, random_crop=False)
+
+        assert torch.equal(ds[0][0], ds[0][0])
+        assert torch.equal(ds[0][1], ds[0][1])
+
+    def test_random_crop_moves_the_window(self, tmp_path):
+        """Repeated access draws different windows, and each keeps its beats
+        aligned — a target that stayed identical would mean the offset never
+        reached the annotations."""
+        ds = self._dataset(tmp_path, random_crop=True)
+
+        targets = [ds[0][1] for _ in range(10)]
+
+        assert any(not torch.equal(targets[0], t) for t in targets[1:])
+        # 5 s of beats spaced 0.5 s apart: every window sees ~10 of them.
+        for t in targets:
+            assert t[BEAT].max().item() == pytest.approx(1.0)

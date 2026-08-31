@@ -6,8 +6,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import torchaudio
-import torchaudio.transforms as T
 from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
@@ -17,6 +15,7 @@ from musicality.dataformats.track_io import (
     read_beats_file,
     resolve_track_audio,
 )
+from musicality.loaders.audio_io import load_crop
 from musicality.splits.splitter import Splitter
 
 
@@ -209,32 +208,25 @@ class BeatDataset(Dataset):
         audio_path, beat_times, positions, has_positions = self.samples[idx]
 
         try:
-            wav, sr = torchaudio.load(audio_path)  # (C, N)
+            # Only the crop's bytes are read off disk, so cost is independent
+            # of track length (see musicality.loaders.audio_io). Fixed
+            # (non-random) crops are taken from the middle rather than the
+            # start, since intros are often sparse/atypical (e.g. no beat
+            # yet) and a less representative eval window than the rest of
+            # the track.
+            wav, start_seconds = load_crop(
+                audio_path,
+                self.sample_rate,
+                self.n_samples,
+                crop="random" if self.random_crop else "middle",
+            )
         except RuntimeError as e:
             print(f"[BeatDataset] failed to decode {audio_path!r} ({e}); skipping")
             return self.__getitem__(random.randrange(len(self)))
 
-        if wav.shape[0] > 1:
-            wav = wav.mean(dim=0, keepdim=True)
-
-        if sr != self.sample_rate:
-            wav = T.Resample(sr, self.sample_rate)(wav)
-
-        if wav.shape[1] >= self.n_samples:
-            max_start = wav.shape[1] - self.n_samples
-            # Fixed (non-random) crops are taken from the middle rather than
-            # the start, since intros are often sparse/atypical (e.g. no
-            # beat yet) and a less representative eval window than the rest
-            # of the track.
-            start = random.randint(0, max_start) if self.random_crop else max_start // 2
-            wav = wav[:, start : start + self.n_samples]
-        else:
-            start = 0
-            wav = torch.nn.functional.pad(wav, (0, self.n_samples - wav.shape[1]))
-
         # Shift annotation times to be relative to the cropped window's start,
         # so frame indices computed below line up with the cropped audio.
-        beat_times = beat_times - start / self.sample_rate
+        beat_times = beat_times - start_seconds
 
         if has_positions:
             positions = np.asarray(positions)
