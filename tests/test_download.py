@@ -5,6 +5,7 @@ from click.testing import CliRunner
 
 import sys
 import os
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 from download_dataset import main
 
@@ -13,7 +14,9 @@ CONFIG_CONTENT = "data_home: {data_home}\ndatasets:\n  - ballroom\n  - gtzan\n"
 
 def _make_config(tmp_path, data_home=None):
     config = tmp_path / "download.yaml"
-    config.write_text(CONFIG_CONTENT.format(data_home=data_home or str(tmp_path / "data")))
+    config.write_text(
+        CONFIG_CONTENT.format(data_home=data_home or str(tmp_path / "data"))
+    )
     return config
 
 
@@ -97,7 +100,9 @@ def test_download_all_skips_present_downloads_missing(mock_init, mock_list, tmp_
 
     assert result.exit_code == 0
     assert mock_init.call_count == 1
-    mock_init.assert_called_once_with("gtzan", data_home=str(tmp_path / "data" / "gtzan"))
+    mock_init.assert_called_once_with(
+        "gtzan", data_home=str(tmp_path / "data" / "gtzan")
+    )
 
 
 @patch("download_dataset.mirdata.list_datasets", return_value=["ballroom"])
@@ -163,7 +168,9 @@ def test_download_failure_prints_warning_and_exits_1(mock_init, mock_list, tmp_p
         result = runner.invoke(main, ["ballroom", "--data-home", str(tmp_path)])
 
     assert result.exit_code == 1
-    assert "WARNING" in result.output or "WARNING" in (result.output + str(result.exception))
+    assert "WARNING" in result.output or "WARNING" in (
+        result.output + str(result.exception)
+    )
 
 
 @patch("download_dataset.mirdata.list_datasets", return_value=["ballroom", "gtzan"])

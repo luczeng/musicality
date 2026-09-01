@@ -24,6 +24,7 @@ BATCH = (torch.randn(4, 1, N_SAMPLES), torch.tensor([80.0, 100.0, 120.0, 140.0])
 # TempoNet
 # ---------------------------------------------------------------------------
 
+
 class TestTempoNet:
     def test_output_shape(self):
         model = TempoNet(n_mels=16)
@@ -44,6 +45,7 @@ class TestTempoNet:
 # ---------------------------------------------------------------------------
 # TempoModule
 # ---------------------------------------------------------------------------
+
 
 class TestTempoModule:
     @pytest.fixture
@@ -84,6 +86,7 @@ class TestTempoModule:
 # ---------------------------------------------------------------------------
 # TempoModule (classification)
 # ---------------------------------------------------------------------------
+
 
 class TestTempoModuleClassification:
     @pytest.fixture
@@ -182,8 +185,12 @@ class TestClassificationTempoLoss:
         peaked_logits = torch.full((1, N_BINS), -10.0)
         peaked_logits[0, peak_bin] = 10.0
         random_logits = torch.randn(1, N_BINS)
-        peaked_loss = classification_tempo_loss(peaked_logits, tempo, BIN_CENTERS, SIGMA)
-        random_loss = classification_tempo_loss(random_logits, tempo, BIN_CENTERS, SIGMA)
+        peaked_loss = classification_tempo_loss(
+            peaked_logits, tempo, BIN_CENTERS, SIGMA
+        )
+        random_loss = classification_tempo_loss(
+            random_logits, tempo, BIN_CENTERS, SIGMA
+        )
         assert peaked_loss.item() < random_loss.item()
 
     def test_gradients_flow(self):

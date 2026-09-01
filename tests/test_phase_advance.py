@@ -1,8 +1,9 @@
-"""Spec for step 1b: time-based (not index-based) bar-position advances.
+"""Tests for time-based (rather than index-based) bar-position advances.
 
-These tests fail until :func:`musicality.postprocess.phase_advances` and the
-``advance="time"`` path of :func:`~musicality.postprocess.label_bar_position_global`
-are implemented. They are the specification — read them before writing code.
+Covers :func:`musicality.postprocess.phase_advances` and the ``advance="time"``
+path of :func:`~musicality.postprocess.label_bar_position_global`, which
+advances the bar count by elapsed time so a missed or spurious beat detection
+no longer shifts the grid for the rest of the track.
 
 Background: docs/switch_penalty_explained.md, docs/beat_phase_improvement_review.md.
 """

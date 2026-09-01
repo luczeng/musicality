@@ -39,6 +39,12 @@ class BeatPhaseModule(L.LightningModule):
     :param model: DictConfig for instantiating the backbone (e.g. ``TCNTempoNet``).
     :param pos_weight: Positive-class weight passed to :func:`~musicality.losses.beat_phase_loss`.
         Scalar (shared across heads) or a 3-element sequence (per-head).
+    :param phase_conditioning: Passed to :func:`~musicality.losses.beat_phase_loss`
+        — ``"mask"`` supervises the one/last heads on every frame,
+        ``"beat"`` only on frames at or near a beat, which is where
+        :func:`musicality.postprocess.label_bar_position` actually reads them.
+        Must be retuned together with ``pos_weight``: the class imbalance the
+        latter compensates for largely disappears under ``"beat"``.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
     :param threshold: Sigmoid/target threshold used only for the logged accuracy
@@ -58,6 +64,7 @@ class BeatPhaseModule(L.LightningModule):
         self,
         model: DictConfig,
         pos_weight: float | list[float] = 8.0,
+        phase_conditioning: str = "mask",
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
@@ -83,7 +90,12 @@ class BeatPhaseModule(L.LightningModule):
         logits = self(wav)
         logits, target = align_time(logits, target)
 
-        loss = beat_phase_loss(logits, target, pos_weight=self.hparams.pos_weight)
+        loss = beat_phase_loss(
+            logits,
+            target,
+            pos_weight=self.hparams.pos_weight,
+            phase_conditioning=self.hparams.phase_conditioning,
+        )
         probs = torch.sigmoid(logits)
 
         beat_p, one_p, last_p = probs[:, 0], probs[:, 1], probs[:, 2]

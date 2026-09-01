@@ -52,6 +52,7 @@ def build_module(cfg: DictConfig) -> BeatPhaseModule:
     return BeatPhaseModule(
         model=cfg.model,
         pos_weight=cfg.pos_weight,
+        phase_conditioning=cfg.get("phase_conditioning", "mask"),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
         balanced=cfg.balanced,
