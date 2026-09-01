@@ -320,6 +320,10 @@ roughly **50/50** between fit and generalization, where it was 70/30 before —
 so **section 7's data expansion is meaningfully more attractive than stated
 there**, now addressing about half the remaining error rather than a third.
 
+Note this split is measured against the *original* checkpoint. Step 2 changes
+the training objective, so both halves need re-measuring once it has been
+trained; treat the numbers above as the pre-step-2 baseline.
+
 ### Step 1b verdict: mechanism confirmed, but it does not beat the shipped decoder
 
 Time-based phase advances — `phase_advances` +
@@ -388,6 +392,48 @@ Next experiment, cheap and already tooled: **sweep `gate_tolerance`** via
 `tools/sweep_beat_postprocess.py`. If the residual 21% drift is gate's
 ambiguous branch inserting beats at the wrong times, that is the knob.
 
+### Step 2: implemented, awaiting a retrain
+
+Beat-conditioned phase loss, per section 2 above. Shipped as a config change,
+not just an option:
+
+```yaml
+# configs/beat_train.yaml
+phase_conditioning: beat
+pos_weight: [5, 3, 3]     # was [5, 18, 18]
+```
+
+- `musicality/losses.py` — `beat_phase_loss` gained `phase_conditioning`
+  (`"mask"` = the original behaviour, `"beat"` = weight the one/last terms by
+  the beat target channel). The smeared `beat` channel doubles as the soft
+  weight, so there is no threshold or window size to invent.
+- `musicality/trainers/beat_phase_module.py` — records it in
+  `save_hyperparameters()`, so a checkpoint carries which objective trained it
+  and `musicality.inference.load_module` can rebuild the module.
+- `musicality/trainers/train_beat_phase.py` — reads it from the Hydra config.
+- Tests: `tests/test_beat_conditioned_loss.py` (12 cases).
+
+**`pos_weight` is coupled to this and must move with it.** Under `"mask"`,
+one/last positives are ~1 frame in 23, hence `18`. Under `"beat"` the weighted
+frames *are* beats, of which ~1 in 4 is a downbeat, so the imbalance is ~3:1 —
+leaving `18` would badly over-correct an imbalance that no longer exists, and
+would confound two changes in one experiment.
+
+**Unlike steps 1 and 1b, nothing here can be measured from cached
+probabilities — it needs a training run.** When that lands, re-baseline before
+drawing any conclusion:
+
+```bash
+uv run python tools/diagnose_beat_phase.py --checkpoint <new-ckpt> \
+    --dataset ballroom --binary-only --split train --switch-penalties 1 2 5 10
+```
+
+`switch_penalty: 2.0` was tuned against the *old* checkpoint's probability
+calibration, which is exactly what this change alters, so re-sweep rather than
+assuming it holds. Judge the result on `f_one`/`f_last` and
+`confusion_half_cycle_rate`, not on frame accuracy — the premise of step 2 is
+that frame accuracy was scoring the wrong question.
+
 ### Updated order of work
 
 | # | Change | Status |
@@ -395,9 +441,9 @@ ambiguous branch inserting beats at the wrong times, that is the knob.
 | 0 | Train-split diagnostic | **done** — fit problem, halved by step 1 |
 | 1 | Global Viterbi decoder | **done** — val confusion 0.253 -> 0.185, shipped as the default |
 | 1b | Time-based (not index-based) phase transitions | **done** — mechanism confirmed, closes ~14% of the drift, but loses to `viterbi 2 [index]`; implemented, not shipped |
-| 1c | Sweep `gate_tolerance` | **next** — the residual drift looks like `gate_periodicity`'s ambiguous branch |
-| 2 | Beat-conditioned phase loss (section 2) | pending |
-| 3 | `G`-way softmax over positions (section 3) | pending |
+| 1c | Sweep `gate_tolerance` | **deferred, not rejected** — one command, no code; durable across retrains since it only touches the beat channel |
+| 2 | Beat-conditioned phase loss (section 2) | **implemented** — shipped in `configs/beat_train.yaml`; awaiting a retrain to measure |
+| 3 | `G`-way softmax over positions (section 3) | **next after the step-2 retrain** — depends on step 2, and forces a rewrite of the decoder's emission model |
 | 4 | pre-LN + relative position bias + dropout in SSA (section 4) | pending |
 | 5 | Beat-synchronous phase head (section 5) | pending |
 | 7 | Data expansion (section 7) | **promoted** — now ~50% of the remaining error |
@@ -407,6 +453,8 @@ ambiguous branch inserting beats at the wrong times, that is the knob.
 - `musicality/postprocess.py` — `label_bar_position_global` and
   `phase_advances`; `readout` gained `decoder=` / `switch_penalty=` /
   `advance=`.
+- `musicality/losses.py` — `beat_phase_loss` gained `phase_conditioning=`,
+  threaded through `BeatPhaseModule` and `configs/beat_train.yaml`.
 - `musicality/metrics/phase_offset.py` — `phase_offset_profile`.
 - `tools/diagnose_beat_phase.py` — runs both experiments in one command;
   `--advance index|time|both` scores the step-1b variants side by side.

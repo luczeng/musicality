@@ -5,9 +5,22 @@ defaults:
 # hyperparameters (BeatPhaseModule) and used by musicality.inference.detect_task
 # to pick the right module class/postprocessing at eval/inference time.
 task: beat_phase
+# Which frames the one/last BCE terms are averaged over.
+#   mask — every frame of a position-annotated track (the original behaviour)
+#   beat — only frames at or near a beat, weighted by the beat target channel
+# `beat` matches how the heads are actually read at inference: postprocess's
+# bar-position stage samples one/last *only* at detected beat times, so under
+# `mask` ~96% of the phase gradient goes into re-learning "is this a beat at
+# all" — which the beat head already does at 0.92 F. See
+# docs/beat_phase_improvement_review.md step 2.
+phase_conditioning: beat
 # Positive-class weight for the beat/one/last BCE heads — scalar (shared across
 # heads) or a 3-element list for per-head weights.
-pos_weight: [5,18,18]
+# COUPLED TO phase_conditioning. Under `mask`, one/last positives are ~1 frame
+# in 23, hence the original [5, 18, 18]. Under `beat` the weighted frames are
+# beats, of which ~1 in 4 is a downbeat, so the imbalance is ~3:1 and the large
+# weights would badly over-correct. Change both together or neither.
+pos_weight: [5, 3, 3]
 lr: 5e-4  # learning rate
 weight_decay: 1e-4  # L2 regularisation
 # Balance the logged acc_beat/acc_one/acc_last metrics (average of true-positive

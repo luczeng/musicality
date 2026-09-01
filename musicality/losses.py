@@ -91,25 +91,42 @@ def beat_phase_loss(
     logits: torch.Tensor,
     target: torch.Tensor,
     pos_weight: torch.Tensor | float = 8.0,
+    phase_conditioning: str = "mask",
 ) -> torch.Tensor:
     r"""Masked multi-head frame-wise BCE loss for beat-phase detection.
 
     Sums three per-frame binary-cross-entropy terms (beat, one, last). ``beat``
-    is supervised on every frame; ``one``/``last`` are gated by the target's
-    ``mask`` channel, since not every dataset carries position annotations
-    (see :class:`musicality.loaders.beat_dataset.BeatDataset`). Their terms are
-    normalized by the number of masked-in frames rather than the total frame
-    count, so a batch with few or no position-annotated tracks doesn't just
-    have its one/last loss silently shrink towards zero.
+    is supervised on every frame. ``one``/``last`` are supervised on a weighted
+    subset, ``w``, controlled by ``phase_conditioning``: always gated by the
+    target's ``mask`` channel, since not every dataset carries position
+    annotations (see :class:`musicality.loaders.beat_dataset.BeatDataset`), and
+    under ``phase_conditioning="beat"`` additionally weighted by the ``beat``
+    target so only frames at or near a beat count.
+
+    Both phase terms are normalized by the *sum of those weights* rather than
+    the total frame count. That keeps them on the same scale as the beat term
+    regardless of how much weight there is, so neither a batch light on
+    position-annotated tracks nor a slow track with few beats has its phase
+    loss silently shrink toward zero.
 
     .. math::
 
         \mathcal{L} = \underbrace{\frac{1}{BT} \sum_{i,t} \ell(\hat{b}_{i,t}, b_{i,t})}_{\text{beat}}
-        + \underbrace{\frac{\sum_{i,t} m_{i,t} \, \ell(\hat{o}_{i,t}, o_{i,t})}{\sum_{i,t} m_{i,t}}}_{\text{one}}
-        + \underbrace{\frac{\sum_{i,t} m_{i,t} \, \ell(\hat{l}_{i,t}, l_{i,t})}{\sum_{i,t} m_{i,t}}}_{\text{last}}
+        + \underbrace{\frac{\sum_{i,t} w_{i,t} \, \ell(\hat{o}_{i,t}, o_{i,t})}{\sum_{i,t} w_{i,t}}}_{\text{one}}
+        + \underbrace{\frac{\sum_{i,t} w_{i,t} \, \ell(\hat{l}_{i,t}, l_{i,t})}{\sum_{i,t} w_{i,t}}}_{\text{last}}
 
     where :math:`\ell` is per-frame weighted binary cross-entropy (with
-    ``pos_weight``) and :math:`m_{i,t}` is the target's ``mask`` channel.
+    ``pos_weight``) and the phase weight is
+
+    .. math::
+
+        w_{i,t} = \begin{cases}
+            m_{i,t} & \text{phase\_conditioning} = \text{"mask"} \\
+            m_{i,t} \, b_{i,t} & \text{phase\_conditioning} = \text{"beat"}
+        \end{cases}
+
+    with :math:`m` the target's ``mask`` channel and :math:`b` its ``beat``
+    channel.
 
     :param logits: Raw per-frame model output, shape ``(B, 3, T)`` — beat/one/last,
         unactivated (see :class:`musicality.models.tcn.TCNTempoNet` with
@@ -120,8 +137,35 @@ def beat_phase_loss(
         compensating for beat/one/last frames being a small fraction of all
         frames. Scalar (shared across heads) or shape ``(3,)`` for a per-head
         weight. Default ``8.0`` is a rough starting point, not tuned per dataset.
+    :param phase_conditioning: Which frames the ``one``/``last`` terms are
+        averaged over.
+
+        - ``"mask"`` (default): every frame of a position-annotated track.
+        - ``"beat"``: only frames at or near a beat, weighted by the ``beat``
+          target channel.
+
+        ``"mask"`` optimises the phase heads on a distribution they are never
+        read at — :func:`musicality.postprocess.label_bar_position` samples
+        ``one``/``last`` *only* at detected beat times, so ~96% of the
+        gradient goes into re-learning "is this a beat at all", which the beat
+        head already does at 0.92 F. ``"beat"`` restricts the terms to the
+        frames the decoder actually reads, turning 1-vs-3 from a rare-event
+        detection problem (~1 positive frame in 23) into a balanced
+        classification problem (~1 beat in 4). See
+        docs/beat_phase_improvement_review.md step 2.
+
+        .. note::
+           ``pos_weight`` for the phase heads must be retuned alongside this —
+           the imbalance it compensates for largely disappears. ``18`` is
+           right for ``"mask"``; roughly ``3`` for ``"beat"``.
     :returns: Scalar mean loss, shape ``()``.
     """
+
+    if phase_conditioning not in ("mask", "beat"):
+        raise ValueError(
+            f"Unknown phase_conditioning {phase_conditioning!r} — "
+            "expected 'mask' or 'beat'"
+        )
 
     beat_logits, one_logits, last_logits = logits[:, 0], logits[:, 1], logits[:, 2]
     beat_y, one_y, last_y, mask = target[:, 0], target[:, 1], target[:, 2], target[:, 3]
@@ -139,11 +183,21 @@ def beat_phase_loss(
         last_logits, last_y, pos_weight=pos_weight[2], reduction="none"
     )
 
-    n_masked = mask.sum().clamp(min=1.0)
+    # Per-frame weight for the one/last terms. `beat_y` is already
+    # Gaussian-smeared (peak 1.0 at a beat, exactly 0 more than ~5 frames
+    # away), so it doubles as a soft "near a beat" weight with no threshold
+    # or window size to invent.
+    phase_w = mask * beat_y if phase_conditioning == "beat" else mask
+
+    # Normalising by the weight *sum* rather than the frame count makes each
+    # term a weighted mean, so it stays on the same scale as `beat_term`
+    # however many frames carry weight — otherwise a fast track, having more
+    # beats, would contribute a proportionally larger phase loss.
+    n_weighted = phase_w.sum().clamp(min=1.0)
 
     beat_term = beat_loss.mean()
-    one_term = (one_loss * mask).sum() / n_masked
-    last_term = (last_loss * mask).sum() / n_masked
+    one_term = (one_loss * phase_w).sum() / n_weighted
+    last_term = (last_loss * phase_w).sum() / n_weighted
 
     return beat_term + one_term + last_term
 
