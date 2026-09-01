@@ -233,6 +233,83 @@ def label_bar_position(
     return labels
 
 
+def phase_advances(
+    beat_times: np.ndarray,
+    ema_alpha: float = 0.2,
+    bootstrap_window: int = 8,
+) -> np.ndarray:
+    """How many bar positions to advance across each consecutive pair of beats.
+
+    :func:`label_bar_position_global` currently assumes the bar position moves
+    exactly ``+1`` at every detected beat. That is only true when the beat list
+    is perfect. A beat the detector *missed* leaves a two-period gap, and the
+    count silently slips by one for the rest of the track; a *spurious* extra
+    detection slips it the other way. Measured on real tracks, this — not the
+    labeller — is what makes the predicted phase unstable within a track (see
+    docs/switch_penalty_explained.md).
+
+    This function replaces "one beat, one position" with "however much *time*
+    elapsed": a gap of roughly two beat periods advances two positions, a
+    near-zero gap advances none
+
+    **Contract**
+
+    - Returns a non-negative integer array of length
+      ``max(len(beat_times) - 1, 0)``. Entry ``i`` is how many positions to
+      move from ``beat_times[i]`` to ``beat_times[i + 1]``.
+    - Evenly spaced beats give all ones — identical to today's behaviour.
+    - A gap of ``k`` beat periods gives ``k``.
+    - A near-duplicate detection (gap far below one period) gives ``0``, so a
+      spurious beat consumes no position.
+    - Tempo is allowed to drift over a track, so the period estimate must be
+      **local**, not one constant fitted to the whole sequence. There is a
+      test that fails if you use a single global median.
+
+    :param beat_times: Gated beat timestamps (seconds), sorted.
+    :param ema_alpha: Weight given to each newly observed interval when
+        updating the running period estimate. Higher adapts faster to drift
+        but is noisier.
+    :param bootstrap_window: Number of leading intervals used to seed the
+        initial period estimate.
+    :returns: Per-gap position advances, shape ``(len(beat_times) - 1,)``.
+
+    .. note::
+       :func:`gate_periodicity` in this module already solves a closely
+       related problem — maintaining a running period estimate over a noisy
+       beat list and deciding how many beats a gap represents. Read it before
+       writing this; the same shape of reasoning applies, and reusing its
+       conventions (EMA weight, bootstrap median) keeps the two consistent.
+    """
+
+    beat_times = np.asarray(beat_times, dtype=float)
+
+    if len(beat_times) < 2:
+        return np.array([], dtype=int)
+
+    # Seed from the median of the leading intervals, like gate_periodicity —
+    # robust to one bad interval at the very start.
+    period = max(float(np.median(np.diff(beat_times[: bootstrap_window + 1]))), 1e-6)
+
+    advances = []
+    last = beat_times[0]
+
+    for t in beat_times[1:]:
+        interval = abs(t - last)
+        k = max(int(np.round(interval / period)), 0)
+        advances.append(k)
+
+        if k >= 1:
+            # Learn from the *implied single-beat* interval, so a two-period
+            # gap teaches the estimator about one beat rather than two. A
+            # k == 0 gap is a spurious duplicate and carries no period
+            # information at all, so it must not update the estimate.
+            period = (1 - ema_alpha) * period + ema_alpha * interval / k
+
+        last = t
+
+    return np.array(advances, dtype=int)
+
+
 def label_bar_position_global(
     beat_times: np.ndarray,
     one_probs: np.ndarray,
@@ -240,6 +317,7 @@ def label_bar_position_global(
     fps: float,
     group_size: int = 4,
     switch_penalty: float | None = None,
+    advance: str = "index",
     eps: float = 1e-6,
 ) -> list[int]:
     r"""Assign each gated beat time a group position (1-``group_size``) by a
@@ -307,9 +385,14 @@ def label_bar_position_global(
         a beat time to its nearest frame.
     :param group_size: Number of positions per group — ``4`` for bar position
         (default), ``8`` for phrase position. Must be >= 2.
-    :param switch_penalty: Log-likelihood cost of deviating from the ``+1 mod
-        group_size`` advance at one beat. ``None`` (default) forbids it
-        entirely, reducing the decode to the exact single-offset argmax.
+    :param switch_penalty: Log-likelihood cost of deviating from the expected
+        advance at one beat. ``None`` (default) forbids it entirely, reducing
+        the decode to the exact single-offset argmax.
+    :param advance: How many positions each beat moves the count on.
+        ``"index"`` (default) moves exactly one position per detected beat.
+        ``"time"`` derives it from the elapsed time via
+        :func:`phase_advances`, so a missed or spurious detection no longer
+        shifts the bar grid for the rest of the track.
     :param eps: Probabilities are clipped to ``[eps, 1 - eps]`` before the
         log, so a saturated 0.0 or 1.0 can't contribute an infinite score.
     :returns: One entry per beat time, each ``1``..``group_size``.
@@ -317,6 +400,9 @@ def label_bar_position_global(
 
     if group_size < 2:
         raise ValueError(f"group_size must be >= 2, got {group_size}")
+
+    if advance not in ("index", "time"):
+        raise ValueError(f"Unknown advance {advance!r} — expected 'index' or 'time'")
 
     beat_times = np.asarray(beat_times, dtype=float)
     n_beats = len(beat_times)
@@ -337,22 +423,38 @@ def label_bar_position_global(
     ll[:, 0] = log_one + log_not_last
     ll[:, group_size - 1] = log_last + log_not_one
 
+    # advances[i] = how many positions to move from beat i to beat i + 1.
+    # "index" moves exactly one per detected beat (so a missed detection
+    # silently shifts the count for the rest of the track); "time" derives it
+    # from the elapsed time instead, which is the whole point of this mode.
+    if advance == "time":
+        advances = phase_advances(beat_times)
+    else:
+        advances = np.ones(n_beats - 1, dtype=int)
+
+    # cum[i] = how many positions beat i sits past beat 0, before the phase
+    # offset is applied. With all-ones advances this is just 0, 1, 2, 3, ...
+    cum = np.concatenate([[0], np.cumsum(advances)]).astype(int)
+
     if switch_penalty is None:
         # positions[i, o] = the position index beat i takes under offset o.
-        positions = (
-            np.arange(n_beats)[:, None] + np.arange(group_size)[None, :]
-        ) % group_size
+        positions = (cum[:, None] + np.arange(group_size)[None, :]) % group_size
         scores = np.take_along_axis(ll, positions, axis=1).sum(axis=0)
         best_offset = int(np.argmax(scores))
 
-        return [int((i + best_offset) % group_size) + 1 for i in range(n_beats)]
+        return [int((c + best_offset) % group_size) + 1 for c in cum]
 
     # Viterbi over position states, allowing a penalized resync at any beat.
-    prev_natural = (np.arange(group_size) - 1) % group_size
+    states = np.arange(group_size)
     delta = ll[0].copy()
     backptr = np.zeros((n_beats, group_size), dtype=int)
 
     for i in range(1, n_beats):
+        # The natural predecessor of state t is the state `advances[i-1]`
+        # positions back — one for an ordinary gap, more where a beat was
+        # missed, none for a spurious duplicate.
+        prev_natural = (states - advances[i - 1]) % group_size
+
         # Best predecessor other than the natural one, via the standard
         # top-2 trick: the overall argmax, unless that *is* the natural
         # predecessor for this target state, in which case the runner-up.
@@ -388,6 +490,7 @@ def readout(
     group_size: int = 4,
     decoder: str = "greedy",
     switch_penalty: float | None = None,
+    advance: str = "index",
 ) -> list[dict]:
     """End-to-end: per-frame probability curves -> a labeled beat list.
 
@@ -414,6 +517,8 @@ def readout(
         ``switch_penalty`` is unused by ``"greedy"``.
     :param switch_penalty: Passed to :func:`label_bar_position_global`. Only
         used when ``decoder="global"``.
+    :param advance: Passed to :func:`label_bar_position_global`. Only used when
+        ``decoder="global"``.
     :returns: One dict per detected beat, sorted by time:
         ``{"time": float, "beat_in_bar": int | None}``.
     """
@@ -442,6 +547,7 @@ def readout(
             fps,
             group_size=group_size,
             switch_penalty=switch_penalty,
+            advance=advance,
         )
     else:
         raise ValueError(f"Unknown decoder {decoder!r} — expected 'greedy' or 'global'")

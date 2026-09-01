@@ -320,13 +320,82 @@ roughly **50/50** between fit and generalization, where it was 70/30 before —
 so **section 7's data expansion is meaningfully more attractive than stated
 there**, now addressing about half the remaining error rather than a third.
 
+### Step 1b verdict: mechanism confirmed, but it does not beat the shipped decoder
+
+Time-based phase advances — `phase_advances` +
+`label_bar_position_global(advance="time")`, replacing "one position per
+detected beat" with `round(dt / period)`. Same checkpoint, same cached
+probabilities, ballroom train (419 tracks).
+
+**The prediction that held.** With no resync mechanism at all, time-based
+advances do most of the work the Viterbi was doing:
+
+| `global (exact, no resync)` | confusion | `1` F | `last` F | stability |
+|---|---|---|---|---|
+| `[index]` | 0.134 | 0.726 | 0.734 | 0.757 |
+| `[time]` | **0.093** | **0.771** | **0.780** | **0.791** |
+
+**The prediction that failed.** Section "Chunked inference"'s follow-up
+predicted the best `switch_penalty` would move *higher* once the count stopped
+slipping. It did not — and time-based advances make the Viterbi paths *worse*:
+
+| `switch_penalty` | `[index]` | `[time]` | time helps by |
+|---|---|---|---|
+| none (exact) | 0.134 | 0.093 | **+0.041** |
+| 20 | 0.114 | 0.097 | +0.017 |
+| 5 | 0.100 | 0.113 | -0.013 |
+| 2 | **0.090** | 0.100 | -0.010 |
+
+That trend is monotonic, and it says something clean: **`switch_penalty` and
+time-based advances are substitutes, not complements.** They fix the same
+errors. The cheaper switching gets, the less time-advances add — and past a
+point they inject noise the Viterbi then pays to undo. Consistent with
+`docs/switch_penalty_explained.md`'s conclusion that the resync was never
+handling meter changes, only beat-count errors.
+
+**Net effect on the default: none.**
+
+| | confusion | `1` F | `last` F | stability |
+|---|---|---|---|---|
+| `viterbi 2 [index]` (shipped) | **0.090** | **0.841** | **0.825** | **0.832** |
+| `exact [time]` (best of 1b) | 0.093 | 0.771 | 0.780 | 0.791 |
+
+Tied on confusion; the shipped decoder wins both F-measures by ~0.06 and on
+stability. `advance="time"` stays available but off by default.
+
+**How much drift it actually explained.** Stability on the exact decoder is the
+clean measurement, because that decoder cannot change phase on its own:
+
+```
+drift before 1b:  1.000 - 0.757 = 0.243
+drift after  1b:  1.000 - 0.791 = 0.209
+closed:                            0.034   (14%)
+```
+
+So missed and spurious beats account for only about **a seventh** of the
+within-track instability. The step-1 write-up above implied it was the main
+story; that was directionally right and quantitatively wrong.
+
+**Why the ceiling, and where to look next.** `gate_periodicity` runs *before*
+the labeller and already synthesizes missing beats and drops duplicates, so the
+clean cases 1b targets are mostly repaired upstream. What reaches
+`phase_advances` is gate's leftovers — gaps that fit no integer multiple within
+`gate_tolerance: 0.1`, which take its branch 4 (*accepted as-is, period not
+updated*). Those are exactly the beats sitting at odd positions, and
+`round(dt / period)` finds them just as ambiguous as gate did.
+
+Next experiment, cheap and already tooled: **sweep `gate_tolerance`** via
+`tools/sweep_beat_postprocess.py`. If the residual 21% drift is gate's
+ambiguous branch inserting beats at the wrong times, that is the knob.
+
 ### Updated order of work
 
 | # | Change | Status |
 |---|---|---|
 | 0 | Train-split diagnostic | **done** — fit problem, halved by step 1 |
 | 1 | Global Viterbi decoder | **done** — val confusion 0.253 -> 0.185, shipped as the default |
-| 1b | Time-based (not index-based) phase transitions | **new, next** — targets the measured beat-drift mechanism |
+| 1b | Time-based (not index-based) phase transitions | **done** — mechanism confirmed, closes ~14% of the drift, but loses to `viterbi 2 [index]`; implemented, not shipped |
+| 1c | Sweep `gate_tolerance` | **next** — the residual drift looks like `gate_periodicity`'s ambiguous branch |
 | 2 | Beat-conditioned phase loss (section 2) | pending |
 | 3 | `G`-way softmax over positions (section 3) | pending |
 | 4 | pre-LN + relative position bias + dropout in SSA (section 4) | pending |
@@ -335,10 +404,12 @@ there**, now addressing about half the remaining error rather than a third.
 
 ### Tooling added
 
-- `musicality/postprocess.py` — `label_bar_position_global`; `readout` gained
-  `decoder=` / `switch_penalty=`.
+- `musicality/postprocess.py` — `label_bar_position_global` and
+  `phase_advances`; `readout` gained `decoder=` / `switch_penalty=` /
+  `advance=`.
 - `musicality/metrics/phase_offset.py` — `phase_offset_profile`.
-- `tools/diagnose_beat_phase.py` — runs both experiments in one command.
+- `tools/diagnose_beat_phase.py` — runs both experiments in one command;
+  `--advance index|time|both` scores the step-1b variants side by side.
 - Threaded through `musicality/inference.py`, `musicality/evaluation.py`,
   `tools/eval_beat.py` and the annotator, defaulting from
   `configs/eval_beat.yaml`.
