@@ -82,6 +82,7 @@ def score_decoder(
     *,
     decoder: str,
     switch_penalty: float | None,
+    advance: str = "index",
     beat_threshold: float,
     min_distance_frames: int,
     gate_tolerance: float,
@@ -114,6 +115,7 @@ def score_decoder(
             group_size=group_size,
             decoder=decoder,
             switch_penalty=switch_penalty,
+            advance=advance,
         )
 
         f_one, f_last = downbeat_f_measures(
@@ -331,6 +333,16 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--advance",
+        choices=["index", "time", "both"],
+        default="index",
+        help=(
+            "How the global decoder advances bar position per beat: 'index' "
+            "(one position per detected beat), 'time' (derived from elapsed "
+            "time — step 1b), or 'both' to score them side by side."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -372,13 +384,16 @@ def main():
     cached = evaluator.compute_track_probs()
     fps = args.sample_rate / args.hop_length
 
-    variants = [
-        (f"greedy (anchor={args.anchor_threshold:g})", "greedy", None),
-        ("global (exact, no resync)", "global", None),
-    ]
-    variants += [
-        (f"global + viterbi (switch={p:g})", "global", p) for p in args.switch_penalties
-    ]
+    advance_modes = ["index", "time"] if args.advance == "both" else [args.advance]
+
+    variants = [(f"greedy (anchor={args.anchor_threshold:g})", "greedy", None, "index")]
+    for adv in advance_modes:
+        tag = f" [{adv}]" if len(advance_modes) > 1 else ""
+        variants.append((f"global (exact, no resync){tag}", "global", None, adv))
+        variants += [
+            (f"global + viterbi (switch={p:g}){tag}", "global", p, adv)
+            for p in args.switch_penalties
+        ]
 
     print(f"[diagnose] scoring {len(variants)} decoder variant(s)...\n")
 
@@ -386,18 +401,19 @@ def main():
     print(f"DECODER COMPARISON  (split={args.split}, same cached probabilities)")
     print("=" * 78)
     print(
-        f"\n  {'decoder':<30} {'f_one':>7} {'f_last':>7} {'confuse':>8} {'stability':>10}"
+        f"\n  {'decoder':<36} {'f_one':>7} {'f_last':>7} {'confuse':>8} {'stability':>10}"
     )
 
     results = {}
     all_rows = []
 
-    for name, decoder, switch_penalty in variants:
+    for name, decoder, switch_penalty, adv in variants:
         summary, rows = score_decoder(
             cached,
             fps,
             decoder=decoder,
             switch_penalty=switch_penalty,
+            advance=adv,
             beat_threshold=args.beat_threshold,
             min_distance_frames=args.min_distance_frames,
             gate_tolerance=args.gate_tolerance,
@@ -409,7 +425,7 @@ def main():
         results[name] = (summary, rows)
 
         print(
-            f"  {name:<30} {_fmt(summary['f_one']):>7} {_fmt(summary['f_last']):>7} "
+            f"  {name:<36} {_fmt(summary['f_one']):>7} {_fmt(summary['f_last']):>7} "
             f"{_fmt(summary['confusion']):>8} {_fmt(summary['stability']):>10}"
         )
 
