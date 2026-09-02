@@ -42,6 +42,12 @@ class BeatModule(L.LightningModule):
         time. Always ``"beat_only"`` for this class; exists as a parameter
         (rather than hardcoded) so ``configs/beat_only_train.yaml``'s ``task:``
         field is the visible, single source of truth for what a checkpoint is.
+    :param check_val_every_n_epoch: How often the trainer actually runs
+        validation (``cfg.trainer.check_val_every_n_epoch``). The
+        ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
+        Lightning otherwise tries to step it (and read ``val/loss``) every
+        epoch regardless of how often validation runs, raising
+        ``MisconfigurationException`` on any epoch without a fresh value.
     """
 
     def __init__(
@@ -52,6 +58,7 @@ class BeatModule(L.LightningModule):
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
         balanced: bool = True,
+        check_val_every_n_epoch: int = 1,
         task: str = "beat_only",
     ):
         super().__init__()
@@ -125,5 +132,9 @@ class BeatModule(L.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "monitor": "val/loss"},
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val/loss",
+                "frequency": self.hparams.check_val_every_n_epoch,
+            },
         }

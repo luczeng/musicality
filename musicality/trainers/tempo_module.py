@@ -39,6 +39,12 @@ class TempoModule(L.LightningModule):
         ``bpm_min``, ``bpm_max``, ``n_bins``, ``sigma``.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
+    :param check_val_every_n_epoch: How often the trainer actually runs
+        validation (``cfg.trainer.check_val_every_n_epoch``). The
+        ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
+        Lightning otherwise tries to step it (and read ``val/loss``) every
+        epoch regardless of how often validation runs, raising
+        ``MisconfigurationException`` on any epoch without a fresh value.
     """
 
     def __init__(
@@ -48,6 +54,7 @@ class TempoModule(L.LightningModule):
         classification: DictConfig | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
+        check_val_every_n_epoch: int = 1,
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -161,5 +168,9 @@ class TempoModule(L.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "monitor": "val/loss"},
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val/loss",
+                "frequency": self.hparams.check_val_every_n_epoch,
+            },
         }

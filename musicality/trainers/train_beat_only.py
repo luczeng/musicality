@@ -51,6 +51,7 @@ def build_module(cfg: DictConfig) -> BeatModule:
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
         balanced=cfg.balanced,
+        check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
         task=cfg.task,
     )
 

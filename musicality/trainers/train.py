@@ -101,6 +101,7 @@ def build_module(cfg: DictConfig) -> TempoModule:
         classification=cfg.get("classification"),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
+        check_val_every_n_epoch=cfg.trainer.check_val_every_n_epoch,
     )
 
 

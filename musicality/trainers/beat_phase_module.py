@@ -53,6 +53,12 @@ class BeatPhaseModule(L.LightningModule):
         for the logged accuracy metrics. Defaults to ``True`` since beat/one/last
         frames are a small minority and a pooled mean is dominated by the
         true-negative rate.
+    :param check_val_every_n_epoch: How often the trainer actually runs
+        validation (``cfg.trainer.check_val_every_n_epoch``). The
+        ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
+        Lightning otherwise tries to step it (and read ``val/loss``) every
+        epoch regardless of how often validation runs, raising
+        ``MisconfigurationException`` on any epoch without a fresh value.
     :param task: Saved into the checkpoint's hyperparameters for
         :func:`~musicality.inference.detect_task` to read back at eval/inference
         time. Always ``"beat_phase"`` for this class; exists as a parameter
@@ -69,6 +75,7 @@ class BeatPhaseModule(L.LightningModule):
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
         balanced: bool = True,
+        check_val_every_n_epoch: int = 1,
         task: str = "beat_phase",
     ):
         super().__init__()
@@ -162,5 +169,9 @@ class BeatPhaseModule(L.LightningModule):
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": scheduler, "monitor": "val/loss"},
+            "lr_scheduler": {
+                "scheduler": scheduler,
+                "monitor": "val/loss",
+                "frequency": self.hparams.check_val_every_n_epoch,
+            },
         }
