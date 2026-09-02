@@ -93,21 +93,45 @@ and tuning the thresholds that step depends on — is its own small pipeline,
 documented in full at :doc:`postprocess`:
 
 - :mod:`musicality.postprocess` is the algorithm itself: peak-picking, then
-  periodicity-based gating, then (beat-phase only) bar-position labeling by
-  anchor vote + count-forward.
+  periodicity-based gating, then (beat-phase only) bar-position labeling.
+  Two labelers are available, selected by :func:`~musicality.postprocess.readout`'s
+  ``decoder`` argument:
+
+  - :func:`~musicality.postprocess.label_bar_position_global` (**the default**)
+    scores the whole track at once, maximising the total log-likelihood of the
+    soft ``one``/``last`` probabilities over every candidate bar phase. A
+    finite ``switch_penalty`` allows a penalised mid-track resync; ``None``
+    forbids one entirely, reducing the decode to an exact single-offset argmax.
+    Its ``advance`` argument controls whether the bar count moves one position
+    per detected beat (``"index"``) or by elapsed time via
+    :func:`~musicality.postprocess.phase_advances` (``"time"``), the latter
+    being robust to a missed or spurious detection shifting the grid.
+  - :func:`~musicality.postprocess.label_bar_position` is the older
+    count-forward labeler, resyncing on any above-threshold anchor vote. It
+    discards evidence below ``anchor_threshold`` and cannot revise a bad
+    resync, which measurably costs phase accuracy — see
+    ``docs/beat_phase_improvement_review.md``.
+
 - ``configs/eval_beat.yaml`` holds the *tuned* postprocessing defaults per
   task (``beat_threshold``/``min_distance_frames``/``gate_tolerance``, plus
-  ``anchor_threshold``/``group_size`` for beat-phase) — selected
-  automatically by ``load_module``'s detected task unless overridden.
-- ``tools/sweep_beat_postprocess.py`` is what *produces* those tuned values:
-  it runs the model once per track (cached via
+  ``decoder``/``switch_penalty``/``group_size`` for beat-phase, and
+  ``anchor_threshold`` for the greedy decoder) — selected automatically by
+  ``load_module``'s detected task unless overridden.
+- ``tools/sweep_beat_postprocess.py`` produces the beat-detection values: it
+  runs the model once per track (cached via
   :meth:`~musicality.evaluation.BeatEvaluator.compute_track_probs`), then
-  cheaply grid-searches two tables against the cached probabilities — a
-  beat-detection grid (both tasks, scored by mean beat F-measure) and, for
-  beat-phase checkpoints, ``anchor_threshold`` swept jointly with that same
-  grid (scored by mean "1"/"last" F-measure). See :doc:`postprocess` for why
-  ``anchor_threshold`` in particular has a real interior optimum rather than
-  "higher is always better."
+  cheaply grid-searches against the cached probabilities — a beat-detection
+  grid for both tasks (scored by mean beat F-measure) and, for beat-phase
+  checkpoints, ``anchor_threshold`` swept jointly with it. Note the latter only
+  affects the non-default greedy decoder; see :doc:`postprocess` for why
+  ``anchor_threshold`` has a real interior optimum rather than "higher is
+  always better."
+- ``tools/diagnose_beat_phase.py`` is the beat-phase counterpart, and what
+  produces the tuned ``decoder``/``switch_penalty``. Against one cached set of
+  probabilities it scores every decoder variant side by side, reports a
+  per-track phase-offset profile
+  (:func:`~musicality.metrics.phase_offset.phase_offset_profile`), and states
+  whether the phase error is coming from the model or from the decoder.
 
 API reference
 -------------

@@ -413,11 +413,40 @@ pos_weight: [5, 3, 3]     # was [5, 18, 18]
 - `musicality/trainers/train_beat_phase.py` — reads it from the Hydra config.
 - Tests: `tests/test_beat_conditioned_loss.py` (12 cases).
 
-**`pos_weight` is coupled to this and must move with it.** Under `"mask"`,
-one/last positives are ~1 frame in 23, hence `18`. Under `"beat"` the weighted
-frames *are* beats, of which ~1 in 4 is a downbeat, so the imbalance is ~3:1 —
-leaving `18` would badly over-correct an imbalance that no longer exists, and
-would confound two changes in one experiment.
+**`pos_weight` is coupled to this and must move with it.** Section 2 above
+estimated the new ratio at `~3:1` from "1 beat in 4 is a downbeat". **That
+estimate is wrong** — measured, it is `4.7:1`. Measured neg:pos *mass* on
+ballroom (`binary_only=True`, 150 tracks, 16s clips; soft target mass, not
+thresholded frame counts):
+
+| head | `mask` | `beat` |
+|---|---|---|
+| `one` | 20.2 | **4.7** |
+| `last` | 20.0 | **4.6** |
+| `beat` | 4.3 | 4.3 (unconditioned either way) |
+
+Why it is not 3.0: the weight is the smeared `beat` channel and the target is
+the smeared `one` channel, so the positive mass is a product of two Gaussians
+centred on the same frame — it decays twice as fast as either alone. Per bar,
+total weight `4 x 3.76 = 15.04`, positive weight `1 x 2.66 = 2.66`, giving
+`12.38 / 2.66 = 4.65`, which matches the measurement.
+
+Shading ~10% under the measured ratio — the convention the `mask` values
+already follow, since exact inverse-frequency weighting on a soft target tends
+to overshoot into false positives — gives `pos_weight: [5, 4, 4]`. Leaving `18`
+would badly over-correct an imbalance that no longer exists, and would confound
+two changes in one experiment.
+
+**A secondary benefit: the ratio becomes tempo-invariant.** Under `"mask"` the
+denominator is a fixed frame count while the numerator scales with beat count,
+so the imbalance swings with tempo and no single `pos_weight` can balance a
+mixed-tempo dataset. Under `"beat"` both scale together. Measured per track
+over a 15-209 BPM range:
+
+| mode | median | p10 | p90 | spread | corr. with tempo |
+|---|---|---|---|---|---|
+| `mask` | 22.0 | 13.1 | 29.6 | 2.27x | **-0.61** |
+| `beat` | 4.6 | 4.3 | 5.1 | 1.18x | -0.10 |
 
 **Unlike steps 1 and 1b, nothing here can be measured from cached
 probabilities — it needs a training run.** When that lands, re-baseline before
@@ -434,6 +463,56 @@ assuming it holds. Judge the result on `f_one`/`f_last` and
 `confusion_half_cycle_rate`, not on frame accuracy — the premise of step 2 is
 that frame accuracy was scoring the wrong question.
 
+### Step 3: implemented, off by default
+
+`group_size`-way softmax over bar position, per section 3 above. Every piece
+is in and tested, but `configs/beat_train.yaml` still says
+`target_layout: one_last` — **deliberately**, because `positions` and
+`phase_conditioning: beat` are two separate changes and enabling both in one
+run makes the result unattributable. Retrain on step 2 first, measure, then
+flip `target_layout: positions`.
+
+**What the parameterization change is.** The old head is two independent
+sigmoids for positions 1 and `group_size`, which leaves positions 2..G-1 with
+identical supervision (negative on both) — the model is never asked the
+question the metric measures. The new head gives every position its own logit
+under one softmax, so raising position 1 necessarily lowers position 3.
+`beat` stays a separate sigmoid: "is there a beat here?" is a genuine binary
+question over time, and folding it into the softmax would couple a head that
+works (0.92 F) to one that doesn't.
+
+| file | change |
+|---|---|
+| `loaders/beat_dataset.py` | `target_layout="positions"` builds a `(2 + G, T)` target — beat, a normalized position block, mask. `position_target_channels()` names them. |
+| `models/tcn.py` | the self-attention `phase_head` output width was hardcoded at 2; now `n_outputs - 1`. |
+| `losses.py` | `beat_position_loss` — beat BCE plus soft-target cross-entropy over positions, weighted per frame by step 2's `phase_conditioning`. |
+| `trainers/beat_phase_module.py` | `group_size=None` keeps the old head; an integer widens it to `1 + G` and switches loss + metrics. Saved to hparams so checkpoints are self-describing. |
+| `trainers/common.py`, `train_beat_phase.py` | thread `target_layout` / `group_size` from the config. |
+| `postprocess.py` | `label_bar_position_global(position_probs=...)` reads the distribution directly. |
+| `inference.py` | detects the head from the checkpoint's `group_size` hparam and softmaxes the position block. |
+
+Tests: `tests/test_position_head.py` (22 cases). Suite: 483 passing.
+
+**Three things this simplifies.**
+
+- *The decoder's hand-built emission model goes away on this path.* The
+  two-sigmoid version has to assume `p_one` and `p_last` are independent, and
+  cannot distinguish positions 2 and 3 at all. With `position_probs` the
+  emission is `log softmax(position_logits)` — read straight off.
+- *`pos_weight` stops applying to phase.* Bar positions occur equally often,
+  so the softmax is balanced by construction. `pos_weight` reduces to a scalar
+  for the beat head, taking the whole `pos_weight`/`phase_conditioning`
+  coupling with it.
+- *The logged metric becomes meaningful.* `acc_one`/`acc_last` are replaced by
+  `acc_position` — argmax over the softmax against the target, weighted by
+  beat. A model that never fires cannot score well on it: it has to pick a
+  position, and picking the wrong one is a miss. That was the original
+  complaint about frame accuracy.
+
+**Backward compatibility.** Old checkpoints have no `group_size` hparam, so
+they default to `None` and take the original three-channel path everywhere —
+model head, loss, metrics, decoder, inference. Nothing needs migrating.
+
 ### Updated order of work
 
 | # | Change | Status |
@@ -443,7 +522,7 @@ that frame accuracy was scoring the wrong question.
 | 1b | Time-based (not index-based) phase transitions | **done** — mechanism confirmed, closes ~14% of the drift, but loses to `viterbi 2 [index]`; implemented, not shipped |
 | 1c | Sweep `gate_tolerance` | **deferred, not rejected** — one command, no code; durable across retrains since it only touches the beat channel |
 | 2 | Beat-conditioned phase loss (section 2) | **implemented** — shipped in `configs/beat_train.yaml`; awaiting a retrain to measure |
-| 3 | `G`-way softmax over positions (section 3) | **next after the step-2 retrain** — depends on step 2, and forces a rewrite of the decoder's emission model |
+| 3 | `G`-way softmax over positions (section 3) | **implemented, off by default** — flip `target_layout: positions` after the step-2 retrain has been measured |
 | 4 | pre-LN + relative position bias + dropout in SSA (section 4) | pending |
 | 5 | Beat-synchronous phase head (section 5) | pending |
 | 7 | Data expansion (section 7) | **promoted** — now ~50% of the remaining error |
@@ -454,7 +533,10 @@ that frame accuracy was scoring the wrong question.
   `phase_advances`; `readout` gained `decoder=` / `switch_penalty=` /
   `advance=`.
 - `musicality/losses.py` — `beat_phase_loss` gained `phase_conditioning=`,
-  threaded through `BeatPhaseModule` and `configs/beat_train.yaml`.
+  threaded through `BeatPhaseModule` and `configs/beat_train.yaml`; and
+  `beat_position_loss` for the softmax head.
+- `musicality/loaders/beat_dataset.py` — `target_layout=` and
+  `position_target_channels()`.
 - `musicality/metrics/phase_offset.py` — `phase_offset_profile`.
 - `tools/diagnose_beat_phase.py` — runs both experiments in one command;
   `--advance index|time|both` scores the step-1b variants side by side.
