@@ -113,11 +113,17 @@ class BeatPhaseModule(L.LightningModule):
             target[:, 3],
         )
 
-        # `beat_y` is exactly 0 more than ~5 frames from a beat (see
-        # beat_phase_loss), so this doubles as a hard "near a beat" gate with
-        # no threshold to invent. Restricts acc_one/acc_last to the frames
-        # label_bar_position actually reads at inference, independent of
-        # `phase_conditioning` (which only controls what the *loss* weights).
+        # frame_accuracy only checks `mask > 0` — a frame is in the average or
+        # it isn't, the value doesn't matter (see frame_accuracy). Contrast
+        # with beat_phase_loss's `phase_conditioning="beat"` branch, which
+        # uses this same `mask * beat_y` product as a continuous *weight*
+        # instead. `beat_y` is Gaussian-smeared and truncated to exactly 0
+        # once you're more than ~5 frames from a beat (see beat_phase_loss),
+        # so `beat_mask > 0` already means "within ~5 frames of a beat" —
+        # no separate window-size constant to invent just for this mask.
+        # Restricts acc_one/acc_last to the frames label_bar_position
+        # actually reads at inference, independent of `phase_conditioning`
+        # (which only controls what the *loss* weights).
         beat_mask = mask * beat_y
 
         log_kw = dict(on_step=False, on_epoch=True)
