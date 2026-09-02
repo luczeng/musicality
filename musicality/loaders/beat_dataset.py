@@ -24,6 +24,17 @@ DATA_DIR = dataformats.DATA_DIR
 TARGET_CHANNELS = ("beat", "one", "last", "mask")
 
 
+def position_target_channels(group_size: int) -> tuple[str, ...]:
+    """Channel names for the ``target_layout="positions"`` target.
+
+    ``("beat", "pos_1", ..., "pos_<group_size>", "mask")`` — ``beat`` first and
+    ``mask`` last, matching :data:`TARGET_CHANNELS`, so ``target[0]`` and
+    ``target[-1]`` mean the same thing under both layouts.
+    """
+
+    return ("beat", *(f"pos_{p}" for p in range(1, group_size + 1)), "mask")
+
+
 def gaussian_smear(spike: np.ndarray, sigma: float) -> np.ndarray:
     """Smear a 0/1 spike train into a soft target with a Gaussian bump per event.
 
@@ -106,6 +117,20 @@ class BeatDataset(Dataset):
         epochs). If ``False``, always take a fixed window from the middle of
         the track — deterministic/reproducible for validation, and more
         representative than the start, which is often a sparse intro.
+    :param target_layout: Which phase target to build.
+
+        - ``"one_last"`` (default): the 4-channel target described above —
+          two independent binary detectors for positions ``1`` and
+          ``group_size``, with positions in between carrying no supervision
+          at all.
+        - ``"positions"``: a ``(2 + group_size, n_frames)`` target —
+          ``beat``, then one channel per bar position, then ``mask`` (see
+          :func:`position_target_channels`). The position block is normalized
+          to a per-frame probability distribution, so it pairs with a softmax
+          head and a cross-entropy loss rather than per-channel sigmoids.
+          Every position gets its own supervised channel, which makes
+          "is this a 1 or a 3?" a question the model is actually asked. See
+          docs/beat_phase_improvement_review.md section 3.
     """
 
     def __init__(
@@ -121,7 +146,13 @@ class BeatDataset(Dataset):
         group_size: int = 4,
         binary_only: bool = False,
         random_crop: bool = False,
+        target_layout: str = "one_last",
     ):
+        if target_layout not in ("one_last", "positions"):
+            raise ValueError(
+                f"Unknown target_layout {target_layout!r} — "
+                "expected 'one_last' or 'positions'"
+            )
         if refs is None:
             if name is None:
                 raise ValueError("Must provide either `name` or `refs`.")
@@ -136,6 +167,7 @@ class BeatDataset(Dataset):
         self.sigma_frames = sigma_frames
         self.group_size = group_size
         self.random_crop = random_crop
+        self.target_layout = target_layout
 
         self.samples = []
         self.refs = []
@@ -228,22 +260,36 @@ class BeatDataset(Dataset):
         # so frame indices computed below line up with the cropped audio.
         beat_times = beat_times - start_seconds
 
-        if has_positions:
-            positions = np.asarray(positions)
-            one_times = beat_times[positions == 1]
-            last_times = beat_times[positions == self.group_size]
-        else:
-            one_times = np.array([])
-            last_times = np.array([])
+        positions = np.asarray(positions) if has_positions else None
 
         beat = gaussian_smear(self._times_to_spike(beat_times), self.sigma_frames)
-        one = gaussian_smear(self._times_to_spike(one_times), self.sigma_frames)
-        last = gaussian_smear(self._times_to_spike(last_times), self.sigma_frames)
         mask = np.full(self.n_frames, 1.0 if has_positions else 0.0, dtype=np.float32)
 
-        target = torch.from_numpy(np.stack([beat, one, last, mask]))
+        def _smeared_at(position: int) -> np.ndarray:
+            times = beat_times[positions == position] if has_positions else np.array([])
+            return gaussian_smear(self._times_to_spike(times), self.sigma_frames)
 
-        return wav, target  # (1, T), (4, n_frames)
+        if self.target_layout == "one_last":
+            channels = [beat, _smeared_at(1), _smeared_at(self.group_size), mask]
+        else:
+            block = np.stack([_smeared_at(p) for p in range(1, self.group_size + 1)])
+
+            # Normalize the position block into a per-frame distribution, so it
+            # can be the target of a softmax + cross-entropy. Frames with no
+            # beat nearby carry no position information at all — they get a
+            # uniform row, and the loss masks them out by beat weight anyway.
+            total = block.sum(axis=0, keepdims=True)
+            block = np.divide(
+                block,
+                total,
+                out=np.full_like(block, 1.0 / self.group_size),
+                where=total > 1e-6,
+            )
+            channels = [beat, *block, mask]
+
+        target = torch.from_numpy(np.stack(channels).astype(np.float32))
+
+        return wav, target  # (1, T), (4 | 2 + group_size, n_frames)
 
 
 def beat_split_name(name: str, binary_only: bool = False) -> str:

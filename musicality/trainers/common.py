@@ -66,6 +66,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
         hop_length=cfg.hop_length,
         sigma_frames=cfg.sigma_frames,
         group_size=cfg.get("group_size", 4),
+        target_layout=cfg.get("target_layout", "one_last"),
         binary_only=binary_only,
     )
 

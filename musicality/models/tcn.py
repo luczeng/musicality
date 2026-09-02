@@ -156,10 +156,13 @@ class TCNTempoNet(nn.Module):
     :param use_self_attention: Frame-level mode only. If ``True``, splits the
         frame head in two: ``beat_head`` reads straight off the TCN trunk
         (unchanged, already accurate), while ``phase_head`` routes the
-        ``one``/``last`` channels through a positional encoding + a stack of
-        :class:`SelfAttentionBlock`, giving them context beyond the trunk's
-        fixed dilated-conv receptive field. Output channel order is always
-        ``(beat, one, last)``, matching :func:`musicality.losses.beat_phase_loss`.
+        remaining ``n_outputs - 1`` channels through a positional encoding +
+        a stack of :class:`SelfAttentionBlock`, giving them context beyond the
+        trunk's fixed dilated-conv receptive field. Output channel order is
+        always ``beat`` first, then the phase channels — ``(beat, one, last)``
+        for :func:`musicality.losses.beat_phase_loss`, or
+        ``(beat, pos_1, ..., pos_G)`` for
+        :func:`musicality.losses.beat_position_loss`.
         See docs/beat_phase_context_ideas.md.
     :param n_attn_layers: Number of stacked :class:`SelfAttentionBlock` in
         ``phase_head``. Only used when ``use_self_attention=True``.
@@ -222,7 +225,7 @@ class TCNTempoNet(nn.Module):
                         ),
                         "out": nn.Sequential(
                             nn.Dropout(dropout),
-                            nn.Conv1d(channels, 2, kernel_size=1),
+                            nn.Conv1d(channels, n_outputs - 1, kernel_size=1),
                         ),
                     }
                 )
@@ -267,13 +270,13 @@ class TCNTempoNet(nn.Module):
                     h = block(h)
                 h = h.transpose(1, 2)  # (B, T', channels) → (B, channels, T')
 
-                out_phase = self.phase_head["out"](h)  # (B, 2, T') — one, last
+                out_phase = self.phase_head["out"](h)  # (B, n_outputs - 1, T')
                 out_beat = self.beat_head(
                     x
                 )  # (B, 1, T') — reads straight off the trunk
                 return torch.cat(
                     (out_beat, out_phase), dim=1
-                )  # (B, 3, T') — beat, one, last
+                )  # (B, n_outputs, T') — beat first, then the phase channels
             out = self.frame_head(x)  # (B, n_outputs, T')
             return out.squeeze(1) if self.n_outputs == 1 else out
 

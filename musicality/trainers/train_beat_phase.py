@@ -56,6 +56,13 @@ def build_module(cfg: DictConfig) -> BeatPhaseModule:
         model=cfg.model,
         pos_weight=cfg.pos_weight,
         phase_conditioning=cfg.get("phase_conditioning", "mask"),
+        # Only set when the config asks for the softmax head, so a plain
+        # one/last run keeps the original three-channel parameterization.
+        group_size=(
+            cfg.get("group_size", 4)
+            if cfg.get("target_layout", "one_last") == "positions"
+            else None
+        ),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
         balanced=cfg.balanced,

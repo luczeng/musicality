@@ -156,8 +156,12 @@ def beat_phase_loss(
 
         .. note::
            ``pos_weight`` for the phase heads must be retuned alongside this —
-           the imbalance it compensates for largely disappears. ``18`` is
-           right for ``"mask"``; roughly ``3`` for ``"beat"``.
+           the imbalance it compensates for largely disappears. Measured
+           neg:pos mass on ballroom is ~20:1 under ``"mask"`` but ~4.7:1 under
+           ``"beat"`` (not 3:1 — the positive mass is a product of the smeared
+           beat weight and the smeared one/last target, so it decays faster
+           than the weight alone). ``configs/beat_train.yaml`` uses ``18`` and
+           ``4`` respectively.
     :returns: Scalar mean loss, shape ``()``.
     """
 
@@ -200,6 +204,91 @@ def beat_phase_loss(
     last_term = (last_loss * phase_w).sum() / n_weighted
 
     return beat_term + one_term + last_term
+
+
+def beat_position_loss(
+    logits: torch.Tensor,
+    target: torch.Tensor,
+    pos_weight: torch.Tensor | float = 5.0,
+    phase_conditioning: str = "beat",
+) -> torch.Tensor:
+    r"""Beat BCE plus a softmax cross-entropy over bar position.
+
+    The successor to :func:`beat_phase_loss`. That loss models bar position as
+    two *independent* binary detectors (``one`` and ``last``), which leaves the
+    positions in between with identical supervision — negative on both heads —
+    so the model is never asked the discriminative question the metric
+    measures, "is this beat a 1 or a 3?". Here every position gets its own
+    logit and they compete inside a single softmax, so raising the score for
+    position 1 necessarily lowers position 3.
+
+    ``beat`` stays an independent sigmoid: "is there a beat here?" is a
+    genuine binary question over time, not a pick-one-of-``G``, and folding it
+    into the softmax would couple a head that already works to one that
+    doesn't.
+
+    .. math::
+
+        \mathcal{L} = \underbrace{\frac{1}{BT} \sum_{i,t} \ell(\hat{b}_{i,t}, b_{i,t})}_{\text{beat}}
+        - \underbrace{\frac{\sum_{i,t} w_{i,t} \sum_{p} q_{i,t,p} \log \hat{q}_{i,t,p}}{\sum_{i,t} w_{i,t}}}_{\text{position}}
+
+    where :math:`\ell` is weighted binary cross-entropy, :math:`q` is the
+    target's normalized position block, :math:`\hat{q}` the softmax over the
+    model's position logits, and :math:`w` the per-frame phase weight (see
+    ``phase_conditioning``).
+
+    No ``pos_weight`` is needed on the position term: bar positions occur
+    equally often, so the softmax is already balanced. ``pos_weight`` here is
+    a scalar for the ``beat`` head alone.
+
+    :param logits: Raw per-frame model output, shape ``(B, 1 + G, T)`` — beat
+        first, then one logit per bar position (see
+        :class:`musicality.models.tcn.TCNTempoNet` with ``frame_level=True``
+        and ``n_outputs=1 + G``).
+    :param target: Ground-truth target, shape ``(B, 2 + G, T)`` — beat, the
+        normalized position block, then mask. Built by
+        :class:`~musicality.loaders.beat_dataset.BeatDataset` with
+        ``target_layout="positions"``.
+    :param pos_weight: Positive-class weight for the ``beat`` BCE term only.
+    :param phase_conditioning: ``"beat"`` (default) weights the position term
+        by ``mask * beat``, so it is optimized only where a beat actually is —
+        which is where :mod:`musicality.postprocess` reads it. ``"mask"``
+        weights by ``mask`` alone, supervising every frame. See
+        :func:`beat_phase_loss` for why the former matters.
+    :returns: Scalar mean loss, shape ``()``.
+    """
+
+    if phase_conditioning not in ("mask", "beat"):
+        raise ValueError(
+            f"Unknown phase_conditioning {phase_conditioning!r} — "
+            "expected 'mask' or 'beat'"
+        )
+
+    beat_logits, position_logits = logits[:, 0], logits[:, 1:]
+    beat_y, position_y, mask = target[:, 0], target[:, 1:-1], target[:, -1]
+
+    if position_logits.shape[1] != position_y.shape[1]:
+        raise ValueError(
+            f"logits carry {position_logits.shape[1]} position channels but the "
+            f"target carries {position_y.shape[1]} — logits should be "
+            "(B, 1 + G, T) against a (B, 2 + G, T) target"
+        )
+
+    pos_weight = torch.as_tensor(pos_weight, device=logits.device, dtype=logits.dtype)
+
+    beat_term = F.binary_cross_entropy_with_logits(
+        beat_logits, beat_y, pos_weight=pos_weight
+    )
+
+    # Soft-target cross-entropy over the position axis, per frame.
+    log_q = F.log_softmax(position_logits, dim=1)
+    position_ce = -(position_y * log_q).sum(dim=1)  # (B, T)
+
+    phase_w = mask * beat_y if phase_conditioning == "beat" else mask
+    n_weighted = phase_w.sum().clamp(min=1.0)
+    position_term = (position_ce * phase_w).sum() / n_weighted
+
+    return beat_term + position_term
 
 
 def classification_tempo_loss(

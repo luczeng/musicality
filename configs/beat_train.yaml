@@ -14,6 +14,20 @@ task: beat_phase
 # all" — which the beat head already does at 0.92 F. See
 # docs/beat_phase_improvement_review.md step 2.
 phase_conditioning: beat
+# How bar position is parameterised.
+#   one_last  — two independent sigmoids for positions 1 and group_size.
+#               Positions in between get identical supervision (negative on
+#               both), so the model is never asked "is this a 1 or a 3?".
+#   positions — one logit per bar position with a softmax over them, so the
+#               positions compete and 1-vs-3 becomes a single decision. Widens
+#               the head to 1 + group_size channels and switches the loss to
+#               beat_position_loss. See docs/beat_phase_improvement_review.md
+#               section 3.
+# LEFT AT one_last DELIBERATELY: `positions` and `phase_conditioning: beat`
+# are two separate changes, and enabling both in one run makes the result
+# unattributable. Retrain on `phase_conditioning: beat` first, measure, then
+# flip this.
+target_layout: one_last
 # Positive-class weight for the beat/one/last BCE heads — scalar (shared across
 # heads) or a 3-element list for per-head weights.
 # COUPLED TO phase_conditioning — change both together or neither.
