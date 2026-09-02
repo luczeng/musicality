@@ -16,11 +16,23 @@ task: beat_phase
 phase_conditioning: beat
 # Positive-class weight for the beat/one/last BCE heads — scalar (shared across
 # heads) or a 3-element list for per-head weights.
-# COUPLED TO phase_conditioning. Under `mask`, one/last positives are ~1 frame
-# in 23, hence the original [5, 18, 18]. Under `beat` the weighted frames are
-# beats, of which ~1 in 4 is a downbeat, so the imbalance is ~3:1 and the large
-# weights would badly over-correct. Change both together or neither.
-pos_weight: [5, 3, 3]
+# COUPLED TO phase_conditioning — change both together or neither.
+# Measured neg:pos mass on ballroom (binary_only, 150 tracks, 16s clips):
+#
+#   head   mask    beat
+#   one    20.2     4.7
+#   last   20.0     4.6
+#   beat    4.3     4.3   (unconditioned either way)
+#
+# Note 4.7, not the naive 3.0 you get from "1 beat in 4 is a downbeat": the
+# weight is the smeared beat channel and the target is the smeared one channel,
+# so the positive mass is a product of two Gaussians (sum ~2.66 per downbeat)
+# while the total weight is a single one (sum ~3.76 per beat). The positive
+# side loses relatively more mass than the weight does.
+# Values below follow the existing convention of shading ~10% under the
+# measured ratio — exact inverse-frequency weighting on a soft target tends to
+# overshoot into false positives.
+pos_weight: [5, 4, 4]
 lr: 5e-4  # learning rate
 weight_decay: 1e-4  # L2 regularisation
 # Balance the logged acc_beat/acc_one/acc_last metrics (average of true-positive
