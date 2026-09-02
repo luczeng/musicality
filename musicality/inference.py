@@ -123,6 +123,7 @@ def run_inference(
     group_size: int = 4,
     decoder: str = "greedy",
     switch_penalty: float | None = None,
+    advance: str = "index",
 ) -> list[dict] | np.ndarray:
     """Run *module* on one full-track waveform and decode it via the readout
     function matching *task*.
@@ -145,14 +146,34 @@ def run_inference(
     :raises ValueError: Unknown *task*.
     """
 
-    logits = module(wav.unsqueeze(0).to(device))  # (1, n_outputs[, T']) or (1, T')
-    probs = torch.sigmoid(logits)[0].cpu().numpy()
+    logits = module(wav.unsqueeze(0).to(device))[0]  # (n_outputs, T') or (T',)
+
+    # A softmax-head checkpoint (BeatPhaseModule with group_size set) emits
+    # `beat` plus a group_size-way distribution over bar positions; the older
+    # head emits three independent sigmoids. `group_size` in the checkpoint's
+    # hyperparameters is what tells them apart — see BeatPhaseModule.
+    module_group_size = getattr(module, "hparams", {}).get("group_size")
+    position_probs = one_probs = last_probs = None
+
+    if task == "beat_phase" and module_group_size is not None:
+        group_size = module_group_size
+        beat_probs = torch.sigmoid(logits[0]).cpu().numpy()
+        position_probs = torch.softmax(logits[1:], dim=0).cpu().numpy()
+        # Kept for callers and metrics that still speak one/last; the decoder
+        # itself reads position_probs.
+        one_probs, last_probs = position_probs[0], position_probs[-1]
+    else:
+        probs = torch.sigmoid(logits).cpu().numpy()
+        if probs.ndim == 1:
+            beat_probs = probs
+        else:
+            beat_probs, one_probs, last_probs = probs[0], probs[1], probs[2]
 
     if task == "beat_phase":
         return readout(
-            probs[0],
-            probs[1],
-            probs[2],
+            beat_probs,
+            one_probs,
+            last_probs,
             fps=fps,
             beat_threshold=beat_threshold,
             min_distance_frames=min_distance_frames,
@@ -161,11 +182,13 @@ def run_inference(
             group_size=group_size,
             decoder=decoder,
             switch_penalty=switch_penalty,
+            advance=advance,
+            position_probs=position_probs,
         )
 
     if task == "beat_only":
         return readout_beat_only(
-            probs,
+            beat_probs,
             fps=fps,
             beat_threshold=beat_threshold,
             min_distance_frames=min_distance_frames,

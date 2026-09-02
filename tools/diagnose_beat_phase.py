@@ -338,8 +338,9 @@ def parse_args() -> argparse.Namespace:
         default="index",
         help=(
             "How the global decoder advances bar position per beat: 'index' "
-            "(one position per detected beat), 'time' (derived from elapsed "
-            "time — step 1b), or 'both' to score them side by side."
+            "(one position per detected beat), 'time' (derived from the "
+            "elapsed time, so a missed or spurious detection does not shift "
+            "the grid), or 'both' to score them side by side."
         ),
     )
     parser.add_argument(
