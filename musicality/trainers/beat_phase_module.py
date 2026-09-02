@@ -67,6 +67,12 @@ class BeatPhaseModule(L.LightningModule):
         for the logged accuracy metrics. Defaults to ``True`` since beat/one/last
         frames are a small minority and a pooled mean is dominated by the
         true-negative rate.
+    :param check_val_every_n_epoch: How often the trainer actually runs
+        validation (``cfg.trainer.check_val_every_n_epoch``). The
+        ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
+        Lightning otherwise tries to step it (and read ``val/loss``) every
+        epoch regardless of how often validation runs, raising
+        ``MisconfigurationException`` on any epoch without a fresh value.
     :param group_size: Number of bar positions. ``None`` keeps the original
         one/last sigmoid head; an integer switches to a ``group_size``-way
         softmax over positions. Saved to the checkpoint's hyperparameters, so
