@@ -1,9 +1,11 @@
 """Training-pipeline plumbing shared across the tempo, beat-phase, and beat-only trainers."""
 
 import random
+from datetime import datetime
 from pathlib import Path
 
 import lightning as L
+from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader, Subset
@@ -123,6 +125,49 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
     )
 
     return train_loader, val_loader, n_train, n_val
+
+
+def build_checkpoint_callback(cfg: DictConfig, prefix: str) -> ModelCheckpoint:
+    """One directory per run, holding that run's ``save_top_k`` best checkpoints.
+
+    Two things this gets right that a bare :class:`ModelCheckpoint` does not:
+
+    **The metric name must not reach the filename.** Lightning's
+    ``auto_insert_metric_name`` splices the monitored key into the filename, and
+    the key here is ``val/loss`` — the slash is a path separator, so
+    ``"{epoch:02d}-{val/loss:.4f}"`` produced a *directory* per checkpoint
+    (``beat-phase-epoch=139-val/loss=1.9543.ckpt``). Pruning a checkpoint then
+    removed the file but left its directory behind, so a run accumulated one
+    empty directory per superseded epoch. ``auto_insert_metric_name=False``
+    substitutes the value only, keeping everything on one path segment.
+
+    **Runs must not share a directory.** ``checkpoint_dir`` is a fixed path in
+    the config, so consecutive runs wrote into the same place and their
+    checkpoints interleaved — ``save_top_k`` is per-run bookkeeping and cannot
+    prune another run's files. Each run gets its own subdirectory instead.
+
+    :param cfg: Needs ``checkpoint_dir``, ``trainer.save_top_k`` (optional,
+        defaults to 3) and ``wandb.run_name`` (optional).
+    :param prefix: Filename stem for this task, e.g. ``"beat-phase"``.
+    """
+
+    # Prefer the W&B run name so the checkpoint directory matches the run in
+    # the dashboard. It is usually null (W&B generates one only once the logger
+    # connects, which is after callbacks are built), so fall back to a
+    # timestamp — which also works offline.
+    run_name = cfg.get("wandb", {}).get("run_name") or datetime.now().strftime(
+        "%Y%m%d-%H%M%S"
+    )
+
+    return ModelCheckpoint(
+        dirpath=Path(cfg.checkpoint_dir) / run_name,
+        monitor="val/loss",
+        mode="min",
+        save_top_k=cfg.trainer.get("save_top_k", 3),
+        filename=f"{prefix}-epoch{{epoch:02d}}-valloss{{val/loss:.4f}}",
+        auto_insert_metric_name=False,
+        save_weights_only=True,
+    )
 
 
 def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:

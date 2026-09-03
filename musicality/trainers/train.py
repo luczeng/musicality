@@ -7,7 +7,7 @@ import lightning as L
 
 # Suppress Lightning's promotional tip about LitLogger (INFO-level noise)
 logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.callbacks import EarlyStopping
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader, Subset
 
@@ -16,7 +16,11 @@ from musicality.augmentations import AugmentedDataset, build_augmenter
 from musicality.callbacks.error_plot import ErrorVsTempoPlot
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.loaders.tempo_dataset import TempoDataset
-from musicality.trainers.common import build_trainer, resolve_split_refs
+from musicality.trainers.common import (
+    build_checkpoint_callback,
+    build_trainer,
+    resolve_split_refs,
+)
 from musicality.trainers.tempo_module import TempoModule
 
 
@@ -108,14 +112,7 @@ def build_module(cfg: DictConfig) -> TempoModule:
 def build_callbacks(cfg: DictConfig) -> list:
 
     return [
-        ModelCheckpoint(
-            dirpath=cfg.checkpoint_dir,
-            monitor="val/loss",
-            mode="min",
-            save_top_k=3,
-            filename="tempo-{epoch:02d}-{val/loss:.4f}",
-            save_weights_only=True,
-        ),
+        build_checkpoint_callback(cfg, "tempo"),
         # EarlyStopping(monitor="val/loss", patience=10, mode="min"),
         BestMetricsPrinter(),
         ErrorVsTempoPlot(),

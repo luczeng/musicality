@@ -1,12 +1,17 @@
 """Tests for musicality.trainers.common's shared plumbing."""
 
+from pathlib import Path
+
 import pytest
 from omegaconf import OmegaConf
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import TrackRef
 from musicality.splits.splitter import Splitter
-from musicality.trainers.common import resolve_split_refs
+from musicality.trainers.common import (
+    build_checkpoint_callback,
+    resolve_split_refs,
+)
 
 
 def _refs(*pairs):
@@ -73,3 +78,80 @@ class TestResolveSplitRefs:
 
         with pytest.raises(FileNotFoundError):
             resolve_split_refs(cfg, tmp_path / "splits", "ballroom")
+
+
+def _cfg(**overrides):
+    base = {
+        "checkpoint_dir": "ckpts/",
+        "trainer": {},
+        "wandb": {"run_name": None},
+    }
+    base.update(overrides)
+    return OmegaConf.create(base)
+
+
+class TestBuildCheckpointCallback:
+    """Checkpoint filenames must stay on one path segment, and each run needs
+    its own directory."""
+
+    @staticmethod
+    def _name(callback, epoch=139, loss=1.9543):
+        return callback.format_checkpoint_name({"epoch": epoch, "val/loss": loss})
+
+    def test_filename_has_no_path_separator(self):
+        """The regression this guards: `val/loss` spliced into the filename
+        made the slash a directory separator, so every checkpoint landed in
+        its own folder and pruning left the folder behind."""
+
+        callback = build_checkpoint_callback(_cfg(), "beat-phase")
+
+        rendered = Path(self._name(callback))
+
+        assert rendered.name == "beat-phase-epoch139-valloss1.9543.ckpt"
+        # The whole point: the checkpoint sits directly in the run directory,
+        # with no extra segment carved out of the metric name. `val/loss` is
+        # still in the *template* as a placeholder — that is fine and needed;
+        # what must not survive is the slash in the rendered path.
+        assert rendered.parent == Path(callback.dirpath)
+        assert callback.auto_insert_metric_name is False
+
+    def test_epoch_and_loss_are_both_in_the_name(self):
+        callback = build_checkpoint_callback(_cfg(), "tempo")
+
+        stem = Path(self._name(callback, epoch=7, loss=0.5)).name
+        assert stem.startswith("tempo-")
+        assert "epoch07" in stem and "0.5000" in stem
+
+    def test_each_run_gets_its_own_directory(self):
+        callback = build_checkpoint_callback(
+            _cfg(wandb={"run_name": "sweep-lr-3e4"}), "beat-phase"
+        )
+
+        assert Path(callback.dirpath).name == "sweep-lr-3e4"
+        assert Path(callback.dirpath).parent.name == "ckpts"
+
+    def test_falls_back_to_a_timestamp_when_the_run_is_unnamed(self):
+        callback = build_checkpoint_callback(_cfg(), "beat-phase")
+
+        run_dir = Path(callback.dirpath).name
+        assert run_dir != "ckpts"
+        assert len(run_dir) == 15 and run_dir[8] == "-"  # YYYYmmdd-HHMMSS
+
+    def test_keeps_three_checkpoints_by_default(self):
+        assert build_checkpoint_callback(_cfg(), "tempo").save_top_k == 3
+
+    def test_save_top_k_is_configurable(self):
+        callback = build_checkpoint_callback(_cfg(trainer={"save_top_k": 1}), "tempo")
+
+        assert callback.save_top_k == 1
+
+    def test_monitors_val_loss_and_keeps_the_lowest(self):
+        callback = build_checkpoint_callback(_cfg(), "tempo")
+
+        assert callback.monitor == "val/loss"
+        assert callback.mode == "min"
+
+    def test_works_without_a_wandb_section(self):
+        cfg = OmegaConf.create({"checkpoint_dir": "ckpts/", "trainer": {}})
+
+        assert build_checkpoint_callback(cfg, "tempo").save_top_k == 3
