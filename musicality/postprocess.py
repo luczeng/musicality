@@ -318,6 +318,7 @@ def label_bar_position_global(
     group_size: int = 4,
     switch_penalty: float | None = None,
     advance: str = "index",
+    position_probs: np.ndarray | None = None,
     eps: float = 1e-6,
 ) -> list[int]:
     r"""Assign each gated beat time a group position (1-``group_size``) by a
@@ -388,6 +389,13 @@ def label_bar_position_global(
     :param switch_penalty: Log-likelihood cost of deviating from the expected
         advance at one beat. ``None`` (default) forbids it entirely, reducing
         the decode to the exact single-offset argmax.
+    :param position_probs: Optional ``(group_size, T)`` per-frame distribution
+        over bar positions, from a softmax-head checkpoint (see
+        :func:`musicality.losses.beat_position_loss`). When given it replaces
+        the emission model built from ``one_probs``/``last_probs`` below — the
+        model supplies the full ``group_size``-way distribution directly, so
+        there is nothing to infer and positions 2..G-1 stop being
+        indistinguishable. ``one_probs``/``last_probs`` are ignored.
     :param advance: How many positions each beat moves the count on.
         ``"index"`` (default) moves exactly one position per detected beat.
         ``"time"`` derives it from the elapsed time via
@@ -418,10 +426,23 @@ def label_bar_position_global(
     log_one, log_not_one = np.log(p_one), np.log1p(-p_one)
     log_last, log_not_last = np.log(p_last), np.log1p(-p_last)
 
-    # (n_beats, group_size) — log-likelihood of each beat at each position.
-    ll = np.tile((log_not_one + log_not_last)[:, None], (1, group_size))
-    ll[:, 0] = log_one + log_not_last
-    ll[:, group_size - 1] = log_last + log_not_one
+    if position_probs is not None:
+        # The model already emits a distribution over positions — read it
+        # straight off, no independence assumption to make.
+        position_probs = np.asarray(position_probs)
+        if position_probs.shape[0] != group_size:
+            raise ValueError(
+                f"position_probs has {position_probs.shape[0]} rows but "
+                f"group_size is {group_size}"
+            )
+        ll = np.log(np.clip(position_probs[:, frames].T, eps, 1.0))
+    else:
+        # (n_beats, group_size) — log-likelihood of each beat at each position.
+        # Positions strictly between 1 and group_size are indistinguishable
+        # here: two independent sigmoids cannot express them.
+        ll = np.tile((log_not_one + log_not_last)[:, None], (1, group_size))
+        ll[:, 0] = log_one + log_not_last
+        ll[:, group_size - 1] = log_last + log_not_one
 
     # advances[i] = how many positions to move from beat i to beat i + 1.
     # "index" moves exactly one per detected beat (so a missed detection
@@ -491,6 +512,7 @@ def readout(
     decoder: str = "greedy",
     switch_penalty: float | None = None,
     advance: str = "index",
+    position_probs: np.ndarray | None = None,
 ) -> list[dict]:
     """End-to-end: per-frame probability curves -> a labeled beat list.
 
@@ -519,6 +541,8 @@ def readout(
         used when ``decoder="global"``.
     :param advance: Passed to :func:`label_bar_position_global`. Only used when
         ``decoder="global"``.
+    :param position_probs: Passed to :func:`label_bar_position_global`. Only
+        used when ``decoder="global"``.
     :returns: One dict per detected beat, sorted by time:
         ``{"time": float, "beat_in_bar": int | None}``.
     """
@@ -548,6 +572,7 @@ def readout(
             group_size=group_size,
             switch_penalty=switch_penalty,
             advance=advance,
+            position_probs=position_probs,
         )
     else:
         raise ValueError(f"Unknown decoder {decoder!r} — expected 'greedy' or 'global'")

@@ -80,6 +80,7 @@ Supports absolute, relative, and classification loss modes. Classification loss 
 
 - `f_measure.py` — `beat_f_measure`, `downbeat_f_measures`: event-level F-measure against `mir_eval`, overall and per bar/phrase position.
 - `confusion.py` — `confusion_half_cycle_rate`: rate of half-cycle ("1" vs. opposite position) phase-parity errors.
+- `phase_offset.py` — `phase_offset_profile`: per-track dominant phase offset and within-track phase stability. Distinguishes a whole-track offset (the model can't hear downbeats) from a mid-track flip (the decoder is losing information); also sees off-by-one errors, which `confusion.py` is blind to.
 - `frame_accuracy.py` — `frame_accuracy`: cheap per-epoch frame-level accuracy used as a training-time signal.
 - `tempo_acc1.py` — `tempo_acc1`: MIREX Accuracy 1, octave-tolerant tempo accuracy.
 
@@ -104,6 +105,7 @@ Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits
 - `plot_tempo_histograms.py` — Plots BPM distributions across datasets.
 - `summarize_datasets.py` — Prints summary statistics for all datasets.
 - `train.py` — Hydra entry point for training.
+- `diagnose_beat_phase.py` — Diagnoses whether a beat-phase checkpoint's bar-position errors come from the model or the decoder: scores every decoder variant against one cached set of frame probabilities, prints a phase-offset profile, and produces the tuned `decoder`/`switch_penalty` in `configs/eval_beat.yaml`.
 
 ## Configuration
 

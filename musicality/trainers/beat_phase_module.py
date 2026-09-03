@@ -5,7 +5,7 @@ import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.losses import beat_phase_loss
+from musicality.losses import beat_phase_loss, beat_position_loss
 from musicality.metrics.frame_accuracy import frame_accuracy
 
 
@@ -32,9 +32,23 @@ def align_time(
 class BeatPhaseModule(L.LightningModule):
     """LightningModule wrapping a frame-level beat-phase model (beat/one/last).
 
-    The backbone is instantiated with ``frame_level=True`` and ``n_outputs=3``
-    regardless of what the config says, mirroring how :class:`~musicality.trainers.tempo_module.TempoModule`
-    overrides ``n_outputs`` for classification mode.
+    Two output parameterizations, selected by ``group_size``:
+
+    - ``group_size=None`` (default): the original three-channel head —
+      ``beat``/``one``/``last`` as independent sigmoids, trained with
+      :func:`~musicality.losses.beat_phase_loss`. Pairs with
+      :class:`~musicality.loaders.beat_dataset.BeatDataset`'s
+      ``target_layout="one_last"``.
+    - ``group_size=G``: ``1 + G`` channels — ``beat`` as a sigmoid, then a
+      softmax over the ``G`` bar positions, trained with
+      :func:`~musicality.losses.beat_position_loss`. Pairs with
+      ``target_layout="positions"``. Positions 2..G-1 gain their own
+      supervised logits, so "is this a 1 or a 3?" becomes a question the model
+      is actually asked — see docs/beat_phase_improvement_review.md section 3.
+
+    Either way ``n_outputs`` is forced regardless of what the config says,
+    mirroring how :class:`~musicality.trainers.tempo_module.TempoModule`
+    overrides it for classification mode.
 
     :param model: DictConfig for instantiating the backbone (e.g. ``TCNTempoNet``).
     :param pos_weight: Positive-class weight passed to :func:`~musicality.losses.beat_phase_loss`.
@@ -59,6 +73,17 @@ class BeatPhaseModule(L.LightningModule):
         Lightning otherwise tries to step it (and read ``val/loss``) every
         epoch regardless of how often validation runs, raising
         ``MisconfigurationException`` on any epoch without a fresh value.
+    :param group_size: Number of bar positions. ``None`` keeps the original
+        one/last sigmoid head; an integer switches to a ``group_size``-way
+        softmax over positions. Saved to the checkpoint's hyperparameters, so
+        :func:`~musicality.inference.load_module` reconstructs the right head
+        and downstream code can tell the two apart.
+    :param check_val_every_n_epoch: How often the trainer actually runs
+        validation (``cfg.trainer.check_val_every_n_epoch``). The
+        ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
+        Lightning otherwise tries to step it (and read ``val/loss``) every
+        epoch regardless of how often validation runs, raising
+        ``MisconfigurationException`` on any epoch without a fresh value.
     :param task: Saved into the checkpoint's hyperparameters for
         :func:`~musicality.inference.detect_task` to read back at eval/inference
         time. Always ``"beat_phase"`` for this class; exists as a parameter
@@ -71,6 +96,7 @@ class BeatPhaseModule(L.LightningModule):
         model: DictConfig,
         pos_weight: float | list[float] = 8.0,
         phase_conditioning: str = "mask",
+        group_size: int | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
@@ -83,19 +109,68 @@ class BeatPhaseModule(L.LightningModule):
 
         model_cfg = OmegaConf.to_container(model, resolve=True)
         model_cfg.pop("arch", None)
+        if group_size is not None and group_size < 2:
+            raise ValueError(f"group_size must be >= 2 or None, got {group_size}")
+
         model_cfg["frame_level"] = True
-        model_cfg["n_outputs"] = 3
+        model_cfg["n_outputs"] = 3 if group_size is None else 1 + group_size
 
         self.model = instantiate(model_cfg)
 
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
         return self.model(wav)
 
+    def _position_step(self, logits, target, stage: str):
+        """Loss + logged metrics for the ``group_size``-way softmax head."""
+
+        loss = beat_position_loss(
+            logits,
+            target,
+            pos_weight=self.hparams.pos_weight,
+            phase_conditioning=self.hparams.phase_conditioning,
+        )
+
+        beat_p = torch.sigmoid(logits[:, 0])
+        beat_y, position_y, mask = target[:, 0], target[:, 1:-1], target[:, -1]
+
+        log_kw = dict(on_step=False, on_epoch=True)
+        self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
+        self.log(
+            f"{stage}/acc_beat",
+            frame_accuracy(
+                beat_p,
+                beat_y,
+                threshold=self.hparams.threshold,
+                balanced=self.hparams.balanced,
+            ),
+            **log_kw,
+        )
+
+        # Position accuracy at the frames the decoder actually reads: argmax
+        # over the softmax against argmax of the target, weighted by how much
+        # beat there is. Unlike the one/last frame accuracies this replaces,
+        # a model that never fires cannot score well on it — it has to pick a
+        # position, and picking the wrong one is a miss.
+        correct = (logits[:, 1:].argmax(dim=1) == position_y.argmax(dim=1)).to(
+            logits.dtype
+        )
+        weight = mask * beat_y
+        self.log(
+            f"{stage}/acc_position",
+            (correct * weight).sum() / weight.sum().clamp(min=1.0),
+            **log_kw,
+        )
+
+        return loss, torch.softmax(logits[:, 1:], dim=1)
+
     def _step(self, batch, stage: str):
 
         wav, target = batch
         logits = self(wav)
         logits, target = align_time(logits, target)
+
+        if self.hparams.group_size is not None:
+            return self._position_step(logits, target, stage)
 
         loss = beat_phase_loss(
             logits,
