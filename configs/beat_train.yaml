@@ -42,7 +42,10 @@ group_size: 4
 # `--binary-only` on tools/create_splits.py), since it changes dataset length.
 binary_only: true
 train_subsample: null  # fraction of the training split to use (e.g. 0.2), for quick smoke runs
-checkpoint_dir: checkpoints_beat/  # where to save model checkpoints
+# Parent directory for checkpoints. Each run writes into its own
+# subdirectory below this (named after wandb.run_name, or a timestamp when
+# that is null), holding that run's trainer.save_top_k best checkpoints.
+checkpoint_dir: checkpoints_beat/
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto

@@ -27,6 +27,7 @@ sigma_frames: 1.5
 # dataset length.
 binary_only: false
 train_subsample: null
+# Parent directory for checkpoints — one subdirectory per run below it.
 checkpoint_dir: checkpoints_beat_only/
 trainer:
   max_epochs: 100

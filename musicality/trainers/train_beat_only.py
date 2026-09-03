@@ -6,12 +6,15 @@ import lightning as L
 
 # Suppress Lightning's promotional tip about LitLogger (INFO-level noise)
 logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
-from lightning.pytorch.callbacks import ModelCheckpoint
 from omegaconf import DictConfig
 
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.trainers.beat_module import BeatModule
-from musicality.trainers.common import build_beat_dataloaders, build_trainer
+from musicality.trainers.common import (
+    build_beat_dataloaders,
+    build_checkpoint_callback,
+    build_trainer,
+)
 
 
 _TRACKED_KEYS = (
@@ -59,13 +62,6 @@ def build_module(cfg: DictConfig) -> BeatModule:
 def build_callbacks(cfg: DictConfig) -> list:
 
     return [
-        ModelCheckpoint(
-            dirpath=cfg.checkpoint_dir,
-            monitor="val/loss",
-            mode="min",
-            save_top_k=3,
-            filename="beat-only-{epoch:02d}-{val/loss:.4f}",
-            save_weights_only=True,
-        ),
+        build_checkpoint_callback(cfg, "beat-only"),
         BestMetricsPrinter(keys=_TRACKED_KEYS),
     ]

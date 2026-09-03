@@ -13,7 +13,8 @@ batch_size: 32
 n_mels: 128
 hop_length: 512
 train_subsample: null  # fraction of the training split to use (e.g. 0.2), for quick smoke runs
-checkpoint_dir: checkpoints/  # where to save model checkpoints
+# Parent directory for checkpoints — one subdirectory per run below it.
+checkpoint_dir: checkpoints/
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto
