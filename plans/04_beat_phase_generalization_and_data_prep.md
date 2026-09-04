@@ -403,7 +403,29 @@ the step-2 / step-3 sequence.
 <details>
 <summary><b>#0 — Per-genre metric — <b>evaluation side SHIPPED 2026-09-04</b></summary>
 
-**Shipped (evaluation only):**
+### High level
+
+Evaluating on a mixed collection produced one blended score, and that score was
+silently weighted by how many tracks each genre happened to contribute. Ballroom
+and jazz together cast 80% of the vote; classical cast 2.8%. A model could be
+completely unable to find downbeats in classical music and the headline number
+would barely move.
+
+The diagnostic now reports every genre separately, alongside two summaries: the
+per-track average (what we had) and the per-genre average, which counts each
+genre once regardless of size. It also names the worst genre outright, since for
+a tool meant to work everywhere that is the number that actually gates release.
+
+The immediate payoff was two facts the blended number had been hiding: classical
+downbeat detection is essentially nonexistent, and the model trained on the mixed
+collection is *worse across genres* than the ballroom-only model, winning only on
+the jazz that dominates its training data.
+
+Training was deliberately left untouched. This changes what we can *see*, not
+what the model optimises for — those are separate decisions, and mixing them is
+what makes results unattributable later.
+
+### Technical
 
 - `BeatEvaluator.track_corpora()` — source corpus per track, positionally
   aligned with `compute_track_probs()`. *(The related change that lets it build
@@ -418,6 +440,9 @@ the step-2 / step-3 sequence.
   same number by construction — pinned by a test.
 - `tests/test_per_genre_eval.py` (17 cases), including a regression pin that
   reproduces the measured merge table below from its raw per-corpus values.
+- In `score_decoder`, `corpora` is zipped against `cached` **before** the
+  `has_positions` filter. Below it, unannotated tracks shift every later row's
+  label and scores land under the wrong genre with no error.
 
 **Deliberately NOT shipped — the training side.** Nothing under
 `musicality/trainers/` changed: no per-corpus val dataloaders, no new
