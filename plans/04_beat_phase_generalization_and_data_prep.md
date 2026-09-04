@@ -37,7 +37,7 @@ structural blocker (§2.7). Recommendations below reflect the new goal.
 | Self-calibrating `pos_weight` | **Required** | No single scalar serves 56–193 BPM |
 | Per-item loss normalization | **Required** | Micro-average over beats favours fast genres; metric is macro over tracks |
 | Corpus-temperature sampling | **Recommended, α≈0.5** | Track-count gives jazz 65.5% |
-| Variable meter support | **Gating for classical** | Structural; nothing else fixes it |
+| Variable meter support | **Gating for classical — deferred 2026-09-04** | Structural; nothing else fixes it. Kept for later; its §2.6b sub-bug was split out and fixed |
 | Model capacity | **Re-opened** | Ruled out at train confusion 0.007; now 0.176–0.221 |
 | Richer mel front-end | **Still no** | Fit-improving; not the binding constraint |
 | Global duration-proportional sampling | **Rejected** | Would cut ballroom 24%→6% and barely move jtd |
@@ -308,6 +308,11 @@ the loss "masks them out by beat weight anyway" — true for non-beat frames,
 full weight against a uniform target, actively teaching "all positions equally
 likely."
 
+**FIXED 2026-09-04 — see #4b below.** Confirmed by direct reproduction: on an
+8-beat annotation, beats 1–4 got a confident one-hot and beats 5–8 got a flat
+0.25 in every channel. Positions are now folded onto `1..group_size` at load
+time; meters that cannot fold have their position supervision masked off.
+
 **(c) Sampling is duration-blind.** `__len__` is the track count and
 `__getitem__` returns one random 16 s crop, so an epoch is one crop per track
 regardless of length. With a 16 s window on a 30 s track the offset ranges over
@@ -390,7 +395,7 @@ does not manufacture data.
 | 1 | Get the converged merge checkpoint and re-measure | free | §2.4, §2.5 |
 | 2 | Self-calibrating `pos_weight` + per-item loss normalization | small | — |
 | 3 | Corpus-temperature sampling (α≈0.5), duration weighting *within* corpus | small | — |
-| 4 | **Variable meter support** (drop `binary_only`, max-G head, decode over G) | medium-large | classical/jazz generality |
+| 4 | ~~**Variable meter support**~~ (drop `binary_only`, max-G head, decode over G) — **deferred, kept for later**; the §2.6b fallback half shipped separately, see below | medium-large | classical/jazz generality |
 | 5 | Model capacity | medium | after 1–3 |
 | 6 | Period-proportional σ for the position block | medium | target-layout change |
 | 7 | Regularization batch (SSA dropout, noise aug, pitch shift) | small | — |
@@ -585,7 +590,15 @@ coverage measured 97.5–99.7% on every corpus, so `beat_times[-1]` is a
 </details>
 
 <details>
-<summary><b>#4 — Variable meter (the gating item for classical)</b></summary>
+<summary><b>#4 — Variable meter (the gating item for classical) — DEFERRED 2026-09-04</b></summary>
+
+**Status: kept for later.** Still the only item that unblocks triple meter, and
+still structural — no amount of sampling, calibration or capacity reaches it.
+Deferred on cost: it reshapes what the model predicts, so it needs its own run
+and invalidates comparison with every checkpoint measured so far.
+
+The one piece that did not need to wait — the uniform-target fallback of §2.6b
+— was split out and shipped on its own; see #4b.
 
 Cleanest incremental path: widen the position head to a fixed **max-G softmax**
 (8 or 12), train with the target restricted to each track's true G, and at
@@ -600,6 +613,78 @@ falling into the uniform-target fallback.
 
 Reshapes the target layout the same way the `one_last` → `positions` migration
 did, so it needs equivalent care.
+
+</details>
+
+<details>
+<summary><b>#4b — Longer bars fold onto the group — <b>SHIPPED 2026-09-04</b></summary>
+
+### High level
+
+Annotators count bar positions across whatever they considered one bar, and
+that is not always the four beats the model predicts over. A track counted in
+eights is just two bars of four — but the model had no channel for a "beat 5",
+so those beats fell through into a fallback that told it every bar position was
+equally likely. That is worse than no supervision: these are real, correctly
+annotated beats, and the model was being actively taught to be uncertain on
+them.
+
+Longer bars are now folded down, so a track counted in eights trains as two
+bars of four and every beat carries a confident target.
+
+Bars that cannot fold evenly — six beats against a four-beat model — have no
+correct folding at all, so those tracks keep their beats and simply stop
+teaching bar position. Saying nothing is strictly better than saying something
+false, and it is what already happens for tracks with no position annotation.
+
+This is a correctness fix inside the current fixed-length-bar design, not the
+variable-meter feature. Triple meter is still discarded, and #4 is still what
+unblocks it.
+
+### Technical
+
+- `fold_positions(positions, group_size)` in
+  `musicality/loaders/beat_dataset.py` maps a cycle onto `1..group_size` via
+  `((p - 1) % group_size) + 1`, returning `None` when the cycle is not a
+  multiple of `group_size`. Cycles at or below `group_size` are returned
+  untouched — a 2-beat bar already lands in real channels and describes a
+  valid, if shorter, period.
+- Applied once in `BeatDataset.__init__`, not per access. That is what keeps
+  the training target and the evaluation reference consistent for free:
+  `evaluation.py:270` and `:343` read ground-truth positions straight out of
+  `dataset.samples`, so both sides fold identically.
+- Unfoldable meters set `has_positions=False`, reusing the existing
+  "no position annotation" path end to end — `mask` goes to 0, the position
+  term drops out of the loss, and `evaluate_track` skips the downbeat metrics.
+  Counted and printed separately from genuinely unannotated tracks.
+- 13 tests in `tests/test_beat_dataset.py`
+  (`TestFoldPositions`, `TestLongerBarsInTheDataset`). The load-bearing one is
+  `test_downbeat_spacing_stays_uniform`: every folded "1" must sit exactly
+  `group_size` beats after the previous one, which is the property a
+  non-multiple cycle cannot satisfy and therefore why it is refused rather than
+  folded. `test_plain_four_beat_track_is_untouched` pins the common case.
+
+**Measured on `beat_phase-merge-binary`:**
+
+| | train (1738) | val (249) |
+|---|---|---|
+| unchanged (cycle ≤ 4) | 1725 | 247 |
+| **folded** | 3 (`rwc_classical` 2, `rwc_popular` 1) — **216 beats** recovered from the fallback | 0 |
+| **masked** (unfoldable) | 10 (`rwc_classical` 4, `rwc_genre` 3, `rwc_popular` 2, `rwc_jazz` 1) | 2 (`rwc_classical` 1, `rwc_popular` 1) |
+
+Direct before/after on an 8-beat annotation: beats 1–4 scored a confident 1.0
+in both, beats 5–8 went from a flat **0.25 in every channel** to 1.0.
+
+**Comparability caveat.** The 2 masked val tracks drop out of the downbeat
+metrics entirely, so `rwc_classical` is now scored on 6 tracks rather than 7.
+On a corpus that small that is a ~14% denominator change — per-genre numbers
+are not exactly comparable to the §0 baseline table. Those tracks were scoring
+near-garbage anyway (a 6-beat reference cycle against a 4-beat prediction can
+never align), so this removes noise rather than hiding a loss, but the
+denominator did move.
+
+Note this is itself a target-distribution change, and so joins #2/#4/#6 on the
+list of things that confound each other inside a single run.
 
 </details>
 

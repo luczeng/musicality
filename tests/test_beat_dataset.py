@@ -451,3 +451,167 @@ class TestCropWindow:
         # 5 s of beats spaced 0.5 s apart: every window sees ~10 of them.
         for t in targets:
             assert t[BEAT].max().item() == pytest.approx(1.0)
+
+
+def _frame(t):
+    """Frame index for an annotation time — mirrors BeatDataset._times_to_spike."""
+
+    return int(round(t * SAMPLE_RATE / HOP_LENGTH))
+
+
+class TestFoldPositions:
+    """Annotations count across whatever the annotator called a bar. When that
+    is longer than the head's group_size, the positions have to fold onto
+    1..group_size or they match no channel at all."""
+
+    def test_eight_beat_bar_folds_onto_four(self):
+        from musicality.loaders.beat_dataset import fold_positions
+
+        folded = fold_positions(np.array([1, 2, 3, 4, 5, 6, 7, 8]), group_size=4)
+
+        assert list(folded) == [1, 2, 3, 4, 1, 2, 3, 4]
+
+    def test_twelve_beat_bar_folds_as_three_bars_of_four(self):
+        from musicality.loaders.beat_dataset import fold_positions
+
+        folded = fold_positions(np.arange(1, 13), group_size=4)
+
+        assert list(folded) == [1, 2, 3, 4] * 3
+
+    def test_downbeat_spacing_stays_uniform(self):
+        """The property that makes mod-folding correct: every folded "1" sits
+        exactly group_size beats after the previous one. This is what a
+        non-multiple cycle cannot give, and why it is rejected instead."""
+        from musicality.loaders.beat_dataset import fold_positions
+
+        folded = fold_positions(np.arange(1, 25), group_size=4)
+
+        ones = np.flatnonzero(folded == 1)
+        assert list(np.diff(ones)) == [4] * (len(ones) - 1)
+
+    def test_matching_cycle_is_unchanged(self):
+        from musicality.loaders.beat_dataset import fold_positions
+
+        positions = np.array([1, 2, 3, 4, 1, 2, 3, 4])
+
+        assert list(fold_positions(positions, group_size=4)) == list(positions)
+
+    def test_shorter_cycle_is_left_alone(self):
+        """A 2-beat bar against a 4-way head already lands in real channels —
+        it describes a valid, if shorter, period and needs no folding."""
+        from musicality.loaders.beat_dataset import fold_positions
+
+        folded = fold_positions(np.array([1, 2, 1, 2]), group_size=4)
+
+        assert list(folded) == [1, 2, 1, 2]
+
+    def test_folding_is_idempotent(self):
+        from musicality.loaders.beat_dataset import fold_positions
+
+        once = fold_positions(np.arange(1, 9), group_size=4)
+        twice = fold_positions(once, group_size=4)
+
+        assert list(once) == list(twice)
+
+    def test_non_multiple_cycle_is_rejected(self):
+        """6 against 4 would give 1,2,3,4,1,2 — the downbeat 4 beats after one
+        bar and 2 after the next. No consistent fold exists, so it must be
+        refused rather than folded wrongly."""
+        from musicality.loaders.beat_dataset import fold_positions
+
+        assert fold_positions(np.array([1, 2, 3, 4, 5, 6]), group_size=4) is None
+
+    def test_phrase_head_keeps_an_eight_beat_phrase_intact(self):
+        from musicality.loaders.beat_dataset import fold_positions
+
+        folded = fold_positions(np.arange(1, 9), group_size=8)
+
+        assert list(folded) == list(range(1, 9))
+
+
+class TestLongerBarsInTheDataset:
+    """End-to-end: an 8-beat annotation must supervise all four position
+    channels instead of falling into the uniform-target fallback."""
+
+    BEATS = [0.5 * (i + 1) for i in range(8)]
+
+    def _dataset(self, tmp_path, positions, layout="positions", group_size=4):
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        dataset_dir = tmp_path / "rwc_classical"
+        _write_track(dataset_dir, "t1", beat_times=self.BEATS, positions=positions)
+
+        return BeatDataset(
+            name="rwc_classical",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+            group_size=group_size,
+            target_layout=layout,
+        )
+
+    def test_beats_past_four_get_a_confident_target(self, tmp_path):
+        """The bug this fixes. Beats 5-8 matched no channel, so the position
+        block summed to ~0 there, hit the uniform fallback, and taught "every
+        position is equally likely" at full beat weight on real, well
+        annotated beats."""
+        ds = self._dataset(tmp_path, positions=list(range(1, 9)))
+
+        _, target = ds[0]
+        block = target[1:-1]
+
+        for t in self.BEATS:
+            column = block[:, _frame(t)]
+            assert column.max().item() == pytest.approx(1.0)
+            # 1/group_size in every channel is the fallback's signature.
+            assert column.min().item() == pytest.approx(0.0)
+
+    def test_folded_positions_are_the_ground_truth_for_eval_too(self, tmp_path):
+        """evaluation.py reads reference positions straight out of
+        dataset.samples, so folding at load time is what keeps the training
+        target and the scoring reference talking about the same thing."""
+        ds = self._dataset(tmp_path, positions=list(range(1, 9)))
+
+        _path, _times, positions, has_positions = ds.samples[0]
+
+        assert has_positions
+        assert list(positions) == [1, 2, 3, 4, 1, 2, 3, 4]
+
+    def test_one_channel_fires_on_both_downbeats(self, tmp_path):
+        """Under one_last, beat 5 of an 8-beat annotation is the downbeat of
+        the second bar and must light the `one` channel."""
+        ds = self._dataset(tmp_path, positions=list(range(1, 9)), layout="one_last")
+
+        _, target = ds[0]
+
+        assert target[ONE, _frame(0.5)].item() == pytest.approx(1.0)
+        assert target[ONE, _frame(2.5)].item() == pytest.approx(1.0)
+        assert target[LAST, _frame(2.0)].item() == pytest.approx(1.0)
+        assert target[LAST, _frame(4.0)].item() == pytest.approx(1.0)
+
+    def test_six_beat_track_keeps_its_beats_but_masks_positions(self, tmp_path):
+        """6 cannot fold onto 4. Masking is strictly better than the uniform
+        fallback: the beat head still trains on the track, the position head
+        is simply told nothing rather than told something false."""
+        ds = self._dataset(tmp_path, positions=[1, 2, 3, 4, 5, 6, 1, 2])
+
+        _path, _times, positions, has_positions = ds.samples[0]
+        _, target = ds[0]
+
+        assert len(ds) == 1
+        assert has_positions is False
+        assert positions is None
+        assert target[-1].max().item() == pytest.approx(0.0)
+        assert target[0].max().item() == pytest.approx(1.0)
+
+    def test_plain_four_beat_track_is_untouched(self, tmp_path):
+        """Regression guard on the common case — ballroom and jtd are 100%
+        4-beat, so nothing about them may change."""
+        positions = [1, 2, 3, 4, 1, 2, 3, 4]
+        ds = self._dataset(tmp_path, positions=positions)
+
+        _path, _times, stored, has_positions = ds.samples[0]
+
+        assert has_positions
+        assert list(stored) == positions
