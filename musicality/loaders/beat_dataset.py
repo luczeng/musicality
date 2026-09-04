@@ -35,6 +35,44 @@ def position_target_channels(group_size: int) -> tuple[str, ...]:
     return ("beat", *(f"pos_{p}" for p in range(1, group_size + 1)), "mask")
 
 
+def fold_positions(positions: np.ndarray, group_size: int) -> np.ndarray | None:
+    """Fold an annotated bar-position cycle onto ``1..group_size``.
+
+    Annotations count positions across whatever the annotator treated as one
+    bar, and that is not always ``group_size`` beats. A track annotated
+    ``1..8`` against ``group_size=4`` is two bars of four, so its beats 5-8
+    are the 1-4 of the next bar and belong in the same four channels.
+
+    Without folding, positions above ``group_size`` match no channel at all:
+    the position block is all-zero on those frames, so they hit the
+    uniform-target fallback in :meth:`BeatDataset.__getitem__` and the loss
+    teaches "every bar position is equally likely" at full beat weight — on
+    beats that are perfectly well annotated.
+
+    :param positions: 1-indexed bar positions, shape ``(n_beats,)``.
+    :param group_size: Beats per group the position head predicts over.
+    :returns: Folded positions, or ``None`` when the annotated cycle is not a
+        multiple of *group_size* (e.g. a 6-beat bar against a 4-way head).
+        No consistent folding exists there — 1,2,3,4,1,2 puts the downbeat 4
+        beats after one bar and 2 after the next — so the caller must drop
+        that track's position supervision rather than fold it wrongly.
+    """
+
+    positions = np.asarray(positions, dtype=int)
+    cycle = int(positions.max())
+
+    # A cycle shorter than the group (a 2-beat bar against a 4-way head)
+    # already lands in real channels and needs no folding — it describes a
+    # valid, if shorter, period. Only overflow past group_size is the problem.
+    if cycle <= group_size:
+        return positions
+
+    if cycle % group_size != 0:
+        return None
+
+    return ((positions - 1) % group_size) + 1
+
+
 def gaussian_smear(spike: np.ndarray, sigma: float) -> np.ndarray:
     """Smear a 0/1 spike train into a soft target with a Gaussian bump per event.
 
@@ -75,11 +113,12 @@ class BeatDataset(Dataset):
     - ``last`` — the last beat of the group (bar position 4 for
       ``group_size=4``; e.g. phrase position 8 for a phrase-annotated dataset
       with ``group_size=8``).
-    - ``mask`` — constant 1.0 across all frames if this track carries position
-      annotations, else constant 0.0. Datasets without position annotations
-      (e.g. ``rwc_popular``) still contribute their ``beat`` channel; the
-      ``one``/``last`` channels should be excluded from the loss for those
-      tracks via this mask.
+    - ``mask`` — constant 1.0 across all frames if this track carries usable
+      position annotations, else constant 0.0. Two cases give 0.0: no position
+      annotation at all (e.g. ``rwc_popular``), and a bar length that cannot be
+      folded onto ``group_size`` (see :func:`fold_positions`). Both still
+      contribute their ``beat`` channel; the position channels should be
+      excluded from the loss for those tracks via this mask.
 
     Each channel is Gaussian-smeared (see :func:`gaussian_smear`) rather than a
     hard 0/1 spike.
@@ -100,10 +139,14 @@ class BeatDataset(Dataset):
         shorter clips are zero-padded.
     :param hop_length: Frame hop size in samples used to build the frame targets.
     :param sigma_frames: Gaussian smearing width, in frames, applied to each target channel.
-    :param group_size: Number of beats per group that ``positions`` counts across —
+    :param group_size: Number of beats per group that the target counts across —
         ``4`` (default) for bar-position (1-4) datasets, ``8`` for a phrase-position
-        (1-8) dataset. Only affects which position value is read out as ``last``
-        (``positions == group_size``); ``one`` is always ``positions == 1``.
+        (1-8) dataset. Annotations counting a *longer* bar are folded onto
+        ``1..group_size`` at load time (see :func:`fold_positions`), so a track
+        annotated 1-8 trains a ``group_size=4`` head as two bars of four rather
+        than falling off the end of the channel list. Tracks whose bar length is
+        not a multiple of ``group_size`` keep their beats but have their position
+        supervision masked off.
     :param binary_only: If ``True``, drop tracks whose beats-per-bar (the
         annotated position cycle length) isn't a multiple of 2 — e.g.
         ballroom's waltz/Viennese waltz tracks, which cycle ``1, 2, 3`` in
@@ -174,6 +217,8 @@ class BeatDataset(Dataset):
         n_skipped = 0
         n_no_positions = 0
         n_non_binary = 0
+        n_folded = 0
+        n_unfoldable = 0
 
         for ref in refs:
             audio_path = resolve_track_audio(
@@ -200,6 +245,20 @@ class BeatDataset(Dataset):
 
             if not has_positions:
                 n_no_positions += 1
+            else:
+                folded = fold_positions(positions, group_size)
+
+                if folded is None:
+                    # A meter this head cannot represent. Keep the track for
+                    # its beat channel and switch the position supervision
+                    # off, which is exactly what has_positions=False already
+                    # means everywhere downstream.
+                    n_unfoldable += 1
+                    has_positions = False
+                    positions = None
+                else:
+                    n_folded += int(not np.array_equal(folded, positions))
+                    positions = folded
 
             self.samples.append((str(audio_path), beat_times, positions, has_positions))
             self.refs.append(ref)
@@ -217,6 +276,17 @@ class BeatDataset(Dataset):
         if n_no_positions:
             print(
                 f"[BeatDataset] {label}: {n_no_positions} track(s) have no position annotation (one/last masked)"
+            )
+        if n_folded:
+            print(
+                f"[BeatDataset] {label}: folded {n_folded} track(s) with a longer "
+                f"annotated bar onto positions 1-{group_size}"
+            )
+        if n_unfoldable:
+            print(
+                f"[BeatDataset] {label}: {n_unfoldable} track(s) have a bar length that "
+                f"is not a multiple of group_size={group_size} "
+                "(position supervision masked off, beats kept)"
             )
 
     def __len__(self) -> int:

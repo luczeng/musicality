@@ -52,6 +52,15 @@ Data format
    11.247052 2
    11.653333 3
 
+Count across whatever you consider one bar — the count does not have to match
+the ``group_size`` a model is trained at. A bar counted ``1..8`` against a
+4-beat model is folded to ``1,2,3,4,1,2,3,4`` when the dataset is loaded, so
+beat 5 correctly trains as a downbeat (see
+:func:`musicality.loaders.beat_dataset.fold_positions`). A count that is *not*
+a whole multiple of ``group_size`` — 6 against 4, say — has no consistent
+folding; those tracks still contribute their beats, but their bar positions are
+masked out of the loss rather than folded wrongly.
+
 ``.meta.json`` carries fields with no place in ``.beats`` — all optional,
 filled in incrementally as an annotation is worked on, and forward-compatible
 (a file missing a newer field just falls back to that field's default on

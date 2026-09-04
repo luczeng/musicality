@@ -23,11 +23,13 @@ phase_conditioning: beat
 #               the head to 1 + group_size channels and switches the loss to
 #               beat_position_loss. See docs/beat_phase_improvement_review.md
 #               section 3.
-# LEFT AT one_last DELIBERATELY: `positions` and `phase_conditioning: beat`
-# are two separate changes, and enabling both in one run makes the result
-# unattributable. Retrain on `phase_conditioning: beat` first, measure, then
-# flip this.
-target_layout: one_last
+# NOW `positions`. This was held at one_last so that `phase_conditioning: beat`
+# (step 2) and `positions` (step 3) could not land in the same run; both have
+# since been trained and measured separately, in that order, so the
+# attributability concern is settled. Measured on ballroom val (binary,
+# viterbi=2): confusion 0.185 -> 0.130, f_one 0.756 -> 0.774, f_last 0.730 ->
+# 0.769. See plans/04_beat_phase_generalization_and_data_prep.md §2.2.
+target_layout: positions
 # Positive-class weight for the beat/one/last BCE heads — scalar (shared across
 # heads) or a 3-element list for per-head weights.
 # COUPLED TO phase_conditioning — change both together or neither.
@@ -47,11 +49,15 @@ target_layout: one_last
 # measured ratio — exact inverse-frequency weighting on a soft target tends to
 # overshoot into false positives.
 #
-# ONLY VALID FOR target_layout: one_last. The `positions` head has a single BCE
-# term, so it takes a scalar or `auto`; a list is rejected at construction.
-# Run the softmax head as:
-#   uv run python tools/train_beat.py target_layout=positions pos_weight=auto
-pos_weight: [5, 4, 4]
+# COUPLED TO target_layout — the two must be changed together:
+#   positions — a scalar, or `auto` below. A 3-element list is rejected at
+#               construction with an error naming both keys.
+#   one_last  — the 3-element list [5, 4, 4] from the table above. `auto` is
+#               NOT supported here, and the failure is worse than an error:
+#               it dies inside torch as `TypeError: new(): invalid data type
+#               'str'`, which names neither config key.
+# So a one_last run is: target_layout=one_last pos_weight=[5,4,4]
+pos_weight: auto
 # `pos_weight: auto` derives the weight per sample from the beat target
 # instead, as alpha * (1 - mean(beat_y)) / mean(beat_y). A fixed value is only
 # right at one tempo: the true neg:pos ratio is 2.6 on jtd (193 BPM), 4.5 on
@@ -74,9 +80,12 @@ pos_weight_alpha: 1.11
 #   per_item — normalize each clip by its own beat weight first, so every
 #              annotated clip carries 1/n_valid regardless of tempo. That is a
 #              macro-average over tracks, matching the per-genre metric.
+# NOW `per_item`, matching the macro-over-tracks per-genre metric the project is
+# actually judged on (tools/diagnose_beat_phase.py). Under `global`, measured on
+# merge: jtd took 73.7% of the position gradient against 63.8% of the tracks.
 # Changes the value of val/loss, which ModelCheckpoint splices into checkpoint
 # filenames — runs before and after are not loss-comparable.
-position_norm: global
+position_norm: per_item
 lr: 5e-4  # learning rate
 weight_decay: 1e-4  # L2 regularisation
 # Balance the logged acc_beat/acc_one/acc_last metrics (average of true-positive
