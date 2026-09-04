@@ -78,12 +78,6 @@ class BeatPhaseModule(L.LightningModule):
         softmax over positions. Saved to the checkpoint's hyperparameters, so
         :func:`~musicality.inference.load_module` reconstructs the right head
         and downstream code can tell the two apart.
-    :param check_val_every_n_epoch: How often the trainer actually runs
-        validation (``cfg.trainer.check_val_every_n_epoch``). The
-        ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
-        Lightning otherwise tries to step it (and read ``val/loss``) every
-        epoch regardless of how often validation runs, raising
-        ``MisconfigurationException`` on any epoch without a fresh value.
     :param task: Saved into the checkpoint's hyperparameters for
         :func:`~musicality.inference.detect_task` to read back at eval/inference
         time. Always ``"beat_phase"`` for this class; exists as a parameter

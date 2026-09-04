@@ -90,9 +90,17 @@ def score_decoder(
     group_size: int,
     tolerance: float,
     trim: bool,
+    module_group_size: int | None = None,
 ) -> tuple[dict, list[dict]]:
     """Score one bar-position decoder across every position-annotated cached track.
 
+    :param module_group_size: Set when *cached* came from a softmax
+        bar-position checkpoint (``group_size`` in its hyperparameters) —
+        ``probs`` is then ``(1 + group_size, T)`` (beat, then the softmax
+        position block) rather than the older ``(3, T)`` beat/one/last, and
+        the position block is passed through to :func:`readout` as
+        ``position_probs`` so ``decoder="global"`` reads every position's own
+        emission instead of the one/last approximation.
     :returns: ``(summary, per_track)`` — aggregate means, and one row per
         track carrying both its F-measures and its phase-offset profile.
     """
@@ -103,10 +111,17 @@ def score_decoder(
         if not has_positions:
             continue
 
+        if module_group_size is not None:
+            beat_p, position_probs = probs[0], probs[1:]
+            one_p, last_p = position_probs[0], position_probs[-1]
+        else:
+            beat_p, one_p, last_p = probs[0], probs[1], probs[2]
+            position_probs = None
+
         events = readout(
-            probs[0],
-            probs[1],
-            probs[2],
+            beat_p,
+            one_p,
+            last_p,
             fps=fps,
             beat_threshold=beat_threshold,
             min_distance_frames=min_distance_frames,
@@ -116,6 +131,7 @@ def score_decoder(
             decoder=decoder,
             switch_penalty=switch_penalty,
             advance=advance,
+            position_probs=position_probs,
         )
 
         f_one, f_last = downbeat_f_measures(
@@ -242,16 +258,15 @@ def print_verdict(
             "\n  -> MIXED, leaning (B).\n"
             "     The global decode helps meaningfully but doesn't close the gap. Take\n"
             "     the free decoder win, then move on to the loss/parameterization work\n"
-            "     (steps 2-3 of docs/beat_phase_improvement_review.md)."
+            "     in docs/beat_phase_improvement_review.md."
         )
     else:
         print(
             "\n  -> CAUSE (A): THE MODEL.\n"
             "     Decoding the same probabilities optimally over the whole track barely\n"
             "     helps, so the per-beat evidence itself is wrong. Postprocessing is not\n"
-            "     the bottleneck — go to steps 2-3 of\n"
-            "     docs/beat_phase_improvement_review.md (beat-conditioned phase loss,\n"
-            "     then a group_size-way softmax over positions)."
+            "     the bottleneck — go to the loss/parameterization work in\n"
+            "     docs/beat_phase_improvement_review.md."
         )
 
     if not math.isnan(mean_stability):
@@ -370,12 +385,23 @@ def main():
         device=args.device,
         verbose=False,
     )
-    _module, task, _dataset, indices = evaluator.load()
+    module, task, _dataset, indices = evaluator.load()
 
     if task != "beat_phase":
         raise SystemExit(
             f"Checkpoint task is {task!r} — this diagnostic only applies to "
             "beat_phase checkpoints (a beat-only model has no bar-position heads)."
+        )
+
+    # A softmax bar-position checkpoint's own group_size is authoritative —
+    # mirrors musicality.inference.run_inference. Falls back to --group-size
+    # for the older three-channel one/last head, which has no such hparam.
+    module_group_size = getattr(module, "hparams", {}).get("group_size")
+    group_size = module_group_size if module_group_size is not None else args.group_size
+    if module_group_size is not None and module_group_size != args.group_size:
+        print(
+            f"[diagnose] checkpoint is a softmax bar-position head with "
+            f"group_size={module_group_size} — overriding --group-size={args.group_size}"
         )
 
     print(
@@ -419,9 +445,10 @@ def main():
             min_distance_frames=args.min_distance_frames,
             gate_tolerance=args.gate_tolerance,
             anchor_threshold=args.anchor_threshold,
-            group_size=args.group_size,
+            group_size=group_size,
             tolerance=args.tolerance,
             trim=not args.no_trim,
+            module_group_size=module_group_size,
         )
         results[name] = (summary, rows)
 
@@ -439,11 +466,11 @@ def main():
     print("\n" + "=" * 78)
     print(f"PHASE-OFFSET PROFILE  (under the greedy decoder, split={args.split})")
     print("=" * 78)
-    print_offset_profile(greedy_rows, args.group_size)
+    print_offset_profile(greedy_rows, group_size)
 
     best_name = min(results, key=lambda k: results[k][0]["confusion"])
     print_verdict(
-        greedy_summary, best_name, results[best_name][0], greedy_rows, args.group_size
+        greedy_summary, best_name, results[best_name][0], greedy_rows, group_size
     )
 
     if args.output is not None:

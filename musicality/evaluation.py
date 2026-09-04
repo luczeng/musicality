@@ -190,13 +190,22 @@ class BeatEvaluator:
     def compute_track_probs(self) -> list[tuple]:
         """Run the model once per track, returning cached
         ``(beat_times, positions, has_positions, probs)`` tuples — the raw
-        per-track model output, unsliced (shape ``(T,)`` for beat-only,
-        ``(3, T)`` for beat-phase), plus the reference annotations needed to
-        score it. Lets a caller (e.g. a postprocessing hyperparameter sweep)
-        re-score many parameter combinations cheaply without re-running the
-        model."""
+        per-track model output, activated and unsliced (shape ``(T,)`` for
+        beat-only, ``(3, T)`` for the one/last beat-phase head, or
+        ``(1 + group_size, T)`` for the softmax bar-position head), plus the
+        reference annotations needed to score it. Lets a caller (e.g. a
+        postprocessing hyperparameter sweep) re-score many parameter
+        combinations cheaply without re-running the model.
+
+        Mirrors :func:`~musicality.inference.run_inference`'s activation
+        choice: a softmax bar-position checkpoint (``group_size`` set in its
+        hyperparameters) gets ``sigmoid`` on the ``beat`` channel and
+        ``softmax`` over the position channels, not a blanket ``sigmoid`` —
+        the position logits compete against each other, not independently.
+        """
 
         module, _task, dataset, indices = self.load()
+        module_group_size = getattr(module, "hparams", {}).get("group_size")
 
         cached = []
         for i in indices:
@@ -207,8 +216,14 @@ class BeatEvaluator:
                 .unsqueeze(0)
                 .to(self.device)
             )
-            logits = module(wav)  # (1, T') beat-only, or (1, 3, T') beat-phase
-            probs = torch.sigmoid(logits)[0].cpu().numpy()  # (T',) or (3, T')
+            logits = module(wav)[0]  # (T',) beat-only, or (n_outputs, T') beat-phase
+
+            if module_group_size is not None:
+                beat_probs = torch.sigmoid(logits[0]).cpu().numpy()
+                position_probs = torch.softmax(logits[1:], dim=0).cpu().numpy()
+                probs = np.concatenate([beat_probs[None], position_probs], axis=0)
+            else:
+                probs = torch.sigmoid(logits).cpu().numpy()  # (T',) or (3, T')
 
             cached.append((beat_times, positions, has_positions, probs))
 
