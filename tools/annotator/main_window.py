@@ -5,6 +5,8 @@ from __future__ import annotations
 import datetime
 import platform
 import time
+from pathlib import Path
+
 import librosa
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
     QComboBox,
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -34,6 +37,7 @@ import musicality.dataformats as dataformats
 
 from .audio import AudioEngine
 from .inference import (
+    CHECKPOINT_ROOT,
     EVAL_DEFAULTS,
     checkpoint_label,
     infer_beats,
@@ -91,9 +95,10 @@ class MainWindow(QMainWindow):
     Beat inference
     --------------
     "Infer Beats" runs a trained beat-phase checkpoint (picked from the
-    dropdown, scanned from ``checkpoints_beat/``) on the full currently-loaded
-    track and shows the predicted beat times on a second waveform strip above
-    the main one, so they never overlap the manually annotated beats below.
+    dropdown, scanned from ``checkpoints_beat/`` by default — "Browse…" can
+    point the scan at any other folder) on the full currently-loaded track
+    and shows the predicted beat times on a second waveform strip above the
+    main one, so they never overlap the manually annotated beats below.
     Switching "Clicks" from Manual to Inferred plays the audible click track
     against the inferred beats instead, so the prediction can be heard
     against the audio.
@@ -129,6 +134,7 @@ class MainWindow(QMainWindow):
         self._beat_module = None
         self._beat_module_path = None
         self._beat_module_task = None
+        self._checkpoint_root = CHECKPOINT_ROOT
         self._engine = AudioEngine()
         self._recorder = Recorder()
         self._timer = QTimer(self)
@@ -263,17 +269,16 @@ class MainWindow(QMainWindow):
         self._checkpoint_combo = QComboBox()
         self._checkpoint_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._checkpoint_combo.setFixedWidth(260)
-        checkpoints = list_checkpoints()
-        for path in checkpoints:
-            self._checkpoint_combo.addItem(checkpoint_label(path), path)
-        if not checkpoints:
-            self._checkpoint_combo.addItem("(no checkpoints found)", None)
-            self._checkpoint_combo.setEnabled(False)
+
+        self._browse_checkpoint_btn = QPushButton("📁  Browse…")
+        self._browse_checkpoint_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._browse_checkpoint_btn.clicked.connect(self._on_browse_checkpoints)
 
         self._infer_btn = QPushButton("🔮  Infer Beats")
         self._infer_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._infer_btn.setEnabled(bool(checkpoints))
         self._infer_btn.clicked.connect(self._on_infer_beats)
+
+        self._populate_checkpoint_combo(self._checkpoint_root)
 
         self._track_label = QLabel()
         self._track_label.setStyleSheet("font-weight: bold;")
@@ -318,6 +323,7 @@ class MainWindow(QMainWindow):
         infer_bar = QHBoxLayout()
         infer_bar.addWidget(QLabel("Beat model:"))
         infer_bar.addWidget(self._checkpoint_combo)
+        infer_bar.addWidget(self._browse_checkpoint_btn)
         infer_bar.addWidget(self._infer_btn)
         infer_bar.addStretch()
 
@@ -822,13 +828,47 @@ class MainWindow(QMainWindow):
         else:
             self._on_play()
 
+    def _populate_checkpoint_combo(self, root) -> int:
+        """(Re)fill the checkpoint dropdown with ``.ckpt`` files found under *root*.
+
+        Returns the number of checkpoints found.
+        """
+
+        self._checkpoint_combo.clear()
+        checkpoints = list_checkpoints(root)
+
+        for path in checkpoints:
+            self._checkpoint_combo.addItem(checkpoint_label(path, root), path)
+
+        if not checkpoints:
+            self._checkpoint_combo.addItem("(no checkpoints found)", None)
+
+        self._checkpoint_combo.setEnabled(bool(checkpoints))
+        self._infer_btn.setEnabled(bool(checkpoints))
+
+        return len(checkpoints)
+
+    def _on_browse_checkpoints(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(
+            self, "Select checkpoint folder", str(self._checkpoint_root)
+        )
+        if not chosen:
+            return
+
+        self._checkpoint_root = Path(chosen)
+        n_found = self._populate_checkpoint_combo(self._checkpoint_root)
+        self.statusBar().showMessage(
+            f"Found {n_found} checkpoint(s) under {self._checkpoint_root}.",
+            4000,
+        )
+
     def _on_infer_beats(self) -> None:
         if self._track_audio is None:
             return
         checkpoint_path = self._checkpoint_combo.currentData()
         if checkpoint_path is None:
             self.statusBar().showMessage(
-                "No checkpoint found under checkpoints_beat/.", 4000
+                f"No checkpoint found under {self._checkpoint_root}.", 4000
             )
             return
 
@@ -866,7 +906,8 @@ class MainWindow(QMainWindow):
         self._inferred_container.setVisible(True)
         self._update_engine_clicks()
         self.statusBar().showMessage(
-            f"Inferred {len(beat_times)} beats ({checkpoint_label(checkpoint_path)}).",
+            f"Inferred {len(beat_times)} beats "
+            f"({checkpoint_label(checkpoint_path, self._checkpoint_root)}).",
             5000,
         )
 

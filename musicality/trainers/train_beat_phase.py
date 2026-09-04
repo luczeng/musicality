@@ -22,10 +22,12 @@ _TRACKED_KEYS = (
     "train/acc_beat",
     "train/acc_one",
     "train/acc_last",
+    "train/acc_position",
     "val/loss",
     "val/acc_beat",
     "val/acc_one",
     "val/acc_last",
+    "val/acc_position",
 )
 
 
