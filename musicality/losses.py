@@ -206,11 +206,78 @@ def beat_phase_loss(
     return beat_term + one_term + last_term
 
 
+# Bounds on a *derived* pos_weight (see :func:`beat_pos_weight`). Neither end
+# binds on real music: the slowest corpus in the collection sits at 12.5 and
+# stays under 15 even after a 0.85 time-stretch. They exist for degenerate
+# crops — a window holding a single beat derives ~200, and one holding none is
+# bounded only by the epsilon in the denominator.
+AUTO_POS_WEIGHT_RANGE = (1.0, 20.0)
+
+# Reproduces the hand-tuned pos_weight of 5 at ballroom's median tempo, where
+# the derived neg:pos ratio is 4.51. Anchoring there makes self-calibration a
+# pure *cross-tempo* change — neutral on the corpus every previous measurement
+# was taken on, differing only where the tempo differs.
+AUTO_POS_WEIGHT_ALPHA = 1.11
+
+
+def beat_pos_weight(
+    beat_y: torch.Tensor,
+    pos_weight: torch.Tensor | float | str,
+    alpha: float = AUTO_POS_WEIGHT_ALPHA,
+) -> torch.Tensor:
+    r"""Positive-class weight for a beat BCE term — passed through, or derived
+    per sample from the target when ``pos_weight`` is ``"auto"``.
+
+    A fixed ``pos_weight`` is only correct at one tempo. The beat target is a
+    Gaussian smeared to peak 1.0, so its mass per beat is a constant ~3.75
+    frames regardless of tempo, while the beat *period* is not: 20.7 frames at
+    ballroom's 125 BPM, 13.4 at jtd's 193, 46.1 at classical's 10th percentile
+    of 56. The true neg:pos ratio therefore spans 2.6–11.3 across the corpora
+    we train on, against a single configured 5.
+
+    Since the ratio is just a function of the target already in hand, derive it
+    rather than tune it:
+
+    .. math::
+
+        w_i = \alpha \, \frac{1 - \bar{b}_i}{\bar{b}_i},
+        \qquad \bar{b}_i = \frac{1}{T} \sum_t b_{i,t}
+
+    Deriving it per sample also means it tracks time-stretch augmentation,
+    which silently invalidates a hand-tuned value on every augmented clip.
+
+    :param beat_y: Beat target channel, shape ``(B, T)``, values in ``[0, 1]``.
+    :param pos_weight: A number (or tensor) to pass through unchanged, or the
+        string ``"auto"`` to derive one per sample.
+    :param alpha: Scale on the derived ratio. Defaults to
+        :data:`AUTO_POS_WEIGHT_ALPHA`; ``1.0`` is exact inverse-frequency
+        weighting.
+    :returns: Scalar tensor when passed through, shape ``(B, 1)`` when derived
+        — which broadcasts against ``(B, T)`` inside
+        :func:`~torch.nn.functional.binary_cross_entropy_with_logits`.
+    """
+
+    if not isinstance(pos_weight, str):
+        return torch.as_tensor(pos_weight, device=beat_y.device, dtype=beat_y.dtype)
+
+    if pos_weight != "auto":
+        raise ValueError(
+            f"Unknown pos_weight {pos_weight!r} — expected a number or 'auto'"
+        )
+
+    pos_frac = beat_y.mean(dim=-1, keepdim=True)  # (B, 1)
+    weight = alpha * (1.0 - pos_frac) / pos_frac.clamp(min=1e-6)
+
+    return weight.clamp(*AUTO_POS_WEIGHT_RANGE)
+
+
 def beat_position_loss(
     logits: torch.Tensor,
     target: torch.Tensor,
-    pos_weight: torch.Tensor | float = 5.0,
+    pos_weight: torch.Tensor | float | str = 5.0,
     phase_conditioning: str = "beat",
+    pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
+    position_norm: str = "global",
 ) -> torch.Tensor:
     r"""Beat BCE plus a softmax cross-entropy over bar position.
 
@@ -250,11 +317,29 @@ def beat_position_loss(
         :class:`~musicality.loaders.beat_dataset.BeatDataset` with
         ``target_layout="positions"``.
     :param pos_weight: Positive-class weight for the ``beat`` BCE term only.
+        A number, or ``"auto"`` to derive one per sample from the target — see
+        :func:`beat_pos_weight`.
     :param phase_conditioning: ``"beat"`` (default) weights the position term
         by ``mask * beat``, so it is optimized only where a beat actually is —
         which is where :mod:`musicality.postprocess` reads it. ``"mask"``
         weights by ``mask`` alone, supervising every frame. See
         :func:`beat_phase_loss` for why the former matters.
+    :param pos_weight_alpha: Scale on the derived ``pos_weight``. Read only
+        when ``pos_weight == "auto"``.
+    :param position_norm: How the position term is averaged.
+
+        - ``"global"`` (default): one weighted mean over the whole batch. That
+          makes it a micro-average over *beats*, so a clip's influence is
+          proportional to how many beats it happens to contain — and a 16 s
+          crop holds 51 beats at 193 BPM but 15 at 56. Measured on the merged
+          split, jtd takes 73.7% of the position gradient against 63.8% of the
+          tracks, while ballroom gets 18.0% against 24.1%.
+        - ``"per_item"``: normalize each clip by its own weight first, then
+          average over clips. Every annotated clip carries exactly
+          ``1/n_valid`` whatever its tempo, which is a macro-average over
+          tracks — the same shape as the per-genre metric this is graded by.
+
+        See plans/04_beat_phase_generalization_and_data_prep.md §2.6a.
     :returns: Scalar mean loss, shape ``()``.
     """
 
@@ -262,6 +347,11 @@ def beat_position_loss(
         raise ValueError(
             f"Unknown phase_conditioning {phase_conditioning!r} — "
             "expected 'mask' or 'beat'"
+        )
+
+    if position_norm not in ("global", "per_item"):
+        raise ValueError(
+            f"Unknown position_norm {position_norm!r} — expected 'global' or 'per_item'"
         )
 
     beat_logits, position_logits = logits[:, 0], logits[:, 1:]
@@ -274,10 +364,10 @@ def beat_position_loss(
             "(B, 1 + G, T) against a (B, 2 + G, T) target"
         )
 
-    pos_weight = torch.as_tensor(pos_weight, device=logits.device, dtype=logits.dtype)
-
     beat_term = F.binary_cross_entropy_with_logits(
-        beat_logits, beat_y, pos_weight=pos_weight
+        beat_logits,
+        beat_y,
+        pos_weight=beat_pos_weight(beat_y, pos_weight, pos_weight_alpha),
     )
 
     # Soft-target cross-entropy over the position axis, per frame.
@@ -285,10 +375,24 @@ def beat_position_loss(
     position_ce = -(position_y * log_q).sum(dim=1)  # (B, T)
 
     phase_w = mask * beat_y if phase_conditioning == "beat" else mask
-    n_weighted = phase_w.sum().clamp(min=1.0)
-    position_term = (position_ce * phase_w).sum() / n_weighted
 
-    return beat_term + position_term
+    if position_norm == "global":
+        n_weighted = phase_w.sum().clamp(min=1.0)
+
+        return beat_term + (position_ce * phase_w).sum() / n_weighted
+
+    # Divide each clip by its own weight before averaging, so tempo stops
+    # buying influence. Clips with no position annotation have `den == 0` and
+    # therefore `num == 0` too — both are sums of `phase_w`-weighted terms —
+    # so the clamp lets them contribute exactly zero with a well-defined
+    # gradient. That keeps a fully unannotated batch finite (it reduces to the
+    # beat term) without boolean indexing, which would make the shape depend
+    # on the data.
+    num = (position_ce * phase_w).sum(dim=-1)  # (B,)
+    den = phase_w.sum(dim=-1)  # (B,)
+    n_valid = (den > 1e-6).sum().clamp(min=1)
+
+    return beat_term + (num / den.clamp(min=1e-6)).sum() / n_valid
 
 
 def classification_tempo_loss(

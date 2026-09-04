@@ -1,11 +1,17 @@
 """PyTorch Lightning module for frame-level beat-phase detection (beat/one/last)."""
 
+from collections.abc import Sequence
+
 import torch
 import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.losses import beat_phase_loss, beat_position_loss
+from musicality.losses import (
+    AUTO_POS_WEIGHT_ALPHA,
+    beat_phase_loss,
+    beat_position_loss,
+)
 from musicality.metrics.frame_accuracy import frame_accuracy
 
 
@@ -52,7 +58,16 @@ class BeatPhaseModule(L.LightningModule):
 
     :param model: DictConfig for instantiating the backbone (e.g. ``TCNTempoNet``).
     :param pos_weight: Positive-class weight passed to :func:`~musicality.losses.beat_phase_loss`.
-        Scalar (shared across heads) or a 3-element sequence (per-head).
+        Scalar (shared across heads) or a 3-element sequence (per-head). With
+        ``group_size`` set there is only one BCE head, so a sequence is
+        rejected up front rather than left to fail as a broadcast error on the
+        first batch. ``"auto"`` derives it per sample from the target
+        (:func:`~musicality.losses.beat_pos_weight`); ``group_size`` only.
+    :param pos_weight_alpha: Scale on a derived ``pos_weight``. Read only when
+        ``pos_weight == "auto"``.
+    :param position_norm: ``"global"`` (default) or ``"per_item"`` — how
+        :func:`~musicality.losses.beat_position_loss` averages the bar-position
+        term. ``group_size`` only.
     :param phase_conditioning: Passed to :func:`~musicality.losses.beat_phase_loss`
         — ``"mask"`` supervises the one/last heads on every frame,
         ``"beat"`` only on frames at or near a beat, which is where
@@ -88,9 +103,11 @@ class BeatPhaseModule(L.LightningModule):
     def __init__(
         self,
         model: DictConfig,
-        pos_weight: float | list[float] = 8.0,
+        pos_weight: float | list[float] | str = 8.0,
         phase_conditioning: str = "mask",
         group_size: int | None = None,
+        pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
+        position_norm: str = "global",
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
@@ -105,6 +122,19 @@ class BeatPhaseModule(L.LightningModule):
         model_cfg.pop("arch", None)
         if group_size is not None and group_size < 2:
             raise ValueError(f"group_size must be >= 2 or None, got {group_size}")
+
+        # `configs/beat_train.yaml` carries a 3-element pos_weight for the
+        # one/last head. beat_position_loss has a single BCE head, so a
+        # sequence reaches binary_cross_entropy_with_logits as a shape-(3,)
+        # weight against (B, T) and dies on a broadcast error mid-run.
+        # OmegaConf's ListConfig is a Sequence but not a list, hence the ABC.
+        per_head = isinstance(pos_weight, Sequence) and not isinstance(pos_weight, str)
+        if group_size is not None and per_head:
+            raise ValueError(
+                "the group_size softmax head takes a scalar pos_weight (or "
+                f"'auto') for its single beat term, got {list(pos_weight)!r} — "
+                "the per-head list belongs to the one/last layout"
+            )
 
         model_cfg["frame_level"] = True
         model_cfg["n_outputs"] = 3 if group_size is None else 1 + group_size
@@ -122,6 +152,8 @@ class BeatPhaseModule(L.LightningModule):
             target,
             pos_weight=self.hparams.pos_weight,
             phase_conditioning=self.hparams.phase_conditioning,
+            pos_weight_alpha=self.hparams.pos_weight_alpha,
+            position_norm=self.hparams.position_norm,
         )
 
         beat_p = torch.sigmoid(logits[:, 0])
