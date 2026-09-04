@@ -116,6 +116,15 @@ Hydra configs live in `configs/`:
 - `model/` — Per-model overrides: `tcn.yaml`, `beat.yaml`, `cnn.yaml`, `wav2vec2.yaml`.
 - `trainer/` — Lightning Trainer overrides.
 
+## Describing Work
+
+Every proposal, plan, implementation summary and design note gets **two descriptions**, in this order:
+
+1. **High level** — the problem, why it matters, and what changes as a result. No filenames, no function names, no code. Someone who doesn't know the internals should be able to read it and know whether they care.
+2. **Technical** — the mechanism. Files and functions touched, data flow, edge cases, and how it was (or will be) verified.
+
+Applies to `plans/*.md`, `docs/*.md`, and end-of-task summaries in chat. Keep them separate — don't interleave the two registers into one blended paragraph, since that produces prose that is too vague to act on and too detailed to skim.
+
 ## Code Style
 
 - Use an aerated style: insert blank lines where it improves readability — e.g. between a docstring and the function body, and between logical blocks within a function. Avoid dense, run-on blocks of code.

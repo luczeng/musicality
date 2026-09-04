@@ -179,7 +179,9 @@ class BeatEvaluator:
           deliberately never creates a merged dataset directory, so there is
           nothing to build by name. The split's ``TrackRef`` entries carry their
           own per-track ``data_home`` and source corpus, so the dataset is built
-          straight from them.
+          straight from them. This is also what makes :meth:`track_corpora`
+          meaningful — a merged split is the only case where more than one
+          corpus is present.
 
         :returns: ``(module, task, dataset, indices)``.
         """
@@ -222,6 +224,25 @@ class BeatEvaluator:
             self._loaded = (module, task, dataset, indices)
 
         return self._loaded
+
+    def track_corpora(self) -> list[str]:
+        """Source corpus name per selected track, positionally aligned with
+        :meth:`compute_track_probs`.
+
+        ``BeatDataset`` appends to ``samples`` and ``refs`` in the same loop
+        iteration, and :meth:`compute_track_probs` walks ``indices`` in order
+        emitting exactly one entry per index, so the two lists line up
+        element-for-element.
+
+        Every entry is the same string for a single-dataset split; a merged
+        split is where this becomes useful, as it lets a caller report per
+        genre rather than one blended number whose weighting is an accident of
+        how many tracks each corpus happens to contribute.
+        """
+
+        _module, _task, dataset, indices = self.load()
+
+        return [dataset.refs[i].dataset_name for i in indices]
 
     @torch.no_grad()
     def compute_track_probs(self) -> list[tuple]:
