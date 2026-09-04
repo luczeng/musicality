@@ -13,9 +13,14 @@ import yaml
 
 import musicality.dataformats as dataformats
 from musicality.inference import load_module, load_track_waveform, run_inference
-from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
+from musicality.loaders.beat_dataset import (
+    BeatDataset,
+    beat_split_name,
+    indices_for_split,
+)
 from musicality.metrics.confusion import confusion_half_cycle_rate
 from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
+from musicality.splits.splitter import Splitter
 
 DATA_DIR = dataformats.ROOT / dataformats.load().data_dir
 
@@ -164,22 +169,54 @@ class BeatEvaluator:
         """Load the checkpoint (auto-detecting task) and build the dataset +
         selected split indices. Memoized — safe to call more than once.
 
+        Two ways of building the dataset, chosen by whether ``data_home`` is a
+        real directory:
+
+        - **A single dataset** (the usual case): built by ``name`` from its own
+          directory, then narrowed to *split* via
+          :func:`~musicality.loaders.beat_dataset.indices_for_split`.
+        - **A merged split** (e.g. ``dataset="merge"``): ``tools/merge_datasets.py``
+          deliberately never creates a merged dataset directory, so there is
+          nothing to build by name. The split's ``TrackRef`` entries carry their
+          own per-track ``data_home`` and source corpus, so the dataset is built
+          straight from them.
+
         :returns: ``(module, task, dataset, indices)``.
         """
 
         if self._loaded is None:
             module, task = load_module(self.checkpoint, self.device)
-            dataset = BeatDataset(
-                name=self.dataset_name,
-                data_home=self.data_home,
-                sample_rate=self.sample_rate,
-                hop_length=self.hop_length,
-                group_size=self.group_size if self.group_size is not None else 4,
-                binary_only=self.binary_only,
-            )
-            indices = indices_for_split(
-                dataset, self.dataset_name, self.split, self.val_split, self.binary_only
-            )
+
+            if self.split != "all" and not self.data_home.is_dir():
+                splits_dir = dataformats.ROOT / dataformats.load().splits_dir
+                split_name = beat_split_name(self.dataset_name, self.binary_only)
+                train_refs, val_refs = Splitter.load_refs(splits_dir, split_name)
+
+                dataset = BeatDataset(
+                    refs=train_refs if self.split == "train" else val_refs,
+                    sample_rate=self.sample_rate,
+                    hop_length=self.hop_length,
+                    group_size=self.group_size if self.group_size is not None else 4,
+                    binary_only=self.binary_only,
+                )
+                indices = list(range(len(dataset)))
+            else:
+                dataset = BeatDataset(
+                    name=self.dataset_name,
+                    data_home=self.data_home,
+                    sample_rate=self.sample_rate,
+                    hop_length=self.hop_length,
+                    group_size=self.group_size if self.group_size is not None else 4,
+                    binary_only=self.binary_only,
+                )
+                indices = indices_for_split(
+                    dataset,
+                    self.dataset_name,
+                    self.split,
+                    self.val_split,
+                    self.binary_only,
+                )
+
             if self.limit is not None:
                 indices = indices[: self.limit]
             self._loaded = (module, task, dataset, indices)
