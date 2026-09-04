@@ -65,6 +65,9 @@ from musicality.postprocess import readout
 # single-offset decode (no mid-track resync allowed at all).
 BASE_VARIANTS = ("greedy", "global")
 
+# The per-track scores that get aggregated, micro and macro alike.
+_SCORE_KEYS = ("f_one", "f_last", "confusion", "stability")
+
 
 def _mean(values: list[float]) -> float:
     clean = [v for v in values if v is not None and not math.isnan(v)]
@@ -91,6 +94,7 @@ def score_decoder(
     tolerance: float,
     trim: bool,
     module_group_size: int | None = None,
+    corpora: list[str] | None = None,
 ) -> tuple[dict, list[dict]]:
     """Score one bar-position decoder across every position-annotated cached track.
 
@@ -101,13 +105,22 @@ def score_decoder(
         the position block is passed through to :func:`readout` as
         ``position_probs`` so ``decoder="global"`` reads every position's own
         emission instead of the one/last approximation.
+    :param corpora: Source corpus name per *cached* track (see
+        :meth:`~musicality.evaluation.BeatEvaluator.track_corpora`), recorded
+        on each row so results can be broken down per genre. Zipped against
+        *cached* before the ``has_positions`` filter, so unannotated tracks
+        drop out of both together.
     :returns: ``(summary, per_track)`` — aggregate means, and one row per
         track carrying both its F-measures and its phase-offset profile.
+        ``summary`` holds micro means (over tracks) plus ``macro_*`` means
+        (over corpora); the two differ only once more than one corpus is
+        present and the corpora differ in size.
     """
 
     rows = []
+    names = corpora if corpora is not None else [""] * len(cached)
 
-    for beat_times, positions, has_positions, probs in cached:
+    for (beat_times, positions, has_positions, probs), corpus in zip(cached, names):
         if not has_positions:
             continue
 
@@ -151,6 +164,7 @@ def score_decoder(
 
         rows.append(
             {
+                "corpus": corpus,
                 "f_one": f_one,
                 "f_last": f_last,
                 "confusion": confusion,
@@ -160,16 +174,116 @@ def score_decoder(
             }
         )
 
-    summary = {
-        "n_tracks": len(rows),
-        "f_one": _mean([r["f_one"] for r in rows]),
-        "f_last": _mean([r["f_last"] for r in rows]),
-        "confusion": _mean([r["confusion"] for r in rows]),
-        "stability": _mean([r["stability"] for r in rows]),
-    }
+    return summarize(rows), rows
+
+
+def summarize(rows: list[dict]) -> dict:
+    """Aggregate scored rows into micro *and* macro means.
+
+    - **micro** (the bare ``f_one`` / ``f_last`` / ``confusion`` / ``stability``
+      keys) averages over *tracks* — the historical behaviour.
+    - **macro** (the ``macro_*`` keys) averages within each corpus first, then
+      averages those means, so every corpus counts once regardless of size.
+
+    They are identical when a single corpus is present, or when every corpus
+    contributes the same number of tracks. Where they diverge, micro is being
+    carried by whichever corpus happened to contribute the most tracks — which
+    is an accident of what is downloaded, not of anything we care about. For a
+    tool meant to work across genres, macro is the number to steer by.
+    """
+
+    summary = {"n_tracks": len(rows)}
+    for key in _SCORE_KEYS:
+        summary[key] = _mean([r[key] for r in rows])
     summary["objective"] = (summary["f_one"] + summary["f_last"]) / 2
 
-    return summary, rows
+    per_corpus = group_by_corpus(rows)
+    for key in _SCORE_KEYS:
+        summary[f"macro_{key}"] = _mean(
+            [_mean([r[key] for r in rs]) for rs in per_corpus.values()]
+        )
+
+    # The binding constraint for "works everywhere" is the weakest genre, which
+    # even the macro mean averages away.
+    worst = [
+        value
+        for value in (_mean([r["confusion"] for r in rs]) for rs in per_corpus.values())
+        if not math.isnan(value)
+    ]
+    summary["worst_confusion"] = max(worst) if worst else float("nan")
+
+    return summary
+
+
+def group_by_corpus(rows: list[dict]) -> dict[str, list[dict]]:
+    """Group scored rows by their source corpus, preserving first-seen order."""
+
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        grouped.setdefault(row.get("corpus", ""), []).append(row)
+
+    return grouped
+
+
+def print_genre_breakdown(rows: list[dict], decoder_name: str) -> None:
+    """Print per-corpus scores, then the macro mean, the micro mean and the
+    worst corpus.
+
+    Macro averages the corpora; micro averages the tracks. They agree only when
+    every corpus is the same size, and the gap between them is itself the
+    diagnostic: it measures how much the blended number is being carried by the
+    largest corpus. A model that is excellent on the biggest corpus and useless
+    on the smallest still scores well on micro.
+    """
+
+    grouped = group_by_corpus(rows)
+
+    print(f"\n  decoder: {decoder_name}\n")
+    print(
+        f"  {'corpus':<18} {'n':>5} {'f_one':>7} {'f_last':>7} "
+        f"{'confuse':>8} {'stability':>10}"
+    )
+
+    def _row(label: str, n: int, stats: dict) -> None:
+        print(
+            f"  {label:<18} {n:5d} {_fmt(stats['f_one']):>7} "
+            f"{_fmt(stats['f_last']):>7} {_fmt(stats['confusion']):>8} "
+            f"{_fmt(stats['stability']):>10}"
+        )
+
+    per_corpus = {}
+    for corpus, rs in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
+        per_corpus[corpus] = {k: _mean([r[k] for r in rs]) for k in _SCORE_KEYS}
+        _row(corpus or "<unknown>", len(rs), per_corpus[corpus])
+
+    if len(per_corpus) < 2:
+        return
+
+    print("  " + "-" * 58)
+
+    _row(
+        "MACRO (per corpus)",
+        len(per_corpus),
+        {k: _mean([s[k] for s in per_corpus.values()]) for k in _SCORE_KEYS},
+    )
+    _row(
+        "micro (per track)",
+        len(rows),
+        {k: _mean([r[k] for r in rows]) for k in _SCORE_KEYS},
+    )
+
+    ranked = [
+        (corpus, stats)
+        for corpus, stats in per_corpus.items()
+        if not math.isnan(stats["confusion"])
+    ]
+    if ranked:
+        name, stats = max(ranked, key=lambda kv: kv[1]["confusion"])
+        print(
+            f"\n  Worst corpus by confusion: {name} "
+            f"({_fmt(stats['confusion'])}) — the number that gates "
+            f"'works everywhere'."
+        )
 
 
 def print_offset_profile(rows: list[dict], group_size: int) -> None:
@@ -359,6 +473,18 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--rank-by",
+        choices=["macro", "micro"],
+        default="macro",
+        help=(
+            "Which mean picks the best decoder on a multi-corpus split: "
+            "'macro' weights each corpus equally, 'micro' weights each track "
+            "(which lets the largest corpus choose the decoder for all of "
+            "them). No effect on a single-corpus split, where the two are "
+            "the same number."
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -409,7 +535,15 @@ def main():
         f"from '{args.dataset}' (split={args.split})"
     )
     cached = evaluator.compute_track_probs()
+    corpora = evaluator.track_corpora()
     fps = args.sample_rate / args.hop_length
+
+    n_corpora = len(set(corpora))
+    if n_corpora > 1:
+        print(
+            f"[diagnose] {n_corpora} source corpora — reporting per genre, "
+            f"ranking decoders by {args.rank_by}\n"
+        )
 
     advance_modes = ["index", "time"] if args.advance == "both" else [args.advance]
 
@@ -449,6 +583,7 @@ def main():
             tolerance=args.tolerance,
             trim=not args.no_trim,
             module_group_size=module_group_size,
+            corpora=corpora,
         )
         results[name] = (summary, rows)
 
@@ -468,7 +603,16 @@ def main():
     print("=" * 78)
     print_offset_profile(greedy_rows, group_size)
 
-    best_name = min(results, key=lambda k: results[k][0]["confusion"])
+    # On a single-corpus split "macro_confusion" == "confusion" by
+    # construction, so the default ranking is unchanged for those runs.
+    rank_key = "macro_confusion" if args.rank_by == "macro" else "confusion"
+    best_name = min(results, key=lambda k: results[k][0][rank_key])
+
+    print("\n" + "=" * 78)
+    print(f"PER-GENRE BREAKDOWN  (split={args.split})")
+    print("=" * 78)
+    print_genre_breakdown(results[best_name][1], best_name)
+
     print_verdict(
         greedy_summary, best_name, results[best_name][0], greedy_rows, group_size
     )

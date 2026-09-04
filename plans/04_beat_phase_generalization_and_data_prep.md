@@ -33,7 +33,7 @@ structural blocker (§2.7). Recommendations below reflect the new goal.
 
 | Lever | Verdict | Why |
 |---|---|---|
-| Per-genre metric | **Measured, not shipped** | Prototype gave macro confusion 0.311 vs micro 0.283, classical `f_last` 0.066 — then reverted |
+| Per-genre metric | **DONE (eval side)** | Measured: macro confusion 0.311 vs micro 0.283; classical `f_last` 0.066. Training-side logging deliberately not shipped |
 | Self-calibrating `pos_weight` | **Required** | No single scalar serves 56–193 BPM |
 | Per-item loss normalization | **Required** | Micro-average over beats favours fast genres; metric is macro over tracks |
 | Corpus-temperature sampling | **Recommended, α≈0.5** | Track-count gives jazz 65.5% |
@@ -386,7 +386,7 @@ does not manufacture data.
 
 | # | Action | Cost | Gates |
 |---|---|---|---|
-| 0 | Per-genre val split + macro-average metric — *prototyped, measured, reverted* | free | everything |
+| 0 | ~~Per-genre macro-average metric in the diagnostic~~ — **done, see below** | free | everything |
 | 1 | Get the converged merge checkpoint and re-measure | free | §2.4, §2.5 |
 | 2 | Self-calibrating `pos_weight` + per-item loss normalization | small | — |
 | 3 | Corpus-temperature sampling (α≈0.5), duration weighting *within* corpus | small | — |
@@ -401,33 +401,37 @@ each other within a single run — the same attributability discipline applied t
 the step-2 / step-3 sequence.
 
 <details>
-<summary><b>#0 — Per-genre metric — <b>prototyped and measured 2026-09-04, then reverted</b></summary>
+<summary><b>#0 — Per-genre metric — <b>evaluation side SHIPPED 2026-09-04</b></summary>
 
-**Status: the measurements below are real and stand; the code that produced
-them was reverted on 2026-09-04 and is not in the tree.** Redo it before
-relying on per-genre numbers again.
+**Shipped (evaluation only):**
 
-**What the prototype did**, if it is rebuilt:
+- `BeatEvaluator.track_corpora()` — source corpus per track, positionally
+  aligned with `compute_track_probs()`. *(The related change that lets it build
+  from the split's `TrackRef`s when the dataset has no directory of its own —
+  which is what makes `--dataset merge` work at all — was already in place.)*
+- `tools/diagnose_beat_phase.py` prints a **PER-GENRE BREAKDOWN**: per-corpus
+  scores, the MACRO mean, the micro mean, and the worst corpus called out by
+  name. `summarize(rows)` computes both means; `group_by_corpus(rows)` does the
+  grouping.
+- `--rank-by {macro,micro}`, default `macro`, chooses which mean picks the best
+  decoder. **No-op on a single-corpus split**, where macro and micro are the
+  same number by construction — pinned by a test.
+- `tests/test_per_genre_eval.py` (17 cases), including a regression pin that
+  reproduces the measured merge table below from its raw per-corpus values.
 
-- `BeatEvaluator` gained a `track_corpora()` returning the source corpus per
-  track, aligned with `compute_track_probs()`. *(The related change that lets
-  it build from the split's `TrackRef`s when the dataset has no directory of
-  its own — which is what makes `--dataset merge` work at all — was kept.)*
-- `tools/diagnose_beat_phase.py` printed a **PER-GENRE BREAKDOWN** with
-  per-corpus scores, the macro mean, the micro mean and the worst corpus; with
-  >1 corpus it ranked decoders by macro rather than micro confusion.
-- `build_beat_dataloaders(cfg, per_genre_val=True)` split validation into one
-  loader per corpus; `BeatPhaseModule` logged `val/<corpus>/<metric>` and
-  reduced to `val/macro_<metric>` / `val/worst_<metric>`.
-- **The training side was kept deliberately additive**, and this constraint
-  should survive any rebuild: `val/<metric>` must keep its track-weighted
-  (micro) meaning, computed by pooling raw sums so it is bit-for-bit what a
-  single blended loader reported. `val/loss` is monitored by
-  `ReduceLROnPlateau` and `ModelCheckpoint` *and* spliced into checkpoint
-  filenames (`common.py:203`), so redefining it would make runs from before and
-  after incomparable while looking identical — the same silent-semantic-drift
-  that caused the `--binary-only` misreading in §2.1. To *select* on the
-  general-tool objective, point the monitor at `val/macro_loss` explicitly.
+**Deliberately NOT shipped — the training side.** Nothing under
+`musicality/trainers/` changed: no per-corpus val dataloaders, no new
+training-time W&B keys, and `val/loss` keeps its exact current meaning.
+`val/loss` is monitored by `ReduceLROnPlateau` *and* `ModelCheckpoint` *and*
+spliced into checkpoint filenames (`common.py:167-168`), so touching it would
+make runs from before and after incomparable while looking identical — the same
+silent-semantic-drift that caused the `--binary-only` misreading in §2.1.
+
+If the training side is picked up later, two constraints carry over: `val/<metric>`
+must keep its track-weighted (micro) meaning (pool raw sums so it is bit-for-bit
+what a single blended loader reported), and moving selection to `val/macro_loss`
+must be an explicit, separate decision. Note also that macro hands 1/6 of the
+score to a 7-track corpus — good to *read*, not yet trustworthy to *select* on.
 
 **First measurement — merge-trained `epoch57` on merge val, `viterbi=5`:**
 
