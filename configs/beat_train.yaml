@@ -46,7 +46,37 @@ target_layout: one_last
 # Values below follow the existing convention of shading ~10% under the
 # measured ratio — exact inverse-frequency weighting on a soft target tends to
 # overshoot into false positives.
+#
+# ONLY VALID FOR target_layout: one_last. The `positions` head has a single BCE
+# term, so it takes a scalar or `auto`; a list is rejected at construction.
+# Run the softmax head as:
+#   uv run python tools/train_beat.py target_layout=positions pos_weight=auto
 pos_weight: [5, 4, 4]
+# `pos_weight: auto` derives the weight per sample from the beat target
+# instead, as alpha * (1 - mean(beat_y)) / mean(beat_y). A fixed value is only
+# right at one tempo: the true neg:pos ratio is 2.6 on jtd (193 BPM), 4.5 on
+# ballroom (125) and 11.3 at classical's 10th percentile (56), because the
+# smeared target carries a constant ~3.75 frames of mass per beat while the
+# beat period does not. Deriving it also keeps it correct under time_stretch,
+# which invalidates a hand-tuned value on every augmented clip.
+#
+# 1.11 reproduces the 5 above at ballroom's median tempo, so switching to
+# `auto` is a pure cross-tempo recalibration — neutral on the corpus every
+# previous measurement was taken on. 1.0 is exact inverse-frequency weighting.
+pos_weight_alpha: 1.11
+# How the bar-position cross-entropy is averaged (target_layout: positions only).
+#   global   — one weighted mean over the batch, i.e. a micro-average over
+#              *beats*. A clip's influence is then proportional to its beat
+#              count: measured on merge, jtd takes 73.7% of the position
+#              gradient against 63.8% of the tracks, ballroom 18.0% against
+#              24.1%. The share ratio between two corpora is exactly their
+#              tempo ratio.
+#   per_item — normalize each clip by its own beat weight first, so every
+#              annotated clip carries 1/n_valid regardless of tempo. That is a
+#              macro-average over tracks, matching the per-genre metric.
+# Changes the value of val/loss, which ModelCheckpoint splices into checkpoint
+# filenames — runs before and after are not loss-comparable.
+position_norm: global
 lr: 5e-4  # learning rate
 weight_decay: 1e-4  # L2 regularisation
 # Balance the logged acc_beat/acc_one/acc_last metrics (average of true-positive
