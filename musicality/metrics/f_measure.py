@@ -60,8 +60,8 @@ def downbeat_f_measures(
        ``2..group_size-1`` are invisible to this metric even under the softmax
        head, which predicts all of them — an error that turns a "2" into a "3"
        cannot register. That is why
-       :func:`musicality.metrics.phase_offset.phase_offset_profile`'s
-       ``correct_fraction`` is the headline bar-position metric and these two
+       :func:`musicality.metrics.position_accuracy.position_accuracy`'s
+       ``position_acc`` is the headline bar-position metric and these two
        are reported alongside it rather than in place of it.
 
     :param ref_times: Reference beat times, in seconds, shape ``(n_beats,)``.

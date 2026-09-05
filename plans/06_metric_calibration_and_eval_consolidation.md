@@ -97,21 +97,21 @@ definition** — see §1.3.
 |---|---|
 | `acc_position`, frame-level, 16 s clip — **what W&B logs** | 0.661 |
 | position head argmax at reference beat frames, full track | 0.588 |
-| decoded `correct_fraction` (detector + Viterbi) | **0.581** |
-| decoded `stability` — best single rotation per track | **0.684** |
+| decoded `position_acc` (detector + Viterbi) | **0.581** |
+| decoded `position_acc_best_offset` — best single rotation per track | **0.684** |
 | head argmax at reference beats, best rotation | 0.671 |
 | `f_one` / `f_last` | 0.554 / 0.509 |
 | `confusion_half_cycle_rate` | 0.260 |
 
 **The decoder is not the problem.** 0.588 raw → 0.581 decoded: the global Viterbi
-decoder costs 0.7 points. The question `phase_offset.py` was written to answer is
+decoder costs 0.7 points. The question `position_accuracy.py` was written to answer is
 settled, and `plans/04`'s decoder work can be considered closed.
 
 **~9 points is a wrong global anchor.** 0.581 absolute against 0.671
 offset-invariant. The model found a consistent bar grid and started it on the
 wrong beat. A listener hears "it has the bar, it is phase-shifted", not "it is
 wrong 40% of the time" — the most likely reason inference sounds better than the
-number. **`stability` is therefore not a useless metric; it is the one that
+number. **The best-offset number is therefore not a useless metric; it is the one that
 explains the gap.** It is currently computed only inside
 `tools/diagnose_beat_phase.py` and never reported.
 
@@ -284,7 +284,7 @@ anchor_error             = position_acc_best_offset − position_acc  ≥ 0
 allowed to rotate its bar numbering by **one constant per track**. So the
 difference is exactly the cost of choosing the wrong global anchor — a
 representation failure the model could fix without changing its grid at all.
-`h` is the histogram `phase_offset_profile` already returns.
+`h` is the histogram `position_accuracy` already returns.
 
 </details>
 
@@ -346,12 +346,12 @@ POSITION
   confusion                 0.260   (demoted, kept for continuity)
 ```
 
-**Pruned:** `modal_fraction` (byte-identical duplicate of `stability` in the same
+**Pruned:** `modal_fraction` (byte-identical duplicate of the best-offset value in the same
 dict); `BASE_VARIANTS` (`diagnose_beat_phase.py:66`, dead constant); the three
 copies of `_fmt`/`_mean` (`evaluation.py:105,110`,
 `diagnose_beat_phase.py:72,78`, `sweep_beat_postprocess.py:64,148`) collapse to one.
 
-**Not pruned:** `stability` — §1.2 makes it load-bearing, not obsolete;
+**Not pruned:** the best-offset value — §1.2 makes it load-bearing, not obsolete;
 `confusion_half_cycle_rate` — every number in `plans/04` and `plans/05` is in
 these units; `f_one`/`f_last`. `acc_one`/`acc_last` in `_TRACKED_KEYS`
 (`train_beat_phase.py:21`) are already no-ops under `target_layout: positions`
@@ -368,7 +368,7 @@ layout.
 |---|---|
 | `musicality/metrics/continuity.py` | **new.** `beat_continuity(ref_times, est_times, trim=True) -> dict \| None` with `cmlc/cmlt/amlc/amlt`. Thin wrapper over `mir_eval.beat.continuity`; returns `None` when either sequence has <2 beats after `trim_beats` — mir_eval warns and returns zeros otherwise, which would average in as a real score |
 | `musicality/metrics/frame_accuracy.py` | add `peak_f_measure(probs, target, fps, threshold, min_distance, tolerance)` (§2.4) and `frame_f_measure(probs, target, mask=None, threshold=0.5, tolerance_frames=3)` (§2.3). Keep `frame_accuracy` — `beat_module.py` and tests use it — but stop logging it |
-| `musicality/metrics/phase_offset.py` | drop the `modal_fraction` key. Document `correct_fraction` → `position_acc`, `stability` → `position_acc_best_offset`, and add `anchor_error` |
+| `musicality/metrics/phase_offset.py` | **shipped, and went further than planned:** renamed to `position_accuracy.py`, `phase_offset_profile()` to `position_accuracy()`. Dropped `modal_fraction`; renamed `correct_fraction` → `position_acc` and `stability` → `position_acc_best_offset` rather than only documenting the mapping, so `anchor_error = position_acc_best_offset - position_acc` reads as two accuracies rather than a consistency minus an accuracy. `tests/test_phase_offset.py` → `tests/test_position_accuracy.py` |
 | `musicality/metrics/f_measure.py` | docstring only: record that `downbeat_f_measures` scores positions 1 and `group_size` only (§2.6) |
 | `musicality/trainers/beat_phase_module.py` | log `{stage}/f_beat` from `peak_f_measure` in place of `{stage}/acc_beat`. **New key, not a redefinition** — old runs keep `acc_beat` meaning what it meant |
 | `musicality/trainers/beat_module.py` | same swap for the beat-only task |
@@ -479,7 +479,7 @@ uv run ruff format musicality/ tools/ tests/
 
 Tests needing updates: `tests/test_sweep_beat_postprocess.py` (retarget at
 `--sweep`), `tests/test_evaluation.py` (mocks `evaluate_track`, asserts positional
-args), `tests/test_per_genre_eval.py`, `tests/test_phase_offset.py` (drops
+args), `tests/test_per_genre_eval.py`, `tests/test_position_accuracy.py` (drops
 `modal_fraction`), `tests/test_metrics.py` (add `frame_f_measure`,
 `peak_f_measure`, `beat_continuity`).
 

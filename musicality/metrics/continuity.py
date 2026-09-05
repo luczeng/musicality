@@ -32,6 +32,8 @@ def beat_continuity(
     :func:`~musicality.metrics.f_measure.beat_f_measure`, which judges each
     beat in isolation.
 
+    See the paper "Evaluation Methods for Musical Audio Beat Tracking Algorithms, Davies et al., 2009"
+
     :param ref_times: Reference beat times, in seconds.
     :param est_times: Estimated beat times, in seconds.
     :param trim: If ``True``, drop events before 5s from both sets first —

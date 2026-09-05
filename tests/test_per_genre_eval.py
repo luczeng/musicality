@@ -54,9 +54,9 @@ def _row(corpus, f_one=0.5, f_last=0.5, confusion=0.5, stability=0.5):
         "f_one": f_one,
         "f_last": f_last,
         "confusion": confusion,
-        "stability": stability,
+        "position_acc_best_offset": stability,
         "modal_offset": 0,
-        "correct_fraction": 1.0,
+        "position_acc": 1.0,
     }
 
 
@@ -158,7 +158,7 @@ class TestSummarize:
         ]
         summary = summarize(rows)
 
-        for key in ("f_one", "f_last", "confusion", "stability"):
+        for key in ("f_one", "f_last", "confusion", "position_acc_best_offset"):
             assert summary[f"macro_{key}"] == pytest.approx(summary[key])
 
     def test_equal_sized_corpora_make_macro_identical_to_micro(self):

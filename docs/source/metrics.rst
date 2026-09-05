@@ -8,6 +8,6 @@ Metrics
    ~musicality.metrics.f_measure
    ~musicality.metrics.continuity
    ~musicality.metrics.confusion
-   ~musicality.metrics.phase_offset
+   ~musicality.metrics.position_accuracy
    ~musicality.metrics.frame_accuracy
    ~musicality.metrics.tempo_acc1

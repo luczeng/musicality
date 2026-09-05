@@ -21,7 +21,7 @@ postprocessing function), so this runs two complementary experiments over the
    global decode fixes it, it was (B).
 2. **Phase-offset profile** — per track, the dominant prediction-vs-reference
    phase offset and how *stable* that offset is within the track (see
-   :func:`musicality.metrics.phase_offset.phase_offset_profile`). Stable-but-
+   :func:`musicality.metrics.position_accuracy.position_accuracy`). Stable-but-
    wrong points at (A); unstable points at (B). This explains *why* the
    decoder comparison came out the way it did.
 
@@ -57,7 +57,7 @@ from musicality.evaluation import DATA_DIR, BeatEvaluator
 from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
 from musicality.metrics.confusion import confusion_half_cycle_rate
 from musicality.metrics.f_measure import downbeat_f_measures
-from musicality.metrics.phase_offset import phase_offset_profile
+from musicality.metrics.position_accuracy import position_accuracy
 from musicality.postprocess import readout
 
 
@@ -66,7 +66,7 @@ from musicality.postprocess import readout
 BASE_VARIANTS = ("greedy", "global")
 
 # The per-track scores that get aggregated, micro and macro alike.
-_SCORE_KEYS = ("f_one", "f_last", "confusion", "stability")
+_SCORE_KEYS = ("f_one", "f_last", "confusion", "position_acc_best_offset")
 
 
 def _mean(values: list[float]) -> float:
@@ -158,7 +158,7 @@ def score_decoder(
         confusion = confusion_half_cycle_rate(
             beat_times, positions, events, tolerance=tolerance, group_size=group_size
         )
-        profile = phase_offset_profile(
+        profile = position_accuracy(
             beat_times, positions, events, tolerance=tolerance, group_size=group_size
         )
 
@@ -169,8 +169,10 @@ def score_decoder(
                 "f_last": f_last,
                 "confusion": confusion,
                 "modal_offset": profile["modal_offset"] if profile else None,
-                "stability": profile["stability"] if profile else None,
-                "correct_fraction": profile["correct_fraction"] if profile else None,
+                "position_acc_best_offset": (
+                    profile["position_acc_best_offset"] if profile else None
+                ),
+                "position_acc": profile["position_acc"] if profile else None,
             }
         )
 
@@ -180,7 +182,7 @@ def score_decoder(
 def summarize(rows: list[dict]) -> dict:
     """Aggregate scored rows into micro *and* macro means.
 
-    - **micro** (the bare ``f_one`` / ``f_last`` / ``confusion`` / ``stability``
+    - **micro** (the bare ``f_one`` / ``f_last`` / ``confusion`` / ``position_acc_best_offset``
       keys) averages over *tracks* — the historical behaviour.
     - **macro** (the ``macro_*`` keys) averages within each corpus first, then
       averages those means, so every corpus counts once regardless of size.
@@ -241,14 +243,14 @@ def print_genre_breakdown(rows: list[dict], decoder_name: str) -> None:
     print(f"\n  decoder: {decoder_name}\n")
     print(
         f"  {'corpus':<18} {'n':>5} {'f_one':>7} {'f_last':>7} "
-        f"{'confuse':>8} {'stability':>10}"
+        f"{'confuse':>8} {'best_off':>10}"
     )
 
     def _row(label: str, n: int, stats: dict) -> None:
         print(
             f"  {label:<18} {n:5d} {_fmt(stats['f_one']):>7} "
             f"{_fmt(stats['f_last']):>7} {_fmt(stats['confusion']):>8} "
-            f"{_fmt(stats['stability']):>10}"
+            f"{_fmt(stats['position_acc_best_offset']):>10}"
         )
 
     per_corpus = {}
@@ -290,7 +292,11 @@ def print_offset_profile(rows: list[dict], group_size: int) -> None:
     """Print the per-track modal-offset histogram and within-track stability."""
 
     offsets = [r["modal_offset"] for r in rows if r["modal_offset"] is not None]
-    stabilities = [r["stability"] for r in rows if r["stability"] is not None]
+    stabilities = [
+        r["position_acc_best_offset"]
+        for r in rows
+        if r["position_acc_best_offset"] is not None
+    ]
 
     if not offsets:
         print("  (no track produced a resolvable phase offset)")
@@ -340,7 +346,11 @@ def print_verdict(
 ) -> None:
     """Translate the two experiments into an explicit A-or-B call."""
 
-    stabilities = [r["stability"] for r in greedy_rows if r["stability"] is not None]
+    stabilities = [
+        r["position_acc_best_offset"]
+        for r in greedy_rows
+        if r["position_acc_best_offset"] is not None
+    ]
     mean_stability = float(np.mean(stabilities)) if stabilities else float("nan")
 
     delta = greedy["confusion"] - best["confusion"]
@@ -562,7 +572,7 @@ def main():
     print(f"DECODER COMPARISON  (split={args.split}, same cached probabilities)")
     print("=" * 78)
     print(
-        f"\n  {'decoder':<36} {'f_one':>7} {'f_last':>7} {'confuse':>8} {'stability':>10}"
+        f"\n  {'decoder':<36} {'f_one':>7} {'f_last':>7} {'confuse':>8} {'best_off':>10}"
     )
 
     results = {}
@@ -589,7 +599,7 @@ def main():
 
         print(
             f"  {name:<36} {_fmt(summary['f_one']):>7} {_fmt(summary['f_last']):>7} "
-            f"{_fmt(summary['confusion']):>8} {_fmt(summary['stability']):>10}"
+            f"{_fmt(summary['confusion']):>8} {_fmt(summary['position_acc_best_offset']):>10}"
         )
 
         for row in rows:
