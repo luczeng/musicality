@@ -117,6 +117,23 @@ dataset's split independently of any one dataset instance's ordering (see
 argument, or ``Splitter(...).run()`` for the ``Subset``-returning form used
 during training.
 
+Flagged tracks are excluded from splits
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A track whose metadata has ``warning`` (the annotator's ⚠ Flag — "this
+annotation looks wrong") or ``needs_review`` (❓ To Review — "take another
+look") set to ``True`` is skipped by the splitter, and so never reaches
+training or validation. The filter runs on both sides: ``create()``
+excludes flagged tracks from the pool before splitting, so they're written
+into neither ``train.txt`` nor ``val.txt``, and every read path
+(``run()``, ``load_refs``, ``load_refs_from_dir``) drops them again on
+load. That second half is what makes flagging usable day to day — a track
+flagged in the annotator *after* a split was generated falls out of the
+next training run on its own, with no need to regenerate the split file or
+re-run ``create_splits.py``. Only the default annotation slot's metadata is
+consulted, matching which slot the loaders read. Clearing the flag in the
+annotator puts the track straight back in.
+
 Merging datasets
 -----------------
 
