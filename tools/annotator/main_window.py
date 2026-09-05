@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 import musicality.dataformats as dataformats
+from musicality.corrections.phase import shift_beat_positions
 
 from .audio import AudioEngine
 from .inference import (
@@ -71,6 +72,7 @@ from .data import (
     save_annotations,
     save_metadata,
     tempo_from_beats,
+    track_needs_review,
     track_split,
     track_warning,
 )
@@ -110,6 +112,7 @@ class MainWindow(QMainWindow):
     Space      : tap tempo
     P          : play / pause
     Left/Right : previous / next track
+    Shift+Left/Shift+Right : rotate bar-position labels by -1/+1 beat
     Ctrl+S     : save annotations
     Ctrl+click : add beat at clicked position on waveform
     Ctrl+right-click : remove beat nearest to clicked position
@@ -141,6 +144,11 @@ class MainWindow(QMainWindow):
         self._recorder = Recorder()
         self._timer = QTimer(self)
         self._n_beats = DEFAULT_N_BEATS
+        # Preview-only rotation applied on top of self._track.beat_positions
+        # by the Shift buttons — not baked into self._track (and so not
+        # touched by the regular Save button) until "Save corrected taps" is
+        # pressed. See _effective_beat_positions().
+        self._phase_shift_offset: int = 0
         self._accent_bars: float = 1.0
         self._record_start: float = 0.0
         self._record_tick: int = 0
@@ -206,6 +214,12 @@ class MainWindow(QMainWindow):
         self._flag_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._flag_btn.setCheckable(True)
         self._flag_btn.clicked.connect(self._on_flag_suspicious)
+
+        self._review_btn = QPushButton("❓  To Review")
+        self._review_btn.setFixedWidth(110)
+        self._review_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._review_btn.setCheckable(True)
+        self._review_btn.clicked.connect(self._on_toggle_review)
 
         self._record_dataset_edit = QLineEdit("swing")
         self._record_dataset_edit.setFixedWidth(110)
@@ -313,6 +327,7 @@ class MainWindow(QMainWindow):
         rename_bar = QHBoxLayout()
         rename_bar.addWidget(self._rename_btn)
         rename_bar.addWidget(self._flag_btn)
+        rename_bar.addWidget(self._review_btn)
         rename_bar.addStretch()
 
         sound_bar = QHBoxLayout()
@@ -472,6 +487,51 @@ class MainWindow(QMainWindow):
             QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont)
         )
 
+        self._phase_shift_divider = QFrame()
+        self._phase_shift_divider.setFrameShape(QFrame.Shape.HLine)
+        self._phase_shift_divider.setFrameShadow(QFrame.Shadow.Sunken)
+
+        self._phase_shift_label = QLabel(
+            "Phase correction — preview a rotation of the bar-position labels "
+            "(beat times unchanged), then Save corrected taps to persist it:"
+        )
+        self._phase_shift_label.setStyleSheet("color: #aaaaaa;")
+        self._phase_shift_label.setWordWrap(True)
+
+        self._shift_left_btn = QPushButton("◀  Shift")
+        self._shift_left_btn.setFixedWidth(90)
+        self._shift_left_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._shift_left_btn.setToolTip(
+            "Preview bar-position labels rotated by -1 beat (Shift+Left)"
+        )
+        self._shift_left_btn.clicked.connect(lambda: self._on_shift_phase(-1))
+
+        self._shift_right_btn = QPushButton("Shift  ▶")
+        self._shift_right_btn.setFixedWidth(90)
+        self._shift_right_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._shift_right_btn.setToolTip(
+            "Preview bar-position labels rotated by +1 beat (Shift+Right)"
+        )
+        self._shift_right_btn.clicked.connect(lambda: self._on_shift_phase(1))
+
+        phase_shift_bar = QHBoxLayout()
+        phase_shift_bar.addWidget(self._shift_left_btn)
+        phase_shift_bar.addWidget(self._shift_right_btn)
+        phase_shift_bar.addStretch()
+
+        self._save_phase_btn = QPushButton("💾  Save corrected taps")
+        self._save_phase_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._save_phase_btn.setToolTip(
+            "Persist the previewed phase shift to this track's annotation — "
+            "independent of the regular Save button, which never writes a "
+            "pending preview"
+        )
+        self._save_phase_btn.clicked.connect(self._on_save_phase_shift)
+
+        phase_save_bar = QHBoxLayout()
+        phase_save_bar.addWidget(self._save_phase_btn)
+        phase_save_bar.addStretch()
+
         # Left: every button/slider/combo that changes something (playback,
         # recording, speed, accents, structure, delete/rename). Right:
         # read-only track info — beat-derived analytics (_stats_label) and
@@ -500,6 +560,10 @@ class MainWindow(QMainWindow):
         info_column.addWidget(self._metadata_label)
         info_column.addWidget(self._dataset_summary_divider)
         info_column.addWidget(self._dataset_summary_label)
+        info_column.addWidget(self._phase_shift_divider)
+        info_column.addWidget(self._phase_shift_label)
+        info_column.addLayout(phase_shift_bar)
+        info_column.addLayout(phase_save_bar)
         info_column.addStretch()
 
         divider = QFrame()
@@ -580,6 +644,7 @@ class MainWindow(QMainWindow):
         track_id = self._track_ids[index]
         self._track = load_track(self._dataset_name, track_id)
         self._n_beats = beats_per_bar(self._track.beat_positions, default=self._n_beats)
+        self._phase_shift_offset = 0
         self._sync_count_buttons()
 
         # Inferred beats belong to the previous track's audio — clear them.
@@ -615,6 +680,8 @@ class MainWindow(QMainWindow):
         self._author_edit.setText(metadata.annotator_id or "")
         self._update_metadata_label()
         self._update_flag_button()
+        self._update_review_button()
+        self._update_phase_shift_controls()
 
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
@@ -777,11 +844,17 @@ class MainWindow(QMainWindow):
             item.setText(3, "")
 
         item.setToolTip(
-            4, "Flagged as a suspicious annotation — toggle with the ⚠ Flag button"
+            4,
+            "⚠ Flagged as a suspicious annotation (toggle with the Flag button) — "
+            "takes priority in this column over ❓ needs review (toggle with the "
+            "To Review button)",
         )
         if track_warning(dataset_name, track_id):
             item.setText(4, "⚠")
             item.setForeground(4, QColor("#ffcc00"))
+        elif track_needs_review(dataset_name, track_id):
+            item.setText(4, "❓")
+            item.setForeground(4, QColor("#aa66ff"))
         else:
             item.setText(4, "")
 
@@ -822,6 +895,105 @@ class MainWindow(QMainWindow):
         loaded mirdata meter like 3/4 time has no matching quick-select button)."""
         for btn in self._count_group.buttons():
             btn.setChecked(btn.text() == str(self._n_beats))
+
+    def _update_phase_shift_controls(self) -> None:
+        """Enable the Shift buttons whenever a position-labeled track is loaded,
+        and Save corrected taps only once a preview is actually pending."""
+        has_positions = (
+            self._track is not None
+            and self._track.beat_positions is not None
+            and len(self._track.beat_positions) > 0
+        )
+        self._shift_left_btn.setEnabled(has_positions)
+        self._shift_right_btn.setEnabled(has_positions)
+        self._save_phase_btn.setEnabled(has_positions and self._phase_shift_offset != 0)
+
+    def _effective_beat_positions(self) -> np.ndarray | None:
+        """Return beat_positions with any pending phase-shift preview applied.
+
+        The preview (``self._phase_shift_offset``) is display/audio-only —
+        it's what the waveform, click track, and metronome read, but it
+        isn't baked into ``self._track`` until "Save corrected taps" is
+        pressed, so the regular Save button keeps writing the unshifted
+        positions regardless of an active preview.
+        """
+        if self._track is None or self._track.beat_positions is None:
+            return None
+        if self._phase_shift_offset == 0:
+            return self._track.beat_positions
+        return shift_beat_positions(
+            self._track.beat_positions, self._phase_shift_offset, self._n_beats
+        )
+
+    def _on_shift_phase(self, offset: int) -> None:
+        """Nudge the pending phase-shift preview by *offset* beats.
+
+        Preview-only: updates the waveform/click-track/metronome display via
+        :meth:`_effective_beat_positions`, but leaves ``self._track`` (and so
+        the regular Save button) untouched. Press "Save corrected taps" to
+        persist it.
+        """
+        if (
+            self._track is None
+            or self._track.beat_positions is None
+            or len(self._track.beat_positions) == 0
+        ):
+            return
+
+        self._phase_shift_offset += offset
+        self._refresh_beats()
+        if self._phase_shift_offset == 0:
+            message = "Phase preview cleared."
+        else:
+            message = (
+                f"Previewing phase shift {self._phase_shift_offset:+d} beat(s) "
+                f'— press "Save corrected taps" to persist.'
+            )
+        self.statusBar().showMessage(message, 3000)
+
+    def _on_save_phase_shift(self) -> None:
+        """Bake the pending phase-shift preview into the track's saved annotation.
+
+        Persists the shifted beat_positions and stamps
+        ``TrackMetadata.corrected = True``. Doesn't touch structure/section/
+        author — those stay owned by the regular Save button
+        (:meth:`_on_save`), which in turn never writes a pending preview, so
+        the two save actions stay independent.
+        """
+        if (
+            self._track is None
+            or self._track.beat_positions is None
+            or self._phase_shift_offset == 0
+        ):
+            return
+
+        positions = shift_beat_positions(
+            self._track.beat_positions, self._phase_shift_offset, self._n_beats
+        )
+        self._track = TrackData(
+            dataset_name=self._track.dataset_name,
+            track_id=self._track.track_id,
+            audio_path=self._track.audio_path,
+            tempo=self._track.tempo,
+            beat_times=self._track.beat_times,
+            beat_positions=positions,
+            annotator_id=self._track.annotator_id,
+        )
+        self._phase_shift_offset = 0
+
+        path = annotation_path(self._track)
+        save_annotations(self._track, path)
+
+        metadata = (
+            load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
+        )
+        metadata.corrected = True
+        save_metadata(self._dataset_name, self._track.track_id, metadata)
+
+        self._refresh_beats()
+        self._update_row_indicators()
+        self._update_metadata_label()
+        self.statusBar().showMessage(f"Saved corrected taps → {path}", 3000)
 
     def _on_count_changed(self, n_beats: int) -> None:
         """Change the tap phrase length, re-tagging any already-tapped beats.
@@ -1117,7 +1289,10 @@ class MainWindow(QMainWindow):
             self._inferred_container.setVisible(False)
             self._track_label.setText("")
             self._stats_label.setText("")
+            self._phase_shift_offset = 0
             self._update_flag_button()
+            self._update_review_button()
+            self._update_phase_shift_controls()
         self._populate_dataset_list(keep_selection=True)
         self.statusBar().showMessage(f"Track deleted.", 3000)
 
@@ -1186,6 +1361,37 @@ class MainWindow(QMainWindow):
             "color: #ffcc00; font-weight: bold;" if warning else ""
         )
 
+    def _on_toggle_review(self, checked: bool) -> None:
+        if self._track is None:
+            self._review_btn.setChecked(not checked)
+            return
+        metadata = (
+            load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
+        )
+        metadata.needs_review = checked
+        save_metadata(self._dataset_name, self._track.track_id, metadata)
+        self._update_row_indicators()
+        self._update_review_button()
+        self._update_metadata_label()
+        self.statusBar().showMessage(
+            "Flagged for review." if checked else "Review flag cleared.", 3000
+        )
+
+    def _update_review_button(self) -> None:
+        """Sync the To Review toggle's checked state/label/style to the track's
+        saved needs_review flag."""
+        needs_review = False
+        if self._track is not None:
+            metadata = load_metadata(self._dataset_name, self._track.track_id)
+            needs_review = bool(metadata.needs_review) if metadata else False
+        self._review_btn.setChecked(needs_review)  # setChecked() doesn't emit clicked()
+        self._review_btn.setText(
+            "❓  Needs Review" if needs_review else "❓  To Review"
+        )
+        self._review_btn.setStyleSheet(
+            "color: #aa66ff; font-weight: bold;" if needs_review else ""
+        )
+
     def _click_source(self) -> str:
         checked = self._click_source_group.checkedButton()
         return checked.text().lower() if checked is not None else "manual"
@@ -1198,7 +1404,7 @@ class MainWindow(QMainWindow):
             beat_positions = self._inferred_beat_positions
         else:
             beat_times = self._track.beat_times
-            beat_positions = self._track.beat_positions
+            beat_positions = self._effective_beat_positions()
         beat_frames = (beat_times * self._track_sr).astype(int)
         n = len(beat_times)
         if beat_positions is not None:
@@ -1219,9 +1425,12 @@ class MainWindow(QMainWindow):
         """Refresh derived views after beats change. Does not touch
         ``self._n_beats`` — that's owned by the Count selector (see
         :meth:`_on_count_changed`), not re-derived from partial tap data."""
-        self._waveform.set_beats(self._track.beat_times, self._track.beat_positions)
+        self._waveform.set_beats(
+            self._track.beat_times, self._effective_beat_positions()
+        )
         self._update_engine_clicks()
         self._update_info_label()
+        self._update_phase_shift_controls()
 
     def _update_info_label(self) -> None:
         if self._track is None:
@@ -1266,6 +1475,10 @@ class MainWindow(QMainWindow):
         parts = []
         if metadata.warning:
             parts.append("⚠ Flagged as suspicious")
+        if metadata.needs_review:
+            parts.append("❓ Needs review")
+        if metadata.corrected:
+            parts.append("✓ Phase-corrected")
         if metadata.annotator_id:
             parts.append(f"Author: {metadata.annotator_id}")
         if metadata.device:
@@ -1310,11 +1523,12 @@ class MainWindow(QMainWindow):
         t = self._engine.position
         self._waveform.set_position(t)
         self._inferred_waveform.set_position(t)
+        display_positions = self._effective_beat_positions()
         pos = active_beat_position(
-            self._track.beat_times, self._track.beat_positions, t, self._n_beats
+            self._track.beat_times, display_positions, t, self._n_beats
         )
         bar_index = active_bar_index(
-            self._track.beat_times, self._track.beat_positions, t, self._n_beats
+            self._track.beat_times, display_positions, t, self._n_beats
         )
         self._metronome.set_state(self._n_beats, pos, bar_index)
 
@@ -1335,9 +1549,15 @@ class MainWindow(QMainWindow):
         elif key == Qt.Key.Key_P:
             self._on_play_pause()
         elif key == Qt.Key.Key_Left:
-            self._on_prev()
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._on_shift_phase(-1)
+            else:
+                self._on_prev()
         elif key == Qt.Key.Key_Right:
-            self._on_next()
+            if event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self._on_shift_phase(1)
+            else:
+                self._on_next()
         elif key == Qt.Key.Key_Return or key == Qt.Key.Key_Enter:
             if self._track is not None:
                 self._on_save()

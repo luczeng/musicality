@@ -21,8 +21,9 @@ import musicality.dataformats as dataformats
 # stamps this value; TrackMetadata.schema_version defaults to 1 (the implicit
 # version of every file saved before this field existed), so a file missing
 # the key on load is correctly read as version 1 rather than "current".
-# v2 adds annotator_id and section_aligned. v3 adds warning.
-METADATA_SCHEMA_VERSION = 3
+# v2 adds annotator_id and section_aligned. v3 adds warning. v4 adds
+# needs_review. v5 adds corrected.
+METADATA_SCHEMA_VERSION = 5
 
 _SANITIZE_RE = re.compile(r"[^\w\-]")
 
@@ -92,6 +93,8 @@ class TrackMetadata:
     # None = not recorded.
     section_aligned: bool | None = None
     warning: bool = False  # flagged as a suspicious/questionable annotation
+    needs_review: bool = False  # flagged as "take another look", distinct from warning
+    corrected: bool = False  # a phase-shift correction has been saved for this track
     schema_version: int = 1
 
 
