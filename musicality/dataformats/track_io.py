@@ -301,7 +301,9 @@ def resolve_track_audio(
     return path if path.exists() else None
 
 
-def list_track_refs(name: str, data_home: Path | None = None) -> list[TrackRef]:
+def list_track_refs(
+    name: str, data_home: Path | None = None, contains: str | None = None
+) -> list[TrackRef]:
     """Return every migrated track for *name*, wrapped as :class:`TrackRef`.
 
     Thin wrapper over :func:`list_migrated_track_ids` — kept as the loaders'
@@ -309,8 +311,19 @@ def list_track_refs(name: str, data_home: Path | None = None) -> list[TrackRef]:
     track ids. To build a dataset from tracks spanning several source
     datasets (e.g. a merge), pass ``refs=`` directly to
     ``TempoDataset``/``BeatDataset`` instead of going through *name*.
+
+    :param contains: If given, keep only tracks whose ``track_id`` contains
+        this substring, matched case-insensitively. Datasets that encode a
+        category in the track id — e.g. gtzan's ``blues_00001``,
+        ``jazz_00042`` — are then addressable as a subset without any
+        separate manifest: ``contains="blues"`` is gtzan's blues tracks.
     """
 
     base = data_home or dataformats.DATA_DIR / name
+    needle = contains.lower() if contains else None
 
-    return [TrackRef(name, stem, base) for stem in list_migrated_track_ids(name, base)]
+    return [
+        TrackRef(name, stem, base)
+        for stem in list_migrated_track_ids(name, base)
+        if needle is None or needle in stem.lower()
+    ]
