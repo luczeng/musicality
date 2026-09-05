@@ -12,7 +12,7 @@ from musicality.losses import (
     beat_phase_loss,
     beat_position_loss,
 )
-from musicality.metrics.frame_accuracy import frame_accuracy
+from musicality.metrics.frame_accuracy import frame_accuracy, peak_f_measure
 
 
 def align_time(
@@ -76,12 +76,16 @@ class BeatPhaseModule(L.LightningModule):
         latter compensates for largely disappears under ``"beat"``.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
-    :param threshold: Sigmoid/target threshold used only for the logged accuracy
-        metrics, not for the loss itself.
+    :param threshold: Sigmoid/target threshold used only for the logged metrics,
+        not for the loss itself. Doubles as the peak-picking threshold for
+        ``{stage}/f_beat``.
     :param balanced: Passed through to :func:`~musicality.metrics.frame_accuracy.frame_accuracy`
-        for the logged accuracy metrics. Defaults to ``True`` since beat/one/last
-        frames are a small minority and a pooled mean is dominated by the
-        true-negative rate.
+        for the logged ``acc_one``/``acc_last`` metrics. Defaults to ``True``
+        since one/last frames are a small minority and a pooled mean is
+        dominated by the true-negative rate. No longer affects the beat head,
+        which is scored by :func:`~musicality.metrics.frame_accuracy.peak_f_measure`;
+        kept as a constructor parameter regardless, since it is saved in every
+        existing checkpoint's hyperparameters and is passed back on load.
     :param check_val_every_n_epoch: How often the trainer actually runs
         validation (``cfg.trainer.check_val_every_n_epoch``). The
         ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —
@@ -162,13 +166,8 @@ class BeatPhaseModule(L.LightningModule):
         log_kw = dict(on_step=False, on_epoch=True)
         self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
         self.log(
-            f"{stage}/acc_beat",
-            frame_accuracy(
-                beat_p,
-                beat_y,
-                threshold=self.hparams.threshold,
-                balanced=self.hparams.balanced,
-            ),
+            f"{stage}/f_beat",
+            peak_f_measure(beat_p, beat_y, threshold=self.hparams.threshold),
             **log_kw,
         )
 
@@ -226,8 +225,8 @@ class BeatPhaseModule(L.LightningModule):
         balanced = self.hparams.balanced
         self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
         self.log(
-            f"{stage}/acc_beat",
-            frame_accuracy(beat_p, beat_y, threshold=threshold, balanced=balanced),
+            f"{stage}/f_beat",
+            peak_f_measure(beat_p, beat_y, threshold=threshold),
             **log_kw,
         )
         self.log(

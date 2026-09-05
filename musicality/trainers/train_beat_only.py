@@ -19,9 +19,9 @@ from musicality.trainers.common import (
 
 _TRACKED_KEYS = (
     "train/loss",
-    "train/acc_beat",
+    "train/f_beat",
     "val/loss",
-    "val/acc_beat",
+    "val/f_beat",
 )
 
 

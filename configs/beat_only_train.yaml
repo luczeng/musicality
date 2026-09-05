@@ -12,9 +12,10 @@ task: beat_only
 pos_weight: 6.0
 lr: 5e-4
 weight_decay: 1e-4
-# Balance the logged acc_beat metric (average of true-positive and
-# true-negative rate) instead of a pooled mean, which is dominated by the
-# true-negative rate since beat frames are a small minority.
+# Unused: the beat head is scored by peak_f_measure (logged as f_beat), which
+# picks peaks before matching and so has no true-negative term to balance.
+# Kept because it is stored in every existing checkpoint's hyperparameters and
+# passed back to the module on load.
 balanced: true
 batch_size: 2
 n_mels: 128
