@@ -38,6 +38,16 @@ def phase_offset_profile(
       phase (right or wrong) from start to finish. Well below ``1.0`` means
       the predicted phase changes partway through the track.
 
+    ``correct_fraction`` and ``stability`` are the project's headline position
+    metrics, reported as ``position_acc`` and ``position_acc_best_offset``:
+    the first is the accuracy as labelled, the second is the accuracy the model
+    would have if allowed to rotate its bar numbering by one constant per
+    track. Their difference, ``anchor_error``, is therefore the cost of
+    choosing the wrong global anchor — a bar grid that is right in every
+    respect except where it starts counting. Measured on ``merge_v4``, that is
+    0.090 of a total 0.419 position error; see
+    ``plans/06_metric_calibration_and_eval_consolidation.md`` section 1.2.
+
     Reading them together:
 
     - high ``stability``, ``modal_offset != 0`` → the model committed to a
@@ -61,10 +71,11 @@ def phase_offset_profile(
         - ``n_matched`` (int) — reference beats that matched a resolved label.
         - ``histogram`` (list[int], length ``group_size``) — count per offset.
         - ``modal_offset`` (int) — most common offset, in ``0..group_size-1``.
-        - ``modal_fraction`` / ``stability`` (float) — fraction of matched
-          beats at ``modal_offset``. Same number under two names; ``stability``
-          reads better when the modal offset is nonzero.
+        - ``stability`` (float) — fraction of matched beats at ``modal_offset``.
         - ``correct_fraction`` (float) — fraction of matched beats at offset 0.
+        - ``anchor_error`` (float) — ``stability - correct_fraction``, always
+          ``>= 0`` since offset 0 is one of the candidates the maximum is taken
+          over. Zero exactly when the dominant offset is the correct one.
     """
 
     ref_times = np.asarray(ref_times, dtype=float)
@@ -94,13 +105,14 @@ def phase_offset_profile(
         return None
 
     modal_offset = int(np.argmax(histogram))
-    modal_fraction = float(histogram[modal_offset] / n_matched)
+    stability = float(histogram[modal_offset] / n_matched)
+    correct_fraction = float(histogram[0] / n_matched)
 
     return {
         "n_matched": n_matched,
         "histogram": histogram.tolist(),
         "modal_offset": modal_offset,
-        "modal_fraction": modal_fraction,
-        "stability": modal_fraction,
-        "correct_fraction": float(histogram[0] / n_matched),
+        "stability": stability,
+        "correct_fraction": correct_fraction,
+        "anchor_error": stability - correct_fraction,
     }

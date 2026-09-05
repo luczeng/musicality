@@ -6,6 +6,7 @@ Metrics
    :recursive:
 
    ~musicality.metrics.f_measure
+   ~musicality.metrics.continuity
    ~musicality.metrics.confusion
    ~musicality.metrics.phase_offset
    ~musicality.metrics.frame_accuracy
