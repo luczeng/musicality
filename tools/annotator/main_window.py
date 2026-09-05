@@ -71,6 +71,8 @@ from .data import (
     save_annotations,
     save_metadata,
     tempo_from_beats,
+    track_split,
+    track_warning,
 )
 from .metronome_widget import MetronomeWidget
 from .tap_tempo_widget import TapTempoWidget
@@ -95,7 +97,7 @@ class MainWindow(QMainWindow):
     Beat inference
     --------------
     "Infer Beats" runs a trained beat-phase checkpoint (picked from the
-    dropdown, scanned from ``checkpoints_beat/`` by default — "Browse…" can
+    dropdown, scanned from ``checkpoints/`` by default — "Browse…" can
     point the scan at any other folder) on the full currently-loaded track
     and shows the predicted beat times on a second waveform strip above the
     main one, so they never overlap the manually annotated beats below.
@@ -198,6 +200,12 @@ class MainWindow(QMainWindow):
         self._rename_btn.setFixedWidth(120)
         self._rename_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._rename_btn.clicked.connect(self._on_rename)
+
+        self._flag_btn = QPushButton("⚠  Flag")
+        self._flag_btn.setFixedWidth(100)
+        self._flag_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._flag_btn.setCheckable(True)
+        self._flag_btn.clicked.connect(self._on_flag_suspicious)
 
         self._record_dataset_edit = QLineEdit("swing")
         self._record_dataset_edit.setFixedWidth(110)
@@ -304,6 +312,7 @@ class MainWindow(QMainWindow):
 
         rename_bar = QHBoxLayout()
         rename_bar.addWidget(self._rename_btn)
+        rename_bar.addWidget(self._flag_btn)
         rename_bar.addStretch()
 
         sound_bar = QHBoxLayout()
@@ -524,11 +533,13 @@ class MainWindow(QMainWindow):
         sort_bar.addWidget(self._dataset_sort_combo)
 
         self._dataset_tree = QTreeWidget()
-        self._dataset_tree.setColumnCount(3)
+        self._dataset_tree.setColumnCount(5)
         self._dataset_tree.header().hide()
         self._dataset_tree.setColumnWidth(0, 320)
         self._dataset_tree.setColumnWidth(1, 18)
         self._dataset_tree.setColumnWidth(2, 36)
+        self._dataset_tree.setColumnWidth(3, 24)
+        self._dataset_tree.setColumnWidth(4, 24)
         self._dataset_tree.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -552,7 +563,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([400, 800])
+        splitter.setSizes([480, 800])
 
         self.setCentralWidget(splitter)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -603,6 +614,7 @@ class MainWindow(QMainWindow):
         self._set_section_aligned(metadata.section_aligned)
         self._author_edit.setText(metadata.annotator_id or "")
         self._update_metadata_label()
+        self._update_flag_button()
 
         self._prev_btn.setEnabled(index > 0)
         self._next_btn.setEnabled(index < len(self._track_ids) - 1)
@@ -662,7 +674,7 @@ class MainWindow(QMainWindow):
             track_item = QTreeWidgetItem()
             track_item.setText(0, track_id)
             track_item.setData(0, Qt.ItemDataRole.UserRole, track_id)
-            self._set_annotation_indicator(track_item, dataset_name, track_id)
+            self._set_row_indicators(track_item, dataset_name, track_id)
             item.addChild(track_item)
 
     def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
@@ -732,7 +744,7 @@ class MainWindow(QMainWindow):
             self._on_delete_track()
 
     @staticmethod
-    def _set_annotation_indicator(
+    def _set_row_indicators(
         item: QTreeWidgetItem, dataset_name: str, track_id: str
     ) -> None:
         item.setToolTip(1, "Has a saved annotation from this app")
@@ -749,8 +761,33 @@ class MainWindow(QMainWindow):
         )
         item.setText(2, annotation_meter_label(dataset_name, track_id))
 
-    def _update_annotation_indicator(self) -> None:
-        """Refresh the ●/✕ for the currently loaded track without rebuilding the tree."""
+        item.setToolTip(
+            3,
+            "Train/val split (musicality_db/splits) — "
+            "blank if no split has been generated for this dataset/track",
+        )
+        split = track_split(dataset_name, track_id)
+        if split == "train":
+            item.setText(3, "T")
+            item.setForeground(3, QColor("#4488cc"))
+        elif split == "val":
+            item.setText(3, "V")
+            item.setForeground(3, QColor("#cc8844"))
+        else:
+            item.setText(3, "")
+
+        item.setToolTip(
+            4, "Flagged as a suspicious annotation — toggle with the ⚠ Flag button"
+        )
+        if track_warning(dataset_name, track_id):
+            item.setText(4, "⚠")
+            item.setForeground(4, QColor("#ffcc00"))
+        else:
+            item.setText(4, "")
+
+    def _update_row_indicators(self) -> None:
+        """Refresh the annotation/split columns for the currently loaded track
+        without rebuilding the tree."""
         if not self._track:
             return
         for i in range(self._dataset_tree.topLevelItemCount()):
@@ -760,7 +797,7 @@ class MainWindow(QMainWindow):
             for j in range(ds_item.childCount()):
                 child = ds_item.child(j)
                 if child.data(0, Qt.ItemDataRole.UserRole) == self._track.track_id:
-                    self._set_annotation_indicator(
+                    self._set_row_indicators(
                         child, self._dataset_name, self._track.track_id
                     )
                     return
@@ -1028,7 +1065,7 @@ class MainWindow(QMainWindow):
         self._update_metadata_label()
 
         self.statusBar().showMessage(f"Saved → {path}", 3000)
-        self._update_annotation_indicator()
+        self._update_row_indicators()
 
     def _on_delete(self) -> None:
         path = annotation_path(self._track)
@@ -1047,7 +1084,7 @@ class MainWindow(QMainWindow):
         self._track = load_track(self._dataset_name, self._track.track_id)
         self._refresh_beats()
         self.statusBar().showMessage(f"Deleted → {path}", 3000)
-        self._update_annotation_indicator()
+        self._update_row_indicators()
 
     def _on_delete_track(self) -> None:
         if self._track is None:
@@ -1080,6 +1117,7 @@ class MainWindow(QMainWindow):
             self._inferred_container.setVisible(False)
             self._track_label.setText("")
             self._stats_label.setText("")
+            self._update_flag_button()
         self._populate_dataset_list(keep_selection=True)
         self.statusBar().showMessage(f"Track deleted.", 3000)
 
@@ -1119,6 +1157,34 @@ class MainWindow(QMainWindow):
                         break
             break
         self.statusBar().showMessage(f"Renamed → {new_id}", 3000)
+
+    def _on_flag_suspicious(self, checked: bool) -> None:
+        if self._track is None:
+            self._flag_btn.setChecked(not checked)
+            return
+        metadata = (
+            load_metadata(self._dataset_name, self._track.track_id) or TrackMetadata()
+        )
+        metadata.warning = checked
+        save_metadata(self._dataset_name, self._track.track_id, metadata)
+        self._update_row_indicators()
+        self._update_flag_button()
+        self._update_metadata_label()
+        self.statusBar().showMessage(
+            "Flagged as suspicious." if checked else "Warning cleared.", 3000
+        )
+
+    def _update_flag_button(self) -> None:
+        """Sync the Flag toggle's checked state/label/style to the track's saved warning."""
+        warning = False
+        if self._track is not None:
+            metadata = load_metadata(self._dataset_name, self._track.track_id)
+            warning = bool(metadata.warning) if metadata else False
+        self._flag_btn.setChecked(warning)  # setChecked() doesn't emit clicked()
+        self._flag_btn.setText("⚠  Flagged" if warning else "⚠  Flag")
+        self._flag_btn.setStyleSheet(
+            "color: #ffcc00; font-weight: bold;" if warning else ""
+        )
 
     def _click_source(self) -> str:
         checked = self._click_source_group.checkedButton()
@@ -1198,6 +1264,8 @@ class MainWindow(QMainWindow):
             return
 
         parts = []
+        if metadata.warning:
+            parts.append("⚠ Flagged as suspicious")
         if metadata.annotator_id:
             parts.append(f"Author: {metadata.annotator_id}")
         if metadata.device:

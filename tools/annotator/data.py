@@ -32,6 +32,7 @@ from musicality.dataformats.track_io import TrackMetadata as TrackMetadata
 from musicality.dataformats.track_io import load_metadata as load_metadata
 from musicality.dataformats.track_io import save_annotations as save_annotations
 from musicality.dataformats.track_io import save_metadata as save_metadata
+from musicality.splits.splitter import Splitter
 
 # Read dataformats.DATA_DIR fresh at every call site below rather than
 # caching it in a module-level constant, so tests can monkeypatch it
@@ -387,6 +388,49 @@ def annotation_meter_label(dataset_name: str, track_id: str) -> str:
     return f"1..{int(max(positions))}"
 
 
+# {dataset_name: {track_id: "train"|"val"}} once loaded, or {dataset_name:
+# None} once confirmed absent — splits are static files, so a track's
+# membership never changes within a running session.
+_split_lookup_cache: dict[str, dict[str, str] | None] = {}
+
+
+def _split_lookup(dataset_name: str) -> dict[str, str] | None:
+    """Return ``{track_id: "train"|"val"}`` for *dataset_name*, or None if no
+    split has been generated for it under ``dataformats.SPLITS_DIR`` — most
+    custom-recorded datasets (e.g. "Luc", "swing") have none."""
+    if dataset_name not in _split_lookup_cache:
+        try:
+            train_refs, val_refs = Splitter.load_refs_from_dir(
+                dataformats.SPLITS_DIR / dataset_name
+            )
+        except FileNotFoundError:
+            lookup = None
+        else:
+            lookup = {ref.track_id: "train" for ref in train_refs}
+            lookup.update({ref.track_id: "val" for ref in val_refs})
+        _split_lookup_cache[dataset_name] = lookup
+
+    return _split_lookup_cache[dataset_name]
+
+
+def track_split(dataset_name: str, track_id: str) -> str | None:
+    """Return ``"train"`` or ``"val"`` for this track, or None if no split
+    has been generated for *dataset_name* or the track isn't listed in it."""
+    lookup = _split_lookup(dataset_name)
+    return None if lookup is None else lookup.get(track_id)
+
+
+def track_warning(dataset_name: str, track_id: str) -> bool:
+    """Return whether this track's annotation has been flagged as suspicious.
+
+    Unlike :func:`track_split`, deliberately not cached — the flag can
+    change mid-session via the annotator's Flag button, and a stale cache
+    would hide that update from the tree until restart.
+    """
+    metadata = load_metadata(dataset_name, track_id)
+    return bool(metadata.warning) if metadata else False
+
+
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
     tracks_dir = dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
@@ -492,11 +536,12 @@ def delete_track(track: TrackData) -> None:
 def rename_track(track: TrackData, new_id: str) -> TrackData:
     """Rename a custom-dataset track on disk and return an updated TrackData.
 
-    Renames the shared audio file and this annotator's saved ``.beats`` file
-    (if present). The audio is shared across every annotator, but only the
-    caller's own slot is renamed to match — any other annotator's saved
-    ``.beats``/``.meta.json`` still reference the old track_id afterward.
-    Raises ValueError for mirdata datasets or if *new_id* is already taken.
+    Renames the shared audio file and this annotator's saved ``.beats``/
+    ``.meta.json`` (if present). The audio is shared across every annotator,
+    but only the caller's own slot is renamed to match — any other
+    annotator's saved ``.beats``/``.meta.json`` still reference the old
+    track_id afterward. Raises ValueError for mirdata datasets or if
+    *new_id* is already taken.
     """
     tracks_dir = (
         dataformats.DATA_DIR / track.dataset_name / dataformats.FORMAT.tracks_dirname
@@ -508,9 +553,19 @@ def rename_track(track: TrackData, new_id: str) -> TrackData:
     if new_audio.exists():
         raise ValueError(f"A track named '{new_id}' already exists.")
     old_audio.rename(new_audio)
+    # Path.with_stem() can't be used here: it splits on the *last* dot, so a
+    # compound suffix like .meta.json has stem "X.meta" — with_stem("new")
+    # would silently produce "new.json", dropping the ".meta" part. Building
+    # the renamed path from the suffix constant instead sidesteps that for
+    # any suffix shape.
     old_ann = annotation_path(track)
     if old_ann.exists():
-        old_ann.rename(old_ann.with_stem(new_id))
+        old_ann.rename(old_ann.parent / f"{new_id}{dataformats.FORMAT.beats_suffix}")
+    old_meta = metadata_path(track.dataset_name, track.track_id, track.annotator_id)
+    if old_meta.exists():
+        old_meta.rename(
+            old_meta.parent / f"{new_id}{dataformats.FORMAT.metadata_suffix}"
+        )
     return TrackData(
         dataset_name=track.dataset_name,
         track_id=new_id,

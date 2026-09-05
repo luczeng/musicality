@@ -21,7 +21,7 @@ import musicality.dataformats as dataformats
 from musicality.inference import load_module, run_inference
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
-CHECKPOINT_ROOT = Path(__file__).parent.parent.parent / "checkpoints_beat"
+CHECKPOINT_ROOT = Path(__file__).parent.parent.parent / "checkpoints"
 SAMPLE_RATE = 22050
 HOP_LENGTH = 512
 

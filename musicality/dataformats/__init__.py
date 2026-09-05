@@ -44,9 +44,10 @@ def load() -> DataFormat:
     return DataFormat(**raw)
 
 
-# The canonical, load-once config. Other modules should read FORMAT/DATA_DIR
-# directly rather than calling load() again or re-exporting their own copies
-# of individual fields, so there's exactly one place the on-disk layout is
-# defined.
+# The canonical, load-once config. Other modules should read
+# FORMAT/DATA_DIR/SPLITS_DIR directly rather than calling load() again or
+# re-exporting their own copies of individual fields, so there's exactly one
+# place the on-disk layout is defined.
 FORMAT = load()
 DATA_DIR = ROOT / FORMAT.data_dir
+SPLITS_DIR = ROOT / FORMAT.splits_dir
