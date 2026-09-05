@@ -431,6 +431,17 @@ def track_warning(dataset_name: str, track_id: str) -> bool:
     return bool(metadata.warning) if metadata else False
 
 
+def track_needs_review(dataset_name: str, track_id: str) -> bool:
+    """Return whether this track has been flagged for a follow-up review.
+
+    Distinct from :func:`track_warning` — "take another look" rather than
+    "this looks wrong". Deliberately not cached, for the same reason as
+    :func:`track_warning`.
+    """
+    metadata = load_metadata(dataset_name, track_id)
+    return bool(metadata.needs_review) if metadata else False
+
+
 def load_dataset_tracks(dataset_name: str) -> list[str]:
     """Return all track IDs for *dataset_name*."""
     tracks_dir = dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
