@@ -6,7 +6,7 @@ import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.metrics.frame_accuracy import frame_accuracy
+from musicality.metrics.frame_accuracy import peak_f_measure
 from musicality.trainers.beat_phase_module import align_time
 
 
@@ -31,12 +31,17 @@ class BeatModule(L.LightningModule):
         compensating for beat frames being a small fraction of all frames.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
-    :param threshold: Sigmoid/target threshold used only for the logged accuracy
-        metric, not for the loss itself.
-    :param balanced: Passed through to :func:`~musicality.metrics.frame_accuracy.frame_accuracy`
-        for the logged accuracy metric. Defaults to ``True`` since beat frames
-        are a small minority and a pooled mean is dominated by the
-        true-negative rate.
+    :param threshold: Peak-picking threshold for the logged ``{stage}/f_beat``
+        metric, not used by the loss itself. Note the beat-only task's tuned
+        evaluation threshold is ``0.8`` (``configs/eval_beat.yaml``), so unless
+        this is set to match, the training-time number is a close proxy for the
+        reported ``f_beat`` rather than the identical computation.
+    :param balanced: Unused since the beat head moved from
+        :func:`~musicality.metrics.frame_accuracy.frame_accuracy` to
+        :func:`~musicality.metrics.frame_accuracy.peak_f_measure`, which has no
+        true-negative term to balance. Kept as a constructor parameter because
+        it is saved in every existing checkpoint's hyperparameters and passed
+        back by :func:`~musicality.inference.load_module` on load.
     :param task: Saved into the checkpoint's hyperparameters for
         :func:`~musicality.inference.detect_task` to read back at eval/inference
         time. Always ``"beat_only"`` for this class; exists as a parameter
@@ -90,13 +95,8 @@ class BeatModule(L.LightningModule):
         log_kw = dict(on_step=False, on_epoch=True)
         self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
         self.log(
-            f"{stage}/acc_beat",
-            frame_accuracy(
-                probs,
-                beat_y,
-                threshold=self.hparams.threshold,
-                balanced=self.hparams.balanced,
-            ),
+            f"{stage}/f_beat",
+            peak_f_measure(probs, beat_y, threshold=self.hparams.threshold),
             **log_kw,
         )
 

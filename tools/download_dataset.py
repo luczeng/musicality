@@ -34,7 +34,9 @@ def _download_one(dataset: str, data_home: Path) -> bool:
     except Exception as e:
         click.echo(f"WARNING: Failed to download '{dataset}': {e}", err=True)
         return False
-    for archive in list(dataset_dir.rglob("*.tar.gz")) + list(dataset_dir.rglob("*.zip")):
+    for archive in list(dataset_dir.rglob("*.tar.gz")) + list(
+        dataset_dir.rglob("*.zip")
+    ):
         archive.unlink()
         click.echo(f"Removed {archive}")
     click.echo(f"Done: {dataset}")
@@ -44,14 +46,15 @@ def _download_one(dataset: str, data_home: Path) -> bool:
 @click.command()
 @click.argument("dataset", required=False)
 @click.option(
-    "--all", "download_all", is_flag=True,
+    "--all",
+    "download_all",
+    is_flag=True,
     help="Download all datasets listed in configs/download.yaml.",
 )
+@click.option("--list", "list_datasets", is_flag=True, help="List available datasets.")
 @click.option(
-    "--list", "list_datasets", is_flag=True, help="List available datasets."
-)
-@click.option(
-    "--data-home", default=None,
+    "--data-home",
+    default=None,
     help="Directory to download data into. Defaults to data_home in configs/download.yaml.",
 )
 def main(dataset, download_all, list_datasets, data_home):
@@ -72,7 +75,9 @@ def main(dataset, download_all, list_datasets, data_home):
     resolved_data_home = Path(data_home) if data_home else Path(cfg["data_home"])
 
     if download_all:
-        failed = [n for n in cfg["datasets"] if not _download_one(n, resolved_data_home)]
+        failed = [
+            n for n in cfg["datasets"] if not _download_one(n, resolved_data_home)
+        ]
         if failed:
             click.echo(f"\nFailed datasets: {', '.join(failed)}", err=True)
             raise SystemExit(1)

@@ -1,5 +1,6 @@
 """Tests for musicality.metrics: beat_f_measure, downbeat_f_measures,
-confusion_half_cycle_rate, frame_accuracy, tempo_acc1.
+beat_continuity, confusion_half_cycle_rate, frame_accuracy, peak_f_measure,
+tempo_acc1.
 """
 
 import numpy as np
@@ -7,8 +8,9 @@ import pytest
 import torch
 
 from musicality.metrics.confusion import confusion_half_cycle_rate
+from musicality.metrics.continuity import beat_continuity
 from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
-from musicality.metrics.frame_accuracy import frame_accuracy
+from musicality.metrics.frame_accuracy import frame_accuracy, peak_f_measure
 from musicality.metrics.tempo_acc1 import tempo_acc1
 
 
@@ -220,6 +222,124 @@ class TestFrameAccuracy:
         assert torch.isfinite(
             frame_accuracy(probs, target, mask=mask, balanced=True)
         ).all()
+
+
+# ---------------------------------------------------------------------------
+# peak_f_measure
+# ---------------------------------------------------------------------------
+
+
+def _curve(n_frames: int, centers, sigma: float = 1.5) -> torch.Tensor:
+    """A Gaussian-smeared frame curve, shape ``(1, n_frames)`` — the same shape
+    BeatDataset produces, so pick_peaks sees a real bump rather than a spike."""
+
+    t = np.arange(n_frames, dtype=float)
+    y = np.zeros(n_frames, dtype=float)
+
+    for c in centers:
+        y = np.maximum(y, np.exp(-((t - c) ** 2) / (2 * sigma**2)))
+
+    return torch.tensor(y, dtype=torch.float32).unsqueeze(0)
+
+
+class TestPeakFMeasure:
+    def test_perfect_match_is_one(self):
+        beats = [10, 30, 50, 70]
+        curve = _curve(100, beats)
+        assert peak_f_measure(curve, curve).item() == pytest.approx(1.0)
+
+    def test_over_wide_peaks_cost_nothing(self):
+        # The load-bearing property: a correctly centred but twice-as-wide
+        # prediction is what drags frame_accuracy down (precision 0.487 on the
+        # real checkpoint), and it is exactly what pick_peaks discards.
+        beats = [10, 30, 50, 70]
+        target = _curve(100, beats, sigma=1.5)
+        wide = _curve(100, beats, sigma=3.0)
+
+        assert peak_f_measure(wide, target).item() == pytest.approx(1.0)
+        assert frame_accuracy(wide, target, balanced=True).item() < 0.95
+
+    def test_shift_inside_tolerance_still_matches(self):
+        target = _curve(100, [10, 30, 50, 70])
+        shifted = _curve(100, [12, 32, 52, 72])  # +2 frames, tolerance is 3
+        assert peak_f_measure(shifted, target).item() == pytest.approx(1.0)
+
+    def test_shift_outside_tolerance_scores_zero(self):
+        target = _curve(100, [10, 30, 50, 70])
+        shifted = _curve(100, [16, 36, 56, 76])  # +6 frames, beyond tolerance
+        assert peak_f_measure(shifted, target).item() == pytest.approx(0.0)
+
+    def test_silent_prediction_scores_zero(self):
+        target = _curve(100, [10, 30, 50, 70])
+        silent = torch.zeros(1, 100)
+        assert peak_f_measure(silent, target).item() == pytest.approx(0.0)
+
+    def test_beatless_clip_is_skipped_not_scored_zero(self):
+        # A crop that happens to contain no annotated beat is not a failed
+        # prediction, so it must not drag the batch mean toward 0.
+        target = torch.cat([_curve(100, [10, 30, 50, 70]), torch.zeros(1, 100)])
+        probs = torch.cat([_curve(100, [10, 30, 50, 70]), torch.zeros(1, 100)])
+
+        assert peak_f_measure(probs, target).item() == pytest.approx(1.0)
+
+    def test_no_scorable_clip_returns_zero_not_nan(self):
+        empty = torch.zeros(2, 100)
+        value = peak_f_measure(empty, empty)
+
+        assert torch.isfinite(value).all()
+        assert value.item() == pytest.approx(0.0)
+
+    def test_batch_mean_over_clips(self):
+        target = torch.cat([_curve(100, [10, 30, 50, 70])] * 2)
+        probs = torch.cat(
+            [_curve(100, [10, 30, 50, 70]), _curve(100, [16, 36, 56, 76])]
+        )
+        assert peak_f_measure(probs, target).item() == pytest.approx(0.5)
+
+
+# ---------------------------------------------------------------------------
+# beat_continuity
+# ---------------------------------------------------------------------------
+
+
+class TestBeatContinuity:
+    def test_perfect_match_is_one(self):
+        times = np.arange(6.0, 20.0, 0.5)
+        scores = beat_continuity(times, times)
+
+        assert scores["cmlt"] == pytest.approx(1.0)
+        assert scores["amlt"] == pytest.approx(1.0)
+
+    def test_double_time_is_forgiven_only_by_amlt(self):
+        # The reason this metric earns its place: a confident double-time
+        # tracker is not a mistimed tracker, and f_measure cannot tell them
+        # apart.
+        ref = np.arange(6.0, 20.0, 0.5)
+        est = np.arange(6.0, 20.0, 0.25)
+        scores = beat_continuity(ref, est)
+
+        assert scores["amlt"] > 0.9
+        assert scores["cmlt"] < scores["amlt"]
+
+    def test_amlt_never_below_cmlt(self):
+        rng = np.random.RandomState(0)
+        ref = np.arange(6.0, 20.0, 0.5)
+        est = ref + rng.normal(0, 0.03, ref.shape)
+        scores = beat_continuity(ref, est)
+
+        assert scores["amlt"] >= scores["cmlt"]
+
+    def test_too_few_beats_returns_none(self):
+        assert beat_continuity(np.array([6.0]), np.array([6.0, 6.5])) is None
+        assert beat_continuity(np.array([]), np.array([6.0, 6.5])) is None
+
+    def test_trim_can_leave_too_few_beats(self):
+        # Everything before 5s is dropped by mir_eval's warm-up convention, so
+        # a short clip evaluated with trim=True has nothing left to score.
+        times = np.arange(0.0, 3.0, 0.5)
+
+        assert beat_continuity(times, times, trim=True) is None
+        assert beat_continuity(times, times, trim=False)["cmlt"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
