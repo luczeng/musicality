@@ -88,6 +88,47 @@ class TestListTrackRefs:
         monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
         assert list_track_refs("swing") == []
 
+    def test_contains_keeps_only_matching_track_ids(self, monkeypatch, tmp_path):
+        """gtzan-style ids encode the genre, so a substring addresses one
+        genre without any separate manifest."""
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        ann_dir = tmp_path / "gtzan" / "annotations"
+        ann_dir.mkdir(parents=True)
+        for stem in ("blues_00001", "blues_00002", "jazz_00001", "rock_00001"):
+            (ann_dir / f"{stem}.beats").write_text("1.0 1")
+
+        refs = list_track_refs("gtzan", contains="blues")
+
+        assert [r.track_id for r in refs] == ["blues_00001", "blues_00002"]
+
+    def test_contains_is_case_insensitive(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        ann_dir = tmp_path / "gtzan" / "annotations"
+        ann_dir.mkdir(parents=True)
+        (ann_dir / "Blues_00001.beats").write_text("1.0 1")
+        (ann_dir / "jazz_00001.beats").write_text("1.0 1")
+
+        refs = list_track_refs("gtzan", contains="blues")
+
+        assert [r.track_id for r in refs] == ["Blues_00001"]
+
+    def test_contains_matching_nothing_returns_empty(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        ann_dir = tmp_path / "gtzan" / "annotations"
+        ann_dir.mkdir(parents=True)
+        (ann_dir / "jazz_00001.beats").write_text("1.0 1")
+
+        assert list_track_refs("gtzan", contains="blues") == []
+
+    def test_contains_none_keeps_everything(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path)
+        ann_dir = tmp_path / "gtzan" / "annotations"
+        ann_dir.mkdir(parents=True)
+        (ann_dir / "blues_00001.beats").write_text("1.0 1")
+        (ann_dir / "jazz_00001.beats").write_text("1.0 1")
+
+        assert len(list_track_refs("gtzan", contains=None)) == 2
+
 
 # ---------------------------------------------------------------------------
 # resolve_track_audio

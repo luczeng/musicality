@@ -3,7 +3,50 @@ from pathlib import Path
 from torch.utils.data import Dataset, Subset, random_split
 
 import musicality.dataformats as dataformats
-from musicality.dataformats.track_io import TrackRef
+from musicality.dataformats.track_io import TrackRef, load_metadata
+
+
+def is_flagged(ref: TrackRef) -> bool:
+    """Return whether *ref*'s annotation is flagged as not fit for training.
+
+    Reads the track's default-slot metadata (the same slot
+    ``TempoDataset``/``BeatDataset`` read) and reports True if either
+    annotator flag is set:
+
+    - ``warning`` — "this annotation looks wrong" (the annotator's ⚠ Flag).
+    - ``needs_review`` — "take another look" (the annotator's ❓ To Review).
+
+    A track with no metadata file at all is not flagged.
+    """
+
+    metadata = load_metadata(ref.dataset_name, ref.track_id, data_home=ref.data_home)
+
+    if metadata is None:
+        return False
+
+    return bool(metadata.warning) or bool(metadata.needs_review)
+
+
+def drop_flagged_refs(refs: list[TrackRef], context: str = "") -> list[TrackRef]:
+    """Return *refs* without the tracks :func:`is_flagged` rejects, printing
+    a one-line count when anything was dropped.
+
+    :param refs: Refs to filter.
+    :param context: Short label for the printed message (e.g. the split file
+        the refs came from), so several calls in one run stay tellable apart.
+    """
+
+    kept = [ref for ref in refs if not is_flagged(ref)]
+
+    n_flagged = len(refs) - len(kept)
+    if n_flagged:
+        where = f" in {context}" if context else ""
+        print(
+            f"[Splitter] {n_flagged} flagged track(s){where} skipped "
+            f"(warning / needs_review)"
+        )
+
+    return kept
 
 
 def _write_refs(path: Path, refs: list[TrackRef]) -> None:
@@ -23,7 +66,7 @@ def _read_refs(path: Path) -> list[TrackRef]:
             TrackRef(dataset_name, track_id, dataformats.DATA_DIR / dataset_name)
         )
 
-    return refs
+    return drop_flagged_refs(refs, context=f"{path.parent.name}/{path.name}")
 
 
 class Splitter:
@@ -42,6 +85,14 @@ class Splitter:
     same files (typically version-controlled via DVC) produce the same split
     on every machine. Use ``create()`` (or ``tools/create_splits.py``) to
     generate the files in the first place.
+
+    Tracks their annotator flagged (``warning`` or ``needs_review`` in the
+    track metadata — see :func:`is_flagged`) are skipped on both sides:
+    ``create()`` never writes them into a new split, and every read path
+    (:meth:`run`, :meth:`load_refs`, :meth:`load_refs_from_dir`) drops them
+    from splits saved before the flag was set. So flagging a track in the
+    annotator takes it out of training and validation immediately, with no
+    need to regenerate any split file.
 
     :param dataset: The dataset to split. Must expose ``.refs`` — a
         ``list[TrackRef]`` parallel to its samples (both ``TempoDataset``
@@ -83,16 +134,28 @@ class Splitter:
     def create(self) -> tuple[Subset, Subset]:
         """Generate a new split and persist it to disk, overwriting any existing one.
 
-        :returns: Tuple of (train_ds, val_ds).
+        Flagged tracks (see :func:`is_flagged`) are excluded from the pool
+        before splitting, so they land in neither side and ``val_split`` is
+        taken as a fraction of the eligible tracks only.
+
+        :returns: Tuple of (train_ds, val_ds). Their ``.indices`` index into
+            ``self.dataset``, not into the filtered pool.
         :rtype: tuple[Subset, Subset]
         """
 
-        n_val = int(len(self.dataset) * self.val_split)
-        n_train = len(self.dataset) - n_val
-        train_ds, val_ds = random_split(self.dataset, [n_train, n_val])
+        eligible = [i for i, ref in enumerate(self.dataset.refs) if not is_flagged(ref)]
 
-        train_refs = [self.dataset.refs[i] for i in train_ds.indices]
-        val_refs = [self.dataset.refs[i] for i in val_ds.indices]
+        n_val = int(len(eligible) * self.val_split)
+        n_train = len(eligible) - n_val
+
+        # Split positions within `eligible`, then map back, so the returned
+        # Subsets stay indexed against the full dataset.
+        train_pos, val_pos = random_split(range(len(eligible)), [n_train, n_val])
+        train_indices = [eligible[i] for i in train_pos.indices]
+        val_indices = [eligible[i] for i in val_pos.indices]
+
+        train_refs = [self.dataset.refs[i] for i in train_indices]
+        val_refs = [self.dataset.refs[i] for i in val_indices]
 
         Splitter.save_refs(self.splits_dir, self.name, train_refs, val_refs)
 
@@ -100,7 +163,7 @@ class Splitter:
             f"[Splitter] Split saved to {self.splits_dir / self.name} ({n_train} train, {n_val} val)"
         )
 
-        return train_ds, val_ds
+        return Subset(self.dataset, train_indices), Subset(self.dataset, val_indices)
 
     def _load(self) -> tuple[list[int], list[int]] | None:
         """Return (train_indices, val_indices) into ``self.dataset``, or None

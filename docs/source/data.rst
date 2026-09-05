@@ -117,6 +117,52 @@ dataset's split independently of any one dataset instance's ordering (see
 argument, or ``Splitter(...).run()`` for the ``Subset``-returning form used
 during training.
 
+Splitting a subset of a dataset: ``--contains``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Some datasets encode a category in the track id — gtzan's tracks are
+``blues_00001``, ``jazz_00042``, ``rock_00007``, and so on. To work with one
+of those groups alone, pass a substring::
+
+    uv run python tools/create_splits.py --datasets gtzan --contains blues
+
+That keeps only the tracks whose id contains ``blues`` (matched
+case-insensitively) and writes them to their own split name,
+``splits_dir/gtzan-blues/`` — plus ``beat_phase-gtzan-blues`` for the beat
+kind. The dataset's full split, if it has one, is left untouched.
+
+The filter applies at creation time only, and deliberately so: what it
+produces is an ordinary split file, indistinguishable downstream from any
+other. Train on it with ``data.input=gtzan-blues``, evaluate it by that
+name, and combine groups with ``tools/merge_datasets.py --datasets
+gtzan-blues gtzan-jazz --output gtzan-blues_jazz`` — no consumer needs to
+know the split was ever narrowed, and nothing has to re-derive the filter
+to reproduce it.
+
+The filtering itself is ``musicality.dataformats.track_io.list_track_refs``'
+``contains=`` argument, applied *before* either dataset is built, so a
+narrowed run doesn't pay to resolve the tracks it's about to drop. Substring
+matching is intentionally all it does — for anything finer, assemble a
+folder of ``train.txt``/``val.txt`` by hand and point ``data.input`` at the
+path (see below).
+
+Flagged tracks are excluded from splits
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A track whose metadata has ``warning`` (the annotator's ⚠ Flag — "this
+annotation looks wrong") or ``needs_review`` (❓ To Review — "take another
+look") set to ``True`` is skipped by the splitter, and so never reaches
+training or validation. The filter runs on both sides: ``create()``
+excludes flagged tracks from the pool before splitting, so they're written
+into neither ``train.txt`` nor ``val.txt``, and every read path
+(``run()``, ``load_refs``, ``load_refs_from_dir``) drops them again on
+load. That second half is what makes flagging usable day to day — a track
+flagged in the annotator *after* a split was generated falls out of the
+next training run on its own, with no need to regenerate the split file or
+re-run ``create_splits.py``. Only the default annotation slot's metadata is
+consulted, matching which slot the loaders read. Clearing the flag in the
+annotator puts the track straight back in.
+
 Merging datasets
 -----------------
 
