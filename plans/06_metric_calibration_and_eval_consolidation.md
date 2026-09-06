@@ -1,6 +1,6 @@
 # Part 6 — Making the metrics mean what they say, and one tool to report them
 
-**Status:** planned, not started. Session of 2026-09-05.
+**Status:** Phase A and Phase B shipped. Sessions of 2026-09-05 / 2026-09-06.
 Follows `plans/05_beat_phase_overfitting.md`, whose §1 first flagged that the
 logged accuracies are not comparable to the evaluated ones.
 
@@ -40,6 +40,13 @@ split, clean audio, decoder `global` with `switch_penalty=2.0`.
 > **Not comparable to `plans/05` §3**, which used `switch=5` over all 247 tracks.
 > These are internally consistent with each other, which is what a calibration
 > argument needs.
+>
+> **Superseded as reproducible targets.** `eb509c9 (#58) split track filters`
+> landed after these were taken and grew merge-val from 249 to 277 tracks, so a
+> seed-0 60-track sample no longer draws the same material. The *relationships*
+> below still hold — they are what the argument rests on — but the absolute
+> figures cannot be re-derived on the current split. Re-measure before quoting
+> them as a bar.
 
 ---
 
@@ -362,7 +369,7 @@ layout.
 
 ## 4. Plan
 
-### Phase A — the metric set
+### Phase A — the metric set — **SHIPPED** (`a9e27f4`)
 
 | file | change |
 |---|---|
@@ -374,7 +381,7 @@ layout.
 | `musicality/trainers/beat_module.py` | same swap for the beat-only task |
 | `musicality/trainers/train_beat_phase.py` | `_TRACKED_KEYS`: `acc_beat` → `f_beat` |
 
-### Phase B — one scoring path in `musicality/evaluation.py`
+### Phase B — one scoring path in `musicality/evaluation.py` — **SHIPPED**
 
 - `score_events(beat_times, positions, has_positions, events, *, tolerance, trim, group_size) -> dict`
   — the single place every metric is computed, returning the §3 dict plus
@@ -385,9 +392,18 @@ layout.
   `score_events`. One model pass, N decoder configurations.
 - Move `summarize(rows)` and `group_by_corpus(rows)` from
   `diagnose_beat_phase.py:180,218` into `evaluation.py`, extended to the new keys.
-- `BeatEvaluator.run()` delegates to `.score()`. `evaluate_track` keeps its
-  signature — `tests/test_evaluation.py:68-103` asserts on positional
-  `args[11]`..`args[15]` — but its body becomes `run_inference` + `score_events`.
+- `BeatEvaluator.run()` delegates to `.score()`. **`evaluate_track` was deleted
+  rather than kept.** The plan proposed keeping it for test compatibility, but
+  once `run()` stops calling it nothing does, and the tests were asserting on
+  positional `args[11]`..`args[15]` — a brittle assertion that a
+  `resolve_postprocess()` returning a named dict replaces properly.
+  `tests/test_evaluation.py` was rewritten against that instead.
+- `compute_track_probs()` is now **memoized**. Without it, `score()` would
+  re-run the model for every decoder variant; `diagnose` scores four by
+  default, so this is the difference between one model pass and four.
+- `decode()` reads the softmax-vs-one/last distinction from the checkpoint's
+  `group_size` hyperparameter, not from the channel count. At `group_size=2` a
+  softmax head is also `(3, T)`, so a shape heuristic misreads it silently.
 - Fold the 36-line `X if self.X is not None else task_defaults[...]` chain
   (`evaluation.py:297-333`) into one helper.
 - Keep `DEFAULTS` / `DATA_DIR` names and top-level YAML keys stable:
@@ -483,8 +499,12 @@ args), `tests/test_per_genre_eval.py`, `tests/test_position_accuracy.py` (drops
 `modal_fraction`), `tests/test_metrics.py` (add `frame_f_measure`,
 `peak_f_measure`, `beat_continuity`).
 
-**Regression — the consolidation must not move any number.** `confusion` under
-the old and new paths must agree on the same tracks:
+**Regression — the consolidation must not move any number.** Verified: on 40
+merge-val tracks, `f_beat` / `f_one` / `f_last` / `confusion` / `position_acc`
+are identical to 1e-12 **per track** between the pre-refactor hand-rolled path
+and `BeatEvaluator.score()`. This is the check to repeat, because it isolates a
+code change from a data change — comparing against recorded numbers cannot, as
+the #58 split change above demonstrates.
 
 ```bash
 uv run python tools/eval_beat.py --checkpoint checkpoints/merge_v4.ckpt \

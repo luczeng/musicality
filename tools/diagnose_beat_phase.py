@@ -53,178 +53,16 @@ from pathlib import Path
 
 import numpy as np
 
-from musicality.evaluation import DATA_DIR, BeatEvaluator
+from musicality.evaluation import (
+    DATA_DIR,
+    SCORE_KEYS,
+    BeatEvaluator,
+    _fmt,
+    _mean,
+    group_by_corpus,
+    summarize,
+)
 from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
-from musicality.metrics.confusion import confusion_half_cycle_rate
-from musicality.metrics.f_measure import downbeat_f_measures
-from musicality.metrics.position_accuracy import position_accuracy
-from musicality.postprocess import readout
-
-
-# Decoders compared by default. `switch_penalty=None` means the exact
-# single-offset decode (no mid-track resync allowed at all).
-BASE_VARIANTS = ("greedy", "global")
-
-# The per-track scores that get aggregated, micro and macro alike.
-_SCORE_KEYS = ("f_one", "f_last", "confusion", "position_acc_best_offset")
-
-
-def _mean(values: list[float]) -> float:
-    clean = [v for v in values if v is not None and not math.isnan(v)]
-
-    return sum(clean) / len(clean) if clean else float("nan")
-
-
-def _fmt(value: float | None) -> str:
-    return "  n/a" if value is None or math.isnan(value) else f"{value:.3f}"
-
-
-def score_decoder(
-    cached: list[tuple],
-    fps: float,
-    *,
-    decoder: str,
-    switch_penalty: float | None,
-    advance: str = "index",
-    beat_threshold: float,
-    min_distance_frames: int,
-    gate_tolerance: float,
-    anchor_threshold: float,
-    group_size: int,
-    tolerance: float,
-    trim: bool,
-    module_group_size: int | None = None,
-    corpora: list[str] | None = None,
-) -> tuple[dict, list[dict]]:
-    """Score one bar-position decoder across every position-annotated cached track.
-
-    :param module_group_size: Set when *cached* came from a softmax
-        bar-position checkpoint (``group_size`` in its hyperparameters) —
-        ``probs`` is then ``(1 + group_size, T)`` (beat, then the softmax
-        position block) rather than the older ``(3, T)`` beat/one/last, and
-        the position block is passed through to :func:`readout` as
-        ``position_probs`` so ``decoder="global"`` reads every position's own
-        emission instead of the one/last approximation.
-    :param corpora: Source corpus name per *cached* track (see
-        :meth:`~musicality.evaluation.BeatEvaluator.track_corpora`), recorded
-        on each row so results can be broken down per genre. Zipped against
-        *cached* before the ``has_positions`` filter, so unannotated tracks
-        drop out of both together.
-    :returns: ``(summary, per_track)`` — aggregate means, and one row per
-        track carrying both its F-measures and its phase-offset profile.
-        ``summary`` holds micro means (over tracks) plus ``macro_*`` means
-        (over corpora); the two differ only once more than one corpus is
-        present and the corpora differ in size.
-    """
-
-    rows = []
-    names = corpora if corpora is not None else [""] * len(cached)
-
-    for (beat_times, positions, has_positions, probs), corpus in zip(cached, names):
-        if not has_positions:
-            continue
-
-        if module_group_size is not None:
-            beat_p, position_probs = probs[0], probs[1:]
-            one_p, last_p = position_probs[0], position_probs[-1]
-        else:
-            beat_p, one_p, last_p = probs[0], probs[1], probs[2]
-            position_probs = None
-
-        events = readout(
-            beat_p,
-            one_p,
-            last_p,
-            fps=fps,
-            beat_threshold=beat_threshold,
-            min_distance_frames=min_distance_frames,
-            gate_tolerance=gate_tolerance,
-            anchor_threshold=anchor_threshold,
-            group_size=group_size,
-            decoder=decoder,
-            switch_penalty=switch_penalty,
-            advance=advance,
-            position_probs=position_probs,
-        )
-
-        f_one, f_last = downbeat_f_measures(
-            beat_times,
-            positions,
-            events,
-            tolerance=tolerance,
-            trim=trim,
-            group_size=group_size,
-        )
-        confusion = confusion_half_cycle_rate(
-            beat_times, positions, events, tolerance=tolerance, group_size=group_size
-        )
-        profile = position_accuracy(
-            beat_times, positions, events, tolerance=tolerance, group_size=group_size
-        )
-
-        rows.append(
-            {
-                "corpus": corpus,
-                "f_one": f_one,
-                "f_last": f_last,
-                "confusion": confusion,
-                "modal_offset": profile["modal_offset"] if profile else None,
-                "position_acc_best_offset": (
-                    profile["position_acc_best_offset"] if profile else None
-                ),
-                "position_acc": profile["position_acc"] if profile else None,
-            }
-        )
-
-    return summarize(rows), rows
-
-
-def summarize(rows: list[dict]) -> dict:
-    """Aggregate scored rows into micro *and* macro means.
-
-    - **micro** (the bare ``f_one`` / ``f_last`` / ``confusion`` / ``position_acc_best_offset``
-      keys) averages over *tracks* — the historical behaviour.
-    - **macro** (the ``macro_*`` keys) averages within each corpus first, then
-      averages those means, so every corpus counts once regardless of size.
-
-    They are identical when a single corpus is present, or when every corpus
-    contributes the same number of tracks. Where they diverge, micro is being
-    carried by whichever corpus happened to contribute the most tracks — which
-    is an accident of what is downloaded, not of anything we care about. For a
-    tool meant to work across genres, macro is the number to steer by.
-    """
-
-    summary = {"n_tracks": len(rows)}
-    for key in _SCORE_KEYS:
-        summary[key] = _mean([r[key] for r in rows])
-    summary["objective"] = (summary["f_one"] + summary["f_last"]) / 2
-
-    per_corpus = group_by_corpus(rows)
-    for key in _SCORE_KEYS:
-        summary[f"macro_{key}"] = _mean(
-            [_mean([r[key] for r in rs]) for rs in per_corpus.values()]
-        )
-
-    # The binding constraint for "works everywhere" is the weakest genre, which
-    # even the macro mean averages away.
-    worst = [
-        value
-        for value in (_mean([r["confusion"] for r in rs]) for rs in per_corpus.values())
-        if not math.isnan(value)
-    ]
-    summary["worst_confusion"] = max(worst) if worst else float("nan")
-
-    return summary
-
-
-def group_by_corpus(rows: list[dict]) -> dict[str, list[dict]]:
-    """Group scored rows by their source corpus, preserving first-seen order."""
-
-    grouped: dict[str, list[dict]] = {}
-    for row in rows:
-        grouped.setdefault(row.get("corpus", ""), []).append(row)
-
-    return grouped
 
 
 def print_genre_breakdown(rows: list[dict], decoder_name: str) -> None:
@@ -255,7 +93,7 @@ def print_genre_breakdown(rows: list[dict], decoder_name: str) -> None:
 
     per_corpus = {}
     for corpus, rs in sorted(grouped.items(), key=lambda kv: -len(kv[1])):
-        per_corpus[corpus] = {k: _mean([r[k] for r in rs]) for k in _SCORE_KEYS}
+        per_corpus[corpus] = {k: _mean([r[k] for r in rs]) for k in SCORE_KEYS}
         _row(corpus or "<unknown>", len(rs), per_corpus[corpus])
 
     if len(per_corpus) < 2:
@@ -266,12 +104,12 @@ def print_genre_breakdown(rows: list[dict], decoder_name: str) -> None:
     _row(
         "MACRO (per corpus)",
         len(per_corpus),
-        {k: _mean([s[k] for s in per_corpus.values()]) for k in _SCORE_KEYS},
+        {k: _mean([s[k] for s in per_corpus.values()]) for k in SCORE_KEYS},
     )
     _row(
         "micro (per track)",
         len(rows),
-        {k: _mean([r[k] for r in rows]) for k in _SCORE_KEYS},
+        {k: _mean([r[k] for r in rows]) for k in SCORE_KEYS},
     )
 
     ranked = [
@@ -517,6 +355,12 @@ def main():
         hop_length=args.hop_length,
         group_size=args.group_size,
         binary_only=args.binary_only,
+        tolerance=args.tolerance,
+        trim=not args.no_trim,
+        beat_threshold=args.beat_threshold,
+        min_distance_frames=args.min_distance_frames,
+        gate_tolerance=args.gate_tolerance,
+        anchor_threshold=args.anchor_threshold,
         limit=args.limit,
         device=args.device,
         verbose=False,
@@ -544,9 +388,8 @@ def main():
         f"[diagnose] caching frame probabilities for {len(indices)} track(s) "
         f"from '{args.dataset}' (split={args.split})"
     )
-    cached = evaluator.compute_track_probs()
+    evaluator.compute_track_probs()  # memoized: every variant below reuses this
     corpora = evaluator.track_corpora()
-    fps = args.sample_rate / args.hop_length
 
     n_corpora = len(set(corpora))
     if n_corpora > 1:
@@ -579,22 +422,15 @@ def main():
     all_rows = []
 
     for name, decoder, switch_penalty, adv in variants:
-        summary, rows = score_decoder(
-            cached,
-            fps,
+        # switch_penalty is passed by keyword *presence*, since None is itself
+        # a meaningful value here (the exact single-offset decode).
+        rows = evaluator.score(
+            advance=adv,
             decoder=decoder,
             switch_penalty=switch_penalty,
-            advance=adv,
-            beat_threshold=args.beat_threshold,
-            min_distance_frames=args.min_distance_frames,
-            gate_tolerance=args.gate_tolerance,
-            anchor_threshold=args.anchor_threshold,
             group_size=group_size,
-            tolerance=args.tolerance,
-            trim=not args.no_trim,
-            module_group_size=module_group_size,
-            corpora=corpora,
         )
+        summary = summarize(rows)
         results[name] = (summary, rows)
 
         print(
