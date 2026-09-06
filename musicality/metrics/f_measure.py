@@ -54,6 +54,16 @@ def downbeat_f_measures(
 ) -> tuple[float, float]:
     """F-measure for the "1" (downbeat) and "last" (position ``group_size``) positions, computed separately.
 
+    .. note::
+
+       Only positions ``1`` and ``group_size`` are ever scored. Positions
+       ``2..group_size-1`` are invisible to this metric even under the softmax
+       head, which predicts all of them — an error that turns a "2" into a "3"
+       cannot register. That is why
+       :func:`musicality.metrics.position_accuracy.position_accuracy`'s
+       ``position_acc`` is the headline bar-position metric and these two
+       are reported alongside it rather than in place of it.
+
     :param ref_times: Reference beat times, in seconds, shape ``(n_beats,)``.
     :param ref_positions: Reference group position (1-``group_size``) per beat,
         same shape as ``ref_times``.

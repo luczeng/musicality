@@ -130,7 +130,7 @@ documented in full at :doc:`postprocess`:
   produces the tuned ``decoder``/``switch_penalty``. Against one cached set of
   probabilities it scores every decoder variant side by side, reports a
   per-track phase-offset profile
-  (:func:`~musicality.metrics.phase_offset.phase_offset_profile`), and states
+  (:func:`~musicality.metrics.position_accuracy.position_accuracy`), and states
   whether the phase error is coming from the model or from the decoder.
 
 API reference

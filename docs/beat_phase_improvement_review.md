@@ -537,7 +537,10 @@ model head, loss, metrics, decoder, inference. Nothing needs migrating.
   `beat_position_loss` for the softmax head.
 - `musicality/loaders/beat_dataset.py` — `target_layout=` and
   `position_target_channels()`.
-- `musicality/metrics/phase_offset.py` — `phase_offset_profile`.
+- `musicality/metrics/position_accuracy.py` — `position_accuracy`
+  (renamed from `phase_offset.py` / `phase_offset_profile`; its
+  `correct_fraction` and `stability` keys are now `position_acc` and
+  `position_acc_best_offset`).
 - `tools/diagnose_beat_phase.py` — runs both experiments in one command;
   `--advance index|time|both` scores the step-1b variants side by side.
 - Threaded through `musicality/inference.py`, `musicality/evaluation.py`,
