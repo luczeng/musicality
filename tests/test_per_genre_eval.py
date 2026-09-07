@@ -11,8 +11,8 @@ These cover the two pieces that make that visible:
 
 - :meth:`~musicality.evaluation.BeatEvaluator.track_corpora`, which says which
   corpus each scored track came from,
-- :func:`~tools.diagnose_beat_phase.summarize` /
-  :func:`~tools.diagnose_beat_phase.group_by_corpus`, which turn per-track rows
+- :func:`~musicality.evaluation.summarize` /
+  :func:`~musicality.evaluation.group_by_corpus`, which turn per-track rows
   into per-corpus, macro and worst-corpus numbers.
 
 Background: plans/04_beat_phase_generalization_and_data_prep.md, proposal #0.
@@ -25,19 +25,21 @@ import numpy as np
 import pytest
 import torch
 
-from musicality.evaluation import BeatEvaluator
-from tools.diagnose_beat_phase import group_by_corpus, score_decoder, summarize
+from musicality.evaluation import BeatEvaluator, group_by_corpus, summarize
 
 FPS = 10.0
 PERIOD = 0.5
 G = 4
 
-# Decoder settings shared by the score_decoder integration tests. Trimming is
-# off because these synthetic tracks are shorter than mir_eval's 5s warm-up.
-DECODER_KW = dict(
+# Evaluator settings shared by the BeatEvaluator.score() integration tests.
+# Trimming is off because these synthetic tracks are shorter than mir_eval's
+# 5s warm-up window.
+# fps is derived from sample_rate/hop_length rather than passed in, so these
+# two are what pin the synthetic grid at FPS=10.
+EVALUATOR_KW = dict(
+    sample_rate=int(FPS),
+    hop_length=1,
     decoder="greedy",
-    switch_penalty=None,
-    advance="index",
     beat_threshold=0.3,
     min_distance_frames=1,
     gate_tolerance=0.2,
@@ -45,6 +47,7 @@ DECODER_KW = dict(
     group_size=G,
     tolerance=0.07,
     trim=False,
+    verbose=False,
 )
 
 
@@ -194,39 +197,60 @@ class TestSummarize:
         assert math.isnan(summary["worst_confusion"])
 
 
-class TestScoreDecoderTagsCorpora:
-    def test_rows_carry_their_corpus(self):
-        cached = [_track(), _track(), _track()]
+class TestScoreTagsCorpora:
+    """`BeatEvaluator.score()` is the single scoring path; these pin that it
+    tags every row with the right corpus and never desyncs the two lists."""
 
-        _summary, rows = score_decoder(
-            cached, FPS, corpora=["ballroom", "jtd", "jtd"], **DECODER_KW
+    @staticmethod
+    def _evaluator(cached, corpora):
+        dataset = MagicMock()
+        dataset.samples = [(f"{c}.wav", None, None, None) for c in corpora]
+        dataset.refs = [MagicMock(dataset_name=c) for c in corpora]
+
+        module = MagicMock()
+        module.hparams = {}  # not a softmax bar-position checkpoint
+
+        evaluator = BeatEvaluator(
+            checkpoint="unused.ckpt", dataset="merge", **EVALUATOR_KW
         )
+        evaluator._loaded = (module, "beat_phase", dataset, list(range(len(corpora))))
+        evaluator._probs = cached  # skip inference entirely
 
-        assert [r["corpus"] for r in rows] == ["ballroom", "jtd", "jtd"]
+        return evaluator
 
-    def test_unannotated_tracks_drop_out_without_desyncing(self):
-        """The zip must happen *before* the has_positions filter. If it did not,
-        the surviving rows would be tagged ['a', 'b'] instead of ['a', 'c']."""
+    def test_rows_carry_their_corpus(self):
+        corpora = ["ballroom", "jtd", "jtd"]
+        rows = self._evaluator([_track(), _track(), _track()], corpora).score()
+
+        assert [r["corpus"] for r in rows] == corpora
+
+    def test_unannotated_tracks_keep_their_beat_score_and_stay_aligned(self):
+        """An unannotated track is still a scorable *beat* track, so it keeps
+        its row rather than being dropped — only its position metrics are
+        ``None``. Dropping it (as the old score_decoder did) also meant the
+        row list no longer lined up with the track list."""
 
         cached = [
             _track(has_positions=True),
             _track(has_positions=False),
             _track(has_positions=True),
         ]
+        rows = self._evaluator(cached, ["a", "b", "c"]).score()
 
-        _summary, rows = score_decoder(
-            cached, FPS, corpora=["a", "b", "c"], **DECODER_KW
-        )
+        assert [r["corpus"] for r in rows] == ["a", "b", "c"]
+        assert rows[1]["f_beat"] is not None
+        assert rows[1]["position_acc"] is None
+        # ...and it is skipped by the position aggregate rather than zeroing it.
+        annotated = summarize([rows[0], rows[2]])["position_acc"]
+        assert summarize(rows)["position_acc"] == pytest.approx(annotated)
 
-        assert [r["corpus"] for r in rows] == ["a", "c"]
+    def test_rescoring_reuses_the_cached_probabilities(self):
+        evaluator = self._evaluator([_track(), _track()], ["a", "b"])
+        first = evaluator.score()
+        second = evaluator.score(decoder="global", switch_penalty=2.0)
 
-    def test_without_corpora_everything_lands_in_one_bucket(self):
-        cached = [_track(), _track()]
-
-        summary, rows = score_decoder(cached, FPS, corpora=None, **DECODER_KW)
-
-        assert {r["corpus"] for r in rows} == {""}
-        assert summary["macro_confusion"] == pytest.approx(summary["confusion"])
+        assert len(first) == len(second) == 2
+        assert evaluator._loaded[0].call_count == 0  # never re-ran the model
 
 
 class TestTrackCorpora:
