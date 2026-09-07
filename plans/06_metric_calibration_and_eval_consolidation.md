@@ -409,9 +409,9 @@ layout.
 - Keep `DEFAULTS` / `DATA_DIR` names and top-level YAML keys stable:
   `tools/annotator/main_window.py:1092` reads `EVAL_DEFAULTS` to drive the GUI.
 
-### Phase C — one CLI
+### Phase C — one CLI — **SHIPPED**
 
-`tools/eval_beat.py` becomes the only entry point:
+`tools/eval_beat.py` is the only entry point:
 
 | mode | replaces |
 |---|---|
@@ -428,13 +428,47 @@ Fold `configs/sweep_beat_postprocess.yaml` into `configs/eval_beat.yaml` under a
 and `train` in `diagnose_beat_phase.py` — keep `val`.
 
 > **Latent bug, fixed by construction.** `sweep_beat_postprocess.py:121-131`
-> hardcodes `probs[0], probs[1], probs[2]` and never passes
-> `decoder`/`switch_penalty`/`position_probs`, so it has been sweeping the
+> hardcoded `probs[0], probs[1], probs[2]` and never passed
+> `decoder`/`switch_penalty`/`position_probs`, so it had been sweeping the
 > **greedy** decoder against a two-sigmoid head — neither of which the current
-> `target_layout: positions` config trains. Routing `--sweep` through
-> `BeatEvaluator.score()` removes the divergence. **The tuned values in
-> `configs/eval_beat.yaml` came out of that path and must be re-swept**; treat
-> them as unverified until they are.
+> `target_layout: positions` config trains. `--sweep` routes through
+> `BeatEvaluator.score()`, which removes the divergence. **The tuned values in
+> `configs/eval_beat.yaml` came out of that path and must still be re-swept**;
+> they are marked unverified in the config itself until they are.
+
+**Three things came out differently from the sketch above.**
+
+1. **The sweep runs in two stages, not one joint product.** Bar-position
+   decoding consumes whatever beats the peak-picker found, so a beat setting
+   that loses on `f_beat` cannot win on `position_acc`. Stage 1 sweeps the beat
+   grid (60 combinations) ranked by `f_beat`; stage 2 holds the winner fixed and
+   sweeps the one position knob the *resolved* decoder actually reads —
+   `switch_penalty` under `global`, `anchor_threshold` under `greedy`. That is
+   60 + 7 scored configurations instead of 60 x 7, for the same answer. Sweeping
+   `anchor_threshold` under `global` is exactly the old tool's bug in a new
+   place, so the knob is chosen from the decoder rather than fixed.
+
+2. **The verdict needed re-scaling.** Its 0.30 / 0.10 thresholds were calibrated
+   on `confusion`, an error rate, where halving the error is a 50% relative
+   move. Ranking by `position_acc` — an accuracy — the same halving reads as
+   +9%, and the first real run reported a decoder win as CAUSE (A), the model.
+   Both metrics now go through `headroom_recovered()`, which divides the gain by
+   the headroom that was actually available (`baseline` for an error rate,
+   `1 - baseline` for an accuracy), so the thresholds keep their meaning under
+   either. Measured: greedy 0.847 -> global+viterbi(2) 0.921 is 48% of the
+   remaining error, i.e. CAUSE (B).
+
+3. **`--group-size` now rebuilds the dataset when the checkpoint overrides it.**
+   `diagnose_beat_phase.py` printed a warning and carried on, which left the
+   *reference* annotations folded at `--group-size` while predictions were
+   scored at the checkpoint's `group_size` — 8-way predictions against 4-way
+   references. `resolve_group_size()` resets the memoized load and rebuilds.
+
+`--rank-metric {position_acc,confusion}` (default `position_acc`) decides which
+metric picks the winning decoder or knob. `confusion` is kept as an option
+because every comparison in `plans/04` and `plans/05` is quoted in it; the
+default moves to the canonical headline. This is the choice §7 flagged as
+pending — a flag rather than a silent switch, so both are checkable.
 
 ### Phase D — event metrics during training
 
@@ -493,11 +527,14 @@ uv run pytest tests/ -q
 uv run ruff format musicality/ tools/ tests/
 ```
 
-Tests needing updates: `tests/test_sweep_beat_postprocess.py` (retarget at
-`--sweep`), `tests/test_evaluation.py` (mocks `evaluate_track`, asserts positional
-args), `tests/test_per_genre_eval.py`, `tests/test_position_accuracy.py` (drops
-`modal_fraction`), `tests/test_metrics.py` (add `frame_f_measure`,
-`peak_f_measure`, `beat_continuity`).
+Tests updated: `tests/test_sweep_beat_postprocess.py` replaced by
+`tests/test_eval_beat_cli.py` (the sweep no longer has scoring helpers of its
+own — it drives `BeatEvaluator.score()`, so what is left to test is grid
+ordering, decoder-variant composition and group-size resolution);
+`tests/test_evaluation.py` (mocked `evaluate_track`, asserted positional args);
+`tests/test_per_genre_eval.py`; `tests/test_position_accuracy.py` (dropped
+`modal_fraction`); `tests/test_metrics.py` (added `peak_f_measure`,
+`beat_continuity`).
 
 **Regression — the consolidation must not move any number.** Verified: on 40
 merge-val tracks, `f_beat` / `f_one` / `f_last` / `confusion` / `position_acc`

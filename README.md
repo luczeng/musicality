@@ -245,8 +245,7 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 | `tools/train.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
 | `tools/create_splits.py` | Create the train/val splits under `../musicality_db/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
-| `tools/eval_beat.py` | Evaluate a beat-only or beat-phase checkpoint (task auto-detected) on full-length tracks (not the fixed-duration training clips): beat F-measure, plus "1"/"last" F-measure and phase-confusion rate for beat-phase checkpoints |
-| `tools/sweep_beat_postprocess.py` | Grid-search postprocessing thresholds for a beat-only or beat-phase checkpoint (task auto-detected): beat-detection thresholds (`beat_threshold`/`min_distance_frames`/`gate_tolerance`), scored by mean beat F-measure, plus `anchor_threshold` for beat-phase checkpoints, scored by mean "1"/"last" F-measure |
+| `tools/eval_beat.py` | The single evaluation entry point for a beat-only or beat-phase checkpoint (task auto-detected), on full-length tracks rather than the fixed-duration training clips. Default: the canonical metric report (`f_beat`, `cmlt`/`amlt`, `position_acc` and its offset-invariant twin). `--per-genre` breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and says whether the error is the model's or the decoder's, `--sweep` grid-searches the postprocessing knobs, `--output` writes per-track rows to CSV |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |

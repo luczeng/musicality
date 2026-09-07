@@ -190,7 +190,7 @@ def label_bar_position(
     not just itself. Too high, and even genuine anchors stop clearing the
     bar, so the count never resyncs (or never starts) and beats go
     unresolved instead. Empirically this gives a real interior optimum
-    rather than a monotonic curve — see ``tools/sweep_beat_postprocess.py``,
+    rather than a monotonic curve — see ``tools/eval_beat.py --sweep``,
     which grid-searches this against real F-measure.
 
     :param beat_times: Gated beat timestamps (seconds), sorted.

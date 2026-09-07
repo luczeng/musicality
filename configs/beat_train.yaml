@@ -81,7 +81,7 @@ pos_weight_alpha: 1.11
 #              annotated clip carries 1/n_valid regardless of tempo. That is a
 #              macro-average over tracks, matching the per-genre metric.
 # NOW `per_item`, matching the macro-over-tracks per-genre metric the project is
-# actually judged on (tools/diagnose_beat_phase.py). Under `global`, measured on
+# actually judged on (`tools/eval_beat.py --per-genre`). Under `global`, measured on
 # merge: jtd took 73.7% of the position gradient against 63.8% of the tracks.
 # Changes the value of val/loss, which ModelCheckpoint splices into checkpoint
 # filenames — runs before and after are not loss-comparable.
