@@ -87,6 +87,7 @@ Supports absolute, relative, and classification loss modes. Classification loss 
 ### Callbacks (`musicality/callbacks/`)
 
 - `error_plot.py` — `ErrorVsTempoPlot`: logs a per-epoch error-vs-tempo scatter to W&B.
+- `event_metrics.py` — `EventMetricsLogger`: every few epochs, decodes a fixed corpus-stratified slice of the validation split on **full tracks** and logs `val_event/f_beat`, `cmlt`, `amlt`, `position_acc`, `position_acc_best_offset`. Scores through `BeatEvaluator.score`, so these are the same numbers `tools/eval_beat.py` reports afterwards — unlike the frame metrics beside them, which are measured on a 16s clip. Configured by `event_metrics:` in `configs/beat_train.yaml`.
 - `metrics_logger.py` — `BestMetricsPrinter`: prints best validation metrics at the end of training.
 
 ### Data Formats (`musicality/dataformats/`)

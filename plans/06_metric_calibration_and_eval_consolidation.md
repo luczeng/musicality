@@ -470,7 +470,7 @@ because every comparison in `plans/04` and `plans/05` is quoted in it; the
 default moves to the canonical headline. This is the choice §7 flagged as
 pending — a flag rather than a silent switch, so both are checkable.
 
-### Phase D — event metrics during training
+### Phase D — event metrics during training — **SHIPPED**
 
 `musicality/callbacks/event_metrics.py` — `EventMetricsLogger(Callback)`:
 
@@ -494,6 +494,58 @@ pending — a flag rather than a silent switch, so both are checkable.
 
 This closes the loop: the number quoted in a report and the number on the W&B
 chart become the same number, measured on the same material.
+
+**Six things came out differently from the sketch above.**
+
+1. **"Full-track inference -> `readout` -> `score_events`" would have been a
+   fourth copy of the scoring loop** — the thing Phase B existed to delete.
+   `BeatEvaluator` gained an alternative constructor instead,
+   `from_module(module, dataset)`, which skips checkpoint loading and split
+   resolution and leaves everything downstream (`compute_track_probs`,
+   `decode`, `score`) as the code the CLI runs. Verified rather than asserted:
+   the callback and a `BeatEvaluator` over the same 12 tracks agree on all 120
+   metric cells, exactly — see §6.
+
+2. **`BestMetricsPrinter` only tracked keys starting with `val/`.** Putting the
+   five keys in `_TRACKED_KEYS` was therefore not enough — they were logged,
+   printed each epoch, and silently dropped from the end-of-run best block.
+   `_VAL_PREFIXES = ("val/", "val_event/")` fixes it. Keeping the separate
+   namespace is still right: it is what makes a collision with the monitored
+   `val/loss` structurally impossible.
+
+3. **The callback must be registered *before* `BestMetricsPrinter`.** Both act
+   in `on_validation_epoch_end`, one writing metrics and the other reading
+   them, and `trainer.callback_metrics` is recomputed from the live results
+   collection on every read — so a metric logged by a later callback in the
+   same hook is not there yet. Found by running a real one-epoch fit, not by
+   reading the code: the unit tests passed with the order reversed.
+
+4. **It also fires on the final epoch**, not only on multiples of
+   `every_n_epochs`. Otherwise the model a run *finishes* with is the one model
+   that never gets an event number.
+
+5. **Split resolution moved into `common.resolve_beat_split_refs(cfg)`.** The
+   dataloader and the callback have to agree on which tracks are "val", and
+   `beat_split_name` folds `binary_only` into the split name — two call sites
+   re-deriving that is two chances to disagree.
+
+6. **The per-epoch printed line repeats stale event metrics.** Lightning's
+   `callback_metrics` keeps the last value it saw rather than clearing it, so
+   on the epochs between scoring passes the printed line shows the previous
+   pass's numbers. What reaches W&B does not: the results collection is reset
+   each validation loop, so the logged series has exactly one point per scoring
+   epoch (confirmed with a logger spy — 3 records for 3 scoring epochs out of
+   4). Documented at `_TRACKED_KEYS` rather than worked around.
+
+**One thing to know about reading the numbers.** The stratified subsample is
+*not* comparable to §1's seed-0 60-track figures, and will read lower. It
+deliberately gives `rwc_classical` and `rwc_jazz` the same weight as
+`ballroom`, so it is close to the macro mean rather than the micro one. On
+`merge_v4` with `n_tracks=12` (2 each from ballroom/gtzan/jtd/rwc_classical/
+rwc_genre, 1 each from rwc_jazz/rwc_popular): `f_beat` 0.661, `cmlt` 0.335,
+`amlt` 0.683, `position_acc` 0.490. That is the same model §1 measured at
+`f_beat` 0.845 — the difference is which corpora are being averaged, not a
+regression.
 
 ### Phase E — docs
 
@@ -560,6 +612,26 @@ with `--decoder global --switch-penalty 2.0`: `f_beat` 0.845, `cmlt` 0.665,
 **Training metric** — `peak_f_measure` on merge-val clips should land near 0.900,
 i.e. within ~0.06 of `f_beat`, with the residual attributable to §1.3's clip
 selection rather than to the metric.
+
+**Phase D — the callback and the CLI must not be two implementations.**
+Verified: `EventMetricsLogger.score()` and `BeatEvaluator.from_module(...)
+.score()` over the same 12 merge-val tracks agree on all 120 metric cells,
+zero mismatches. The check has teeth — run once with the module left in
+*training* mode it reported 100 mismatches, dropout being active during the
+decode, which is exactly the silent failure the eval-mode guard in `score()`
+prevents.
+
+The path was also exercised end to end by a real one-epoch run,
+
+```bash
+WANDB_MODE=offline uv run python tools/train_beat.py \
+    trainer.max_epochs=1 train_subsample=0.02 data.num_workers=0 \
+    event_metrics.n_tracks=3
+```
+
+which is what surfaced deviation 3 above: the unit tests passed with the
+callback registered after `BestMetricsPrinter`, and only a real fit showed the
+end-of-run best block missing every `val_event/*` key.
 
 ---
 
