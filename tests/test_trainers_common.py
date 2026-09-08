@@ -10,6 +10,7 @@ from musicality.dataformats.track_io import TrackRef
 from musicality.splits.splitter import Splitter
 from musicality.trainers.common import (
     build_checkpoint_callback,
+    resolve_beat_split_refs,
     resolve_split_refs,
 )
 
@@ -78,6 +79,46 @@ class TestResolveSplitRefs:
 
         with pytest.raises(FileNotFoundError):
             resolve_split_refs(cfg, tmp_path / "splits", "ballroom")
+
+
+class TestResolveBeatSplitRefs:
+    """One function decides which tracks are "val" for a beat run, because
+    more than one thing has to agree on the answer: the validation dataloader,
+    and EventMetricsLogger, which scores those refs on full tracks."""
+
+    @staticmethod
+    def _setup(monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+        monkeypatch.setattr(dataformats, "ROOT", tmp_path)
+        monkeypatch.setattr(
+            dataformats, "load", lambda: type("F", (), {"splits_dir": "splits"})()
+        )
+
+        return splits_dir
+
+    def test_applies_the_beat_split_naming_convention(self, monkeypatch, tmp_path):
+        splits_dir = self._setup(monkeypatch, tmp_path)
+        val_refs = _refs(("ballroom", "b"))
+        Splitter.save_refs(splits_dir, "beat_phase-ballroom", [], val_refs)
+
+        cfg = OmegaConf.create({"data": {"input": "ballroom"}, "binary_only": False})
+
+        assert resolve_beat_split_refs(cfg)[1] == val_refs
+
+    def test_binary_only_reads_a_different_split(self, monkeypatch, tmp_path):
+        """`binary_only` changes which tracks the dataset keeps, so it is
+        folded into the split name — a run that flips it must not silently
+        reuse the other split's held-out tracks."""
+
+        splits_dir = self._setup(monkeypatch, tmp_path)
+        Splitter.save_refs(splits_dir, "beat_phase-ballroom", [], _refs(("b", "all")))
+        binary = _refs(("ballroom", "binary"))
+        Splitter.save_refs(splits_dir, "beat_phase-ballroom-binary", [], binary)
+
+        cfg = OmegaConf.create({"data": {"input": "ballroom"}, "binary_only": True})
+
+        assert resolve_beat_split_refs(cfg)[1] == binary
 
 
 def _cfg(**overrides):

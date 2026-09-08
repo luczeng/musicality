@@ -32,7 +32,7 @@ import torch
 import yaml
 
 import musicality.dataformats as dataformats
-from musicality.inference import load_module, load_track_waveform
+from musicality.inference import detect_task, load_module, load_track_waveform
 from musicality.loaders.beat_dataset import (
     BeatDataset,
     beat_split_name,
@@ -268,7 +268,7 @@ class BeatEvaluator:
 
     def __init__(
         self,
-        checkpoint: str | Path,
+        checkpoint: str | Path | None,
         dataset: str,
         data_home: str | Path | None = None,
         split: str = "val",
@@ -311,6 +311,62 @@ class BeatEvaluator:
         self.verbose = verbose
         self._loaded = None
         self._probs = None
+
+    @classmethod
+    def from_module(
+        cls,
+        module,
+        dataset: BeatDataset,
+        *,
+        name: str = "in-memory",
+        task: str | None = None,
+        **kwargs,
+    ) -> "BeatEvaluator":
+        """Build an evaluator around an *already-loaded* module and an
+        *already-built* dataset, skipping both checkpoint loading and split
+        resolution.
+
+        This is what lets a training run score itself
+        (:class:`~musicality.callbacks.event_metrics.EventMetricsLogger`): the
+        model being validated exists only in memory, so there is no checkpoint
+        for :meth:`load` to read, and its tracks are already chosen by the
+        caller. Everything downstream — :meth:`compute_track_probs`,
+        :meth:`decode`, :meth:`score` — is then the same code the CLI runs,
+        which is the point: a number logged during training and the same
+        number recomputed afterwards by ``tools/eval_beat.py`` come from one
+        implementation and cannot drift apart.
+
+        The probability cache is per-instance and a training module's weights
+        change every epoch, so build a fresh evaluator per scoring pass rather
+        than reusing one.
+
+        :param module: A ``BeatModule``/``BeatPhaseModule``, already on the
+            device named by *device*.
+        :param dataset: A built :class:`~musicality.loaders.beat_dataset.BeatDataset`.
+            Every track in it is scored, subject to *limit*.
+        :param name: Label used in report lines only — there is no dataset
+            directory to name here.
+        :param task: Task tag; detected from the module's own hyperparameters
+            when omitted, the same way :func:`~musicality.inference.load_module`
+            detects it from a checkpoint's.
+        :param kwargs: Any other constructor argument (``sample_rate``,
+            ``group_size``, ``tolerance``, ``device``, ...).
+        """
+
+        evaluator = cls(checkpoint=None, dataset=name, **kwargs)
+
+        indices = list(range(len(dataset)))
+        if evaluator.limit is not None:
+            indices = indices[: evaluator.limit]
+
+        evaluator._loaded = (
+            module,
+            task or detect_task(module.hparams),
+            dataset,
+            indices,
+        )
+
+        return evaluator
 
     @property
     def fps(self) -> float:

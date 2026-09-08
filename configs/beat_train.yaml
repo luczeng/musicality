@@ -114,6 +114,31 @@ train_subsample: null  # fraction of the training split to use (e.g. 0.2), for q
 # subdirectory below this (named after wandb.run_name, or a timestamp when
 # that is null), holding that run's trainer.save_top_k best checkpoints.
 checkpoint_dir: checkpoints_beat/
+# Event-level validation metrics (musicality/callbacks/event_metrics.py),
+# logged as `val_event/*` alongside the frame metrics.
+#
+# The frame metrics answer "did it label this 23 ms frame right, in a 16-second
+# clip cut from the middle of the track". The event metrics answer "did it find
+# the beats, and number the bars, across the whole track" — which is what the
+# model is judged on, and what tools/eval_beat.py reports. They are not close:
+# frame acc_position read 0.661 against an event position_acc of 0.581, and a
+# 70 ms frame acc_beat read 0.959 against an f_beat of 0.845. See
+# plans/06_metric_calibration_and_eval_consolidation.md section 1.
+#
+# Cost is one full-track model pass per track, on top of the normal validation
+# epoch — hence a subsample, scored every few epochs rather than every epoch.
+# The subsample is fixed and stratified across corpora, so the logged series is
+# a curve over one set of tracks, and a small corpus is not averaged away by a
+# large one.
+#
+# Postprocessing (threshold, decoder, switch penalty) is NOT configured here:
+# it comes from configs/eval_beat.yaml's block for this task, the same source
+# tools/eval_beat.py reads, so a number logged during a run and the same number
+# recomputed from its checkpoint afterwards cannot disagree.
+event_metrics:
+  enabled: true
+  n_tracks: 50  # tracks scored per pass; null scores the whole validation split
+  every_n_epochs: 5  # scored on epoch 0, then every N — plus the final epoch, always
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto
