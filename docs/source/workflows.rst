@@ -117,21 +117,32 @@ documented in full at :doc:`postprocess`:
   ``decoder``/``switch_penalty``/``group_size`` for beat-phase, and
   ``anchor_threshold`` for the greedy decoder) — selected automatically by
   ``load_module``'s detected task unless overridden.
-- ``tools/sweep_beat_postprocess.py`` produces the beat-detection values: it
-  runs the model once per track (cached via
+- ``tools/eval_beat.py --sweep`` produces those values. It runs the model once
+  per track (cached via
   :meth:`~musicality.evaluation.BeatEvaluator.compute_track_probs`), then
-  cheaply grid-searches against the cached probabilities — a beat-detection
-  grid for both tasks (scored by mean beat F-measure) and, for beat-phase
-  checkpoints, ``anchor_threshold`` swept jointly with it. Note the latter only
-  affects the non-default greedy decoder; see :doc:`postprocess` for why
-  ``anchor_threshold`` has a real interior optimum rather than "higher is
-  always better."
-- ``tools/diagnose_beat_phase.py`` is the beat-phase counterpart, and what
-  produces the tuned ``decoder``/``switch_penalty``. Against one cached set of
-  probabilities it scores every decoder variant side by side, reports a
-  per-track phase-offset profile
-  (:func:`~musicality.metrics.position_accuracy.position_accuracy`), and states
-  whether the phase error is coming from the model or from the decoder.
+  grid-searches cheaply against the cached probabilities, in two stages: the
+  beat-detection grid first, ranked by ``f_beat``, then the one bar-position
+  knob the resolved decoder actually reads — ``switch_penalty`` under
+  ``global``, ``anchor_threshold`` under ``greedy`` — held against the winning
+  beat settings. See :doc:`postprocess` for why ``anchor_threshold`` has a real
+  interior optimum rather than "higher is always better."
+
+  The sweep decodes through
+  :meth:`~musicality.evaluation.BeatEvaluator.score`, the same path evaluation
+  takes, so it cannot tune a decoder the reported numbers do not use. Its
+  predecessor could and did: it hardcoded the one/last channels and never
+  passed ``decoder``, so it swept ``anchor_threshold`` for a greedy decode
+  while the shipped config ran ``global``.
+
+- ``tools/eval_beat.py --decoders`` produces the tuned
+  ``decoder``/``switch_penalty``. Against one cached set of probabilities it
+  scores every decoder variant side by side, and states whether the phase error
+  is coming from the model or from the decoder — by how much of the baseline's
+  remaining error a better decode of the *same* probabilities recovers. Add
+  ``--profile`` for the per-track phase-offset profile
+  (:func:`~musicality.metrics.position_accuracy.position_accuracy`), which says
+  whether a wrong phase is a stable whole-track offset (the model cannot hear
+  downbeats) or a mid-track flip (the decoder is losing information).
 
 API reference
 -------------

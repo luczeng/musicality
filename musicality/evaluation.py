@@ -201,6 +201,28 @@ def summarize(rows: list[dict]) -> dict:
     ``worst_position_acc`` (and the corpus that scored it) plus
     ``worst_confusion``, kept because every comparison in ``plans/04`` and
     ``plans/05`` is in those units.
+
+    :param rows: Scored rows, as returned by :meth:`BeatEvaluator.score` — each
+        a dict holding ``corpus`` plus any subset of :data:`SCORE_KEYS`. A key
+        that is absent or ``None`` is *skipped*, not counted as zero, so a
+        beat-only run does not score 0.0 on the bar-position metrics it cannot
+        measure. A row without a ``corpus`` key groups under ``""``, which
+        makes macro equal micro — the single-corpus case.
+    :returns: A flat dict of aggregates:
+
+        - ``n_tracks`` (int) — number of rows in, including unscorable ones.
+        - one entry per :data:`SCORE_KEYS` — the micro mean, over tracks.
+        - one ``macro_<key>`` per :data:`SCORE_KEYS` — the macro mean, over
+          corpora.
+        - ``worst_corpus`` (str | None) — the corpus with the lowest mean
+          ``position_acc``; ``None`` when no corpus was scorable.
+        - ``worst_position_acc`` (float) — that corpus's mean.
+        - ``worst_confusion`` (float) — the *highest* per-corpus mean
+          ``confusion``, since confusion is the one metric here where lower is
+          better.
+
+        Every mean is ``float("nan")`` when nothing was scorable, so an empty
+        or all-``None`` input returns a full dict rather than raising.
     """
 
     summary = {"n_tracks": len(rows)}

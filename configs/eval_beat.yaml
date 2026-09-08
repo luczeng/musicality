@@ -1,5 +1,6 @@
-# Defaults for tools/eval_beat.py — every key below is overridable via the
-# matching --flag on the command line (e.g. `--beat-threshold 0.4`).
+# Defaults for tools/eval_beat.py — the single evaluation entry point. Every key
+# below is overridable via the matching --flag on the command line
+# (e.g. `--beat-threshold 0.4`).
 dataset: ballroom  # mirdata dataset name
 split: val  # train | val | all
 val_split: 0.2  # fraction of the dataset held out for validation — must match how the split was created
@@ -7,28 +8,40 @@ sample_rate: 22050  # audio sample rate the checkpoint was trained at
 hop_length: 512  # frame hop size, in samples — must match the checkpoint's training config
 tolerance: 0.07  # F-measure matching window, seconds
 device: cpu  # torch device to run inference on
+
 # Postprocessing (musicality/postprocess.py) defaults, selected automatically by
 # the checkpoint's detected task (musicality.inference.detect_task) unless
 # overridden via the matching --flag.
 beat_only:
-  # Tuned via tools/sweep_beat_postprocess.py against a real checkpoint
+  # Tuned via `tools/eval_beat.py --sweep` against a real checkpoint
   # (mean beat F-measure 0.735 -> 0.896) — rerun the sweep and update these if
   # the checkpoint/dataset changes materially.
   beat_threshold: 0.8  # pick_peaks: minimum probability to be considered a peak at all
   min_distance_frames: 4  # pick_peaks: minimum frame gap enforced between returned peaks
   gate_tolerance: 0.1  # gate_periodicity: relative slack around an integer multiple of the current beat period
 beat_phase:
-  # Beat-detection knobs tuned via tools/sweep_beat_postprocess.py against a real
-  # checkpoint (checkpoints_beat/loss=1.6565.ckpt, binary_only=True, ballroom val
-  # split): mean beat F-measure 0.916.
+  # !! UNVERIFIED — RE-SWEEP BEFORE TRUSTING !!
+  # These beat-detection knobs were produced by the old
+  # tools/sweep_beat_postprocess.py, which hardcoded `probs[0], probs[1],
+  # probs[2]` and never passed decoder/switch_penalty/position_probs. It was
+  # therefore sweeping the *greedy* decoder against a two-sigmoid one/last head
+  # — neither of which `configs/beat_train.yaml` trains any more. The
+  # consolidated `--sweep` routes through BeatEvaluator.score() and cannot
+  # diverge that way; re-run it and replace the four values below.
+  #
+  #   uv run python tools/eval_beat.py --checkpoint <ckpt> \
+  #       --dataset merge --split val --binary-only --sweep
+  #
+  # (Reported at the time: mean beat F-measure 0.916 on
+  # checkpoints_beat/loss=1.6565.ckpt, binary_only=True, ballroom val.)
   beat_threshold: 0.5  # pick_peaks: minimum probability to be considered a peak at all
   min_distance_frames: 4  # pick_peaks: minimum frame gap enforced between returned peaks
   gate_tolerance: 0.1  # gate_periodicity: relative slack around an integer multiple of the current beat period
   group_size: 4  # beats per group: 4 for bar position (default), 8 for phrase position
   # Bar-position stage. `global` runs postprocess.label_bar_position_global (a
-  # whole-track maximum-likelihood decode over the soft one/last probabilities);
+  # whole-track maximum-likelihood decode over the soft position probabilities);
   # `greedy` runs the older count-forward label_bar_position. Measured on the
-  # same checkpoint with no retraining (tools/diagnose_beat_phase.py, switch
+  # same checkpoint with no retraining (`tools/eval_beat.py --decoders`, switch
   # penalty tuned on train and reported on val):
   #
   #   decoder                  f_one   f_last  confusion
@@ -43,3 +56,26 @@ beat_phase:
   # 40.0 scores 0.219, both worse than 2.0's 0.185.
   switch_penalty: 2.0
   anchor_threshold: 0.8  # label_bar_position (decoder: greedy only): minimum probability for a beat to be trusted as a confident "1"/"last" anchor
+
+# Grid searched by `tools/eval_beat.py --sweep`. Overridable per run via
+# --sweep-beat-thresholds / --sweep-min-distances / --sweep-gate-tolerances /
+# --sweep-anchor-thresholds / --switch-penalties / --top.
+#
+# The sweep runs in two stages rather than over the full cartesian product: the
+# beat grid is scored first, and the winning beat knobs are then held fixed
+# while the bar-position knob is swept on top of them. Bar-position decoding
+# consumes whatever beats the peak-picker found, so a beat setting that loses on
+# `f_beat` cannot win on `position_acc` — which makes the joint product (here,
+# 60 x 7 = 420 combinations) mostly wasted work for the same answer as 60 + 7.
+sweep:
+  top: 10  # print only the top N combinations per table
+  beat_thresholds: [0.2, 0.4, 0.5, 0.6, 0.8]  # pick_peaks: threshold candidates
+  min_distance_frames: [1, 2, 4]  # pick_peaks: min_distance candidates
+  gate_tolerances: [0.1, 0.15, 0.2, 0.3]  # gate_periodicity: tolerance candidates
+  # label_bar_position anchor_threshold candidates — swept only when the
+  # resolved decoder is `greedy`, the only decoder that has an anchor threshold.
+  anchor_thresholds: [0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+  # label_bar_position_global switch_penalty candidates — swept only when the
+  # resolved decoder is `global`. The exact no-resync decode (`null`) is always
+  # scored alongside these. Doubles as the variant list for `--decoders`.
+  switch_penalties: [0.25, 1.0, 2.0, 5.0, 20.0]

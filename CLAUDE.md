@@ -105,7 +105,7 @@ Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits
 - `plot_tempo_histograms.py` — Plots BPM distributions across datasets.
 - `summarize_datasets.py` — Prints summary statistics for all datasets.
 - `train.py` — Hydra entry point for training.
-- `diagnose_beat_phase.py` — Diagnoses whether a beat-phase checkpoint's bar-position errors come from the model or the decoder: scores every decoder variant against one cached set of frame probabilities, prints a phase-offset profile, and produces the tuned `decoder`/`switch_penalty` in `configs/eval_beat.yaml`.
+- `eval_beat.py` — The one evaluation tool for beat-only/beat-phase checkpoints (task auto-detected), on full-length tracks. Default is the canonical metric report; `--per-genre` (automatic on a merged split) breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and calls model-vs-decoder, `--sweep` grid-searches the postprocessing knobs that `configs/eval_beat.yaml` holds, `--output` writes per-track rows to CSV. Every mode runs the model once per track and re-uses the cached probabilities.
 
 ## Configuration
 
