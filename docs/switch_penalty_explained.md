@@ -56,7 +56,7 @@ the phase flips around mid-track.
 ## Measured curve
 
 Checkpoint `checkpoints_beat/loss=1.6565.ckpt`, ballroom, `binary_only=True`,
-via `tools/diagnose_beat_phase.py`. Confusion is
+via `tools/eval_beat.py --decoders`. Confusion is
 `confusion_half_cycle_rate` — lower is better.
 
 ### Train (419 tracks) — the split the value was tuned on
@@ -120,11 +120,11 @@ avoids tuning on the split being reported — a flaw the beat-detection knobs in
 Tune on **train**, verify on **val**, then update `configs/eval_beat.yaml`:
 
 ```bash
-uv run python tools/diagnose_beat_phase.py \
+uv run python tools/eval_beat.py --decoders \
     --checkpoint <ckpt> --dataset ballroom --binary-only \
     --split train --switch-penalties 1 1.5 2 3 5
 
-uv run python tools/diagnose_beat_phase.py \
+uv run python tools/eval_beat.py --decoders \
     --checkpoint <ckpt> --dataset ballroom --binary-only \
     --split val --switch-penalties 1 1.5 2 3 5
 ```

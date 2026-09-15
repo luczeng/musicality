@@ -547,7 +547,7 @@ rwc_genre, 1 each from rwc_jazz/rwc_popular): `f_beat` 0.661, `cmlt` 0.335,
 `f_beat` 0.845 — the difference is which corpora are being averaged, not a
 regression.
 
-### Phase E — docs
+### Phase E — docs — **SHIPPED**
 
 - `docs/source/metrics.rst` — add `~musicality.metrics.continuity`.
 - `CLAUDE.md` — the `tools/` list names `diagnose_beat_phase.py`; replace with
@@ -559,6 +559,54 @@ regression.
   does not have to be rediscovered.
 - Stale references to fix while nearby: `beat_phrase_tracker_plan.md:61` names
   `tools/eval_beat_phase.py` and `musicality/metrics.py`, neither of which exists.
+
+**What actually remained, and what changed in the doing.**
+
+Half of this phase had already landed with phase C — `docs/source/metrics.rst`
+had `continuity` and `position_accuracy`, and `docs/source/workflows.rst`'s
+eval/postprocess narrative had been rewritten around `tools/eval_beat.py`. What
+was left:
+
+1. **`CLAUDE.md`'s metrics list named a file that no longer exists.** It still
+   listed `phase_offset.py` / `phase_offset_profile`, deleted in phase A when it
+   became `position_accuracy.py`, and was missing `continuity.py` entirely.
+   Fixed, and `frame_accuracy.py`'s entry now names `peak_f_measure` too.
+
+2. **The calibration record became `docs/frame_vs_event_metrics.md`** rather
+   than a transcription of §1-2. §1 and §2 are a *decision* record — they argue
+   for changing the metric set. The doc is a *reference*: what each family
+   measures, why the two disagree, which to quote. It carries the measured
+   tables from §1, the mathematics from §2, and the naming rule that came out
+   of phase D (name says what, prefix says how).
+
+3. **Historical docs got one pointer each, not a rewrite.** `plans/04`,
+   `plans/05`, `docs/beat_phase_improvement_review.md` and
+   `docs/beat_phase_pos_weight_notes.md` name the deleted tools throughout, and
+   a `sed` would falsify the record of what was actually run and when. The two
+   `docs/` files got a banner saying where the tooling went; the plans were left
+   alone. Only *actionable* text was edited: the runnable retune commands in
+   `docs/switch_penalty_explained.md` and
+   `docs/beat_phase_improvement_review.md`, the "not yet done" instruction in
+   `docs/beat_phase_context_ideas.md`, and the two path references in
+   `beat_phrase_tracker_plan.md` this section names. Deliberate mentions in
+   `tools/eval_beat.py`, `configs/eval_beat.yaml` and `tests/test_eval_beat_cli.py`
+   — which name the old tool to explain the bug it had — were left as they are.
+
+4. **One open follow-up turned out to be closed.**
+   `docs/beat_phase_improvement_review.md` still carried "`sweep_beat_postprocess.py`
+   still sweeps `anchor_threshold` … it should learn to sweep `switch_penalty`
+   instead" as a known follow-up. Phase C did exactly that. Struck through and
+   marked done rather than deleted, since the reasoning for it is still worth
+   reading.
+
+**A measurement in this document was being mis-quoted.** §1.1 records
+target-positive frames at **17.7%** of the total, and TNR at ±0 of **0.799** —
+not the "~97% negatives, TNR pinned near 1.0" that gets reached for
+intuitively. The conclusion is unchanged and if anything sharper: balanced
+accuracy's blind spot is *structural* — `½(TPR + TNR)` has no precision term at
+all — rather than an artefact of class imbalance. The Gaussian smear at
+`σ = 1.5` is what makes the positive class large. `docs/frame_vs_event_metrics.md`
+states both numbers explicitly for that reason.
 
 ---
 

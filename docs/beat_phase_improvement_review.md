@@ -3,6 +3,13 @@
 A critique of `docs/beat_phase_context_ideas.md` and a ranked plan for improving
 phase (bar-position) estimation.
 
+> **Tooling note (added by `plans/06`).** `tools/diagnose_beat_phase.py` and
+> `tools/sweep_beat_postprocess.py` no longer exist — they were consolidated
+> into `tools/eval_beat.py` (`--decoders`, `--profile`, `--per-genre`,
+> `--sweep`, `--output`). Where this document names either, read the
+> equivalent flag. The prose is left as written so the record of what was run,
+> and when, stays accurate.
+
 > **Status:** steps 0 and 1 have since been run. See
 > [RESULTS](#results-step-0-and-step-1-run-2026-08-29) below — the headline is
 > that the decoder, not the model, was responsible for a large part of the
@@ -453,7 +460,7 @@ probabilities — it needs a training run.** When that lands, re-baseline before
 drawing any conclusion:
 
 ```bash
-uv run python tools/diagnose_beat_phase.py --checkpoint <new-ckpt> \
+uv run python tools/eval_beat.py --decoders --checkpoint <new-ckpt> \
     --dataset ballroom --binary-only --split train --switch-penalties 1 2 5 10
 ```
 
@@ -547,9 +554,11 @@ model head, loss, metrics, decoder, inference. Nothing needs migrating.
   `tools/eval_beat.py` and the annotator, defaulting from
   `configs/eval_beat.yaml`.
 
-Known follow-up: `tools/sweep_beat_postprocess.py` still sweeps
+~~Known follow-up: `tools/sweep_beat_postprocess.py` still sweeps
 `anchor_threshold`, which only the (now non-default) greedy decoder reads. It
-should learn to sweep `switch_penalty` instead.
+should learn to sweep `switch_penalty` instead.~~ **Done** — `plans/06` phase C.
+`tools/eval_beat.py --sweep` picks the position knob from the *resolved*
+decoder: `switch_penalty` under `global`, `anchor_threshold` under `greedy`.
 
 ## Recommended order of work (original, superseded above)
 

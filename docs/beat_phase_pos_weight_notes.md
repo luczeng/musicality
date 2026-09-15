@@ -4,6 +4,19 @@ Notes from a debugging/analysis session on the beat-phase model (`BeatPhaseModul
 trained on ballroom). Captures why the training-time metrics look much better
 than the event-level evaluation, and a concrete `pos_weight` recommendation.
 
+> **Tooling note (added by `plans/06`).** `tools/diagnose_beat_phase.py` and
+> `tools/sweep_beat_postprocess.py` no longer exist — they were consolidated
+> into `tools/eval_beat.py` (`--decoders`, `--profile`, `--per-genre`,
+> `--sweep`, `--output`). Where this document names either, read the
+> equivalent flag. The prose is left as written so the record of what was run,
+> and when, stays accurate.
+> `musicality/metrics.py` has likewise become the `musicality/metrics/` package,
+> and `tools/eval_beat_phase.py` is `tools/eval_beat.py`.
+>
+> On the headline question — why training-time metrics look better than the
+> event-level evaluation — `docs/frame_vs_event_metrics.md` is the measured
+> answer, and supersedes the reasoning here.
+
 > **Read §6 first.** Every imbalance ratio below was measured on ballroom and
 > only on ballroom. Under the general-tool goal that turns out to be the
 > document's load-bearing assumption: the `beat` head's `pos_weight` is a

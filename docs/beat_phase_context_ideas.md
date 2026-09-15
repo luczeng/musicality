@@ -243,9 +243,9 @@ other; do them in order.
   backward).
 - Tests: `tests/test_tcn.py` (`TestPositionalEncoding`,
   `TestSelfAttentionBlock`, `TestSelfAttentionIntegration`).
-- Not yet done: retrain and evaluate via `eval_beat.py` /
-  `tools/sweep_beat_postprocess.py` — watch `confusion_half_cycle_rate` and
-  one/last F-measure specifically, not just frame accuracy.
+- Not yet done: retrain and evaluate via `tools/eval_beat.py` (add
+  `--sweep` to retune the postprocessing) — watch `position_acc` and
+  `cmlt`/`amlt` specifically, not just frame accuracy.
 
 ### 3. Proper context padding (harder — conditional)
 
