@@ -38,6 +38,7 @@ from musicality.callbacks.event_metrics import (
 )
 from musicality.callbacks.metrics_logger import _LOWER_BETTER, BestMetricsPrinter
 from musicality.dataformats.track_io import TrackRef
+from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.train_beat_phase import (
     _TRACKED_KEYS,
     build_callbacks,
@@ -52,6 +53,17 @@ _CHECKPOINT_CFG = {
     "trainer": {},
     "wandb": {"run_name": None},
 }
+
+# A backbone small enough to run a training step on in a unit test.
+_MODEL_CFG = OmegaConf.create(
+    {
+        "_target_": "musicality.models.tcn.TCNTempoNet",
+        "n_mels": 16,
+        "channels": 8,
+        "n_layers": 3,
+        "dropout": 0.0,
+    }
+)
 
 
 FPS = 10.0
@@ -520,3 +532,61 @@ class TestBuildEventMetricsCallback:
         callbacks = build_callbacks(cfg)
 
         assert not any(isinstance(c, EventMetricsLogger) for c in callbacks)
+
+
+class TestMetricNaming:
+    """The naming contract between the two namespaces.
+
+    `val/position_acc` and `val_event/position_acc` are the same quantity read
+    at two points in the pipeline — per frame on a 16s clip, per event on the
+    full track. The name says *what* is measured and the prefix says *how*, so
+    the two must be spelled identically.
+
+    They were not. The frame one was `acc_position` and the event one
+    `position_acc`: two near-homographs, 0.08 apart, on one W&B chart, with
+    nothing in either name to say which was which. Nothing failed when they
+    diverged, which is why these exist.
+    """
+
+    def test_shared_quantities_are_spelled_the_same(self):
+        frame = {k.split("/", 1)[1] for k in _TRACKED_KEYS if k.startswith("val/")}
+        event = {
+            k.split("/", 1)[1] for k in _TRACKED_KEYS if k.startswith(f"{PREFIX}/")
+        }
+
+        assert {"f_beat", "position_acc"} <= frame & event
+
+    def test_no_key_is_another_keys_words_reversed(self):
+        """The general form of the bug: `acc_position` is `position_acc` with
+        its words swapped, which reads as a typo rather than as a different
+        metric."""
+
+        def swapped(name):
+            return "_".join(reversed(name.split("_")))
+
+        names = {k.split("/", 1)[1] for k in _TRACKED_KEYS}
+        collisions = {n for n in names if swapped(n) != n and swapped(n) in names}
+
+        assert collisions == set()
+
+    def test_the_module_logs_what_is_tracked(self):
+        """`_TRACKED_KEYS` is a hand-written list beside the code that logs;
+        a key renamed in one and not the other is silently dropped from the
+        terminal line and the best-metrics block."""
+
+        module = BeatPhaseModule(model=_MODEL_CFG, group_size=G)
+        wav = torch.randn(2, 1, 4096)
+        logits = module(wav)
+
+        target = torch.zeros(2, 2 + G, logits.shape[-1])
+        target[:, 0, ::2] = 1.0
+        target[:, 1:-1] = 1.0 / G
+        target[:, -1] = 1.0
+
+        logged = {}
+        module.log = lambda key, value, **kw: logged.__setitem__(key, value)
+        module._step((wav, target), "val")
+
+        assert logged, "the step logged nothing — this test would pass vacuously"
+        for key in logged:
+            assert key in _TRACKED_KEYS, f"{key} is logged but not tracked"

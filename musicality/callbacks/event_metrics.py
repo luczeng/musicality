@@ -6,10 +6,11 @@ the model labels 23 ms frames of a 16-second clip taken from the middle of a
 track. What the model is judged on is **events**: beats recovered from a
 full-length track, and bars numbered across it. The two do not track each
 other closely, and the gap runs in both directions —
-``plans/06_metric_calibration_and_eval_consolidation.md`` measured frame
-``acc_position`` at 0.661 against an event ``position_acc`` of 0.581 (the clip
-is cut from the middle, deliberately avoiding intros, so the frame number is
-measured on the easiest 16 seconds of every track), while frame ``acc_beat``
+``plans/06_metric_calibration_and_eval_consolidation.md`` measured
+``val/position_acc`` at 0.661 against ``val_event/position_acc`` of 0.581 — the
+same quantity, read per frame on the clip and per event on the full track (the
+clip is cut from the middle, deliberately avoiding intros, so the frame number
+is measured on the easiest 16 seconds of every track) — while frame ``acc_beat``
 at a 70 ms window reads 0.959 against an ``f_beat`` of 0.845 (balanced
 accuracy averages in a true-negative rate that is pinned near 1.0 on any sane
 model).

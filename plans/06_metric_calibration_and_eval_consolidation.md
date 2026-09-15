@@ -102,7 +102,7 @@ definition** — see §1.3.
 
 | measurement | value |
 |---|---|
-| `acc_position`, frame-level, 16 s clip — **what W&B logs** | 0.661 |
+| `val/position_acc`, frame-level, 16 s clip — **what W&B logs** | 0.661 |
 | position head argmax at reference beat frames, full track | 0.588 |
 | decoded `position_acc` (detector + Viterbi) | **0.581** |
 | decoded `position_acc_best_offset` — best single rotation per track | **0.684** |
@@ -135,7 +135,7 @@ evaluated number covers the whole thing including intros, outros and breaks.
 | | clip (logged) | full track (evaluated) | gap |
 |---|---|---|---|
 | beat | 0.900 (peak-picked F) | 0.845 (`f_beat`) | 0.055 |
-| position | 0.661 (`acc_position`) | 0.588 (head at ref beats) | 0.073 |
+| position | 0.661 (`val/position_acc`) | 0.588 (head at ref beats) | 0.073 |
 
 Both heads pay ~6–7 points for it, consistently. Worth stating plainly because it
 runs opposite to the intuition that the logged numbers are too harsh: on material

@@ -24,6 +24,15 @@ from musicality.trainers.common import (
 )
 
 
+# Naming rule for everything below: **the metric name says what is measured,
+# the prefix says how**. `val/position_acc` and `val_event/position_acc` are the
+# same quantity read at two points — the first per frame on a 16s clip, the
+# second per event on the full track — so they share a name and are told apart
+# by namespace. (Until this list was written the frame one was `acc_position`
+# and the event one `position_acc`: two near-homographs, 0.08 apart, on one
+# chart. The metric name is the one in musicality.evaluation.SCORE_KEYS, since
+# that is the vocabulary tools/eval_beat.py and plans/04-06 already publish.)
+#
 # The `val_event/*` keys are logged only on scoring epochs (see
 # EventMetricsLogger.should_run). Lightning's `callback_metrics` keeps the last
 # value it saw rather than clearing it, so the per-epoch line BestMetricsPrinter
@@ -35,12 +44,12 @@ _TRACKED_KEYS = (
     "train/f_beat",
     "train/acc_one",
     "train/acc_last",
-    "train/acc_position",
+    "train/position_acc",
     "val/loss",
     "val/f_beat",
     "val/acc_one",
     "val/acc_last",
-    "val/acc_position",
+    "val/position_acc",
     *(f"{PREFIX}/{key}" for key in LOGGED_KEYS),
 )
 

@@ -181,7 +181,7 @@ class BeatPhaseModule(L.LightningModule):
         )
         weight = mask * beat_y
         self.log(
-            f"{stage}/acc_position",
+            f"{stage}/position_acc",
             (correct * weight).sum() / weight.sum().clamp(min=1.0),
             **log_kw,
         )
