@@ -93,6 +93,7 @@ separate reasons — see `docs/frame_vs_event_metrics.md` before quoting either.
 - `error_plot.py` — `ErrorVsTempoPlot`: logs a per-epoch error-vs-tempo scatter to W&B.
 - `event_metrics.py` — `EventMetricsLogger`: every few epochs, decodes a fixed corpus-stratified slice of the validation split on **full tracks** and logs `val_event/f_beat`, `cmlt`, `amlt`, `position_acc`, `position_acc_best_offset`. Scores through `BeatEvaluator.score`, so these are the same numbers `tools/eval_beat.py` reports afterwards — unlike the frame metrics beside them, which are measured on a 16s clip. Configured by `event_metrics:` in `configs/beat_train.yaml`.
 - `metrics_logger.py` — `BestMetricsPrinter`: prints best validation metrics at the end of training.
+- `training_report.py` — `TrainingReportLogger`: at `on_fit_end`, writes one `training_report.json` beside the run's checkpoints and uploads it to the W&B run's Files tab. Holds final/best metrics, the per-epoch history, per-track and per-corpus event scores, the resolved config, and the run's identity (W&B id, git commit, best checkpoint) — a run as a single shareable attachment. Decodes nothing; it reuses `EventMetricsLogger`'s last scoring pass.
 
 ### Data Formats (`musicality/dataformats/`)
 

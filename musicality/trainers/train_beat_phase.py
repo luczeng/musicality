@@ -14,6 +14,7 @@ from musicality.callbacks.event_metrics import (
     EventMetricsLogger,
 )
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
+from musicality.callbacks.training_report import TrainingReportLogger
 from musicality.losses import AUTO_POS_WEIGHT_ALPHA
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.common import (
@@ -114,6 +115,12 @@ def build_callbacks(cfg: DictConfig) -> list:
         callbacks.append(event_metrics)
 
     callbacks.append(BestMetricsPrinter(keys=_TRACKED_KEYS))
+
+    # Last: it reads `trainer.callback_metrics` in the same hook the event
+    # metrics are written in, and collects the best metrics from the printer
+    # above at `on_fit_end`.
+    if (cfg.get("training_report") or {}).get("enabled", True):
+        callbacks.append(TrainingReportLogger(keys=_TRACKED_KEYS, cfg=cfg))
 
     return callbacks
 

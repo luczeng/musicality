@@ -124,6 +124,13 @@ event_metrics:
   enabled: true
   n_tracks: 50  # tracks scored per pass; null scores the whole validation split
   every_n_epochs: 5  # scored on epoch 0, then every N — plus the final epoch, always
+# One JSON report per run (musicality/callbacks/training_report.py), written
+# beside that run's checkpoints and uploaded to the W&B run's Files tab as
+# training_report.json. Holds final/best metrics, the per-epoch history, the
+# per-track and per-corpus event scores, and the resolved config — so a run can
+# be handed over as a single attachment instead of a dashboard link.
+training_report:
+  enabled: true
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto

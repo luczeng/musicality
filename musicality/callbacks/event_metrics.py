@@ -163,6 +163,14 @@ class EventMetricsLogger(L.Callback):
 
         self._dataset = None
 
+        # The last pass's per-track rows, and which epochs actually produced
+        # one. Kept so TrainingReportLogger can serialize the per-track and
+        # per-corpus detail at the end of the run without decoding again, and
+        # so it can tell a freshly scored epoch from one where Lightning is
+        # merely echoing the previous pass's value (see `on_validation_epoch_end`).
+        self.last_rows: list[dict] = []
+        self.scored_epochs: list[int] = []
+
     @property
     def dataset(self) -> BeatDataset:
         """The subsample as a dataset, built on first use.
@@ -243,7 +251,10 @@ class EventMetricsLogger(L.Callback):
             f"decoding {len(self.dataset)} full track(s)..."
         )
 
-        summary = summarize(self.score(pl_module))
+        self.last_rows = self.score(pl_module)
+        self.scored_epochs.append(trainer.current_epoch)
+
+        summary = summarize(self.last_rows)
 
         for key in LOGGED_KEYS:
             value = summary.get(key)
