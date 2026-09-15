@@ -79,10 +79,14 @@ Supports absolute, relative, and classification loss modes. Classification loss 
 ### Metrics (`musicality/metrics/`)
 
 - `f_measure.py` — `beat_f_measure`, `downbeat_f_measures`: event-level F-measure against `mir_eval`, overall and per bar/phrase position.
+- `continuity.py` — `beat_continuity`: `mir_eval`'s CMLc/CMLt/AMLc/AMLt. `amlt - cmlt` is the share of a track tracked confidently at the *wrong metrical level* (half-time, double-time, offbeat) — a failure no other metric here can see.
 - `confusion.py` — `confusion_half_cycle_rate`: rate of half-cycle ("1" vs. opposite position) phase-parity errors.
-- `phase_offset.py` — `phase_offset_profile`: per-track dominant phase offset and within-track phase stability. Distinguishes a whole-track offset (the model can't hear downbeats) from a mid-track flip (the decoder is losing information); also sees off-by-one errors, which `confusion.py` is blind to.
-- `frame_accuracy.py` — `frame_accuracy`: cheap per-epoch frame-level accuracy used as a training-time signal.
+- `position_accuracy.py` — `position_accuracy`: bar-position accuracy at every reference beat, plus its offset histogram. Returns `position_acc`, `position_acc_best_offset` (best single rotation per track) and their difference `anchor_error`, which separates a whole-track phase offset (the model can't hear downbeats) from a mid-track flip (the decoder is losing information). Also sees off-by-one errors, which `confusion.py` is blind to.
+- `frame_accuracy.py` — `frame_accuracy` (cheap per-frame accuracy) and `peak_f_measure` (peak-picks both curves first, then matches events, so it moves for the same reasons `f_beat` does). Training-time signals only.
 - `tempo_acc1.py` — `tempo_acc1`: MIREX Accuracy 1, octave-tolerant tempo accuracy.
+
+Frame metrics and event metrics disagree, in both directions and for four
+separate reasons — see `docs/frame_vs_event_metrics.md` before quoting either.
 
 ### Callbacks (`musicality/callbacks/`)
 
