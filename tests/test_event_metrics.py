@@ -37,6 +37,7 @@ from musicality.callbacks.event_metrics import (
     stratified_sample,
 )
 from musicality.callbacks.metrics_logger import _LOWER_BETTER, BestMetricsPrinter
+from musicality.callbacks.training_report import TrainingReportLogger
 from musicality.dataformats.track_io import TrackRef
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.train_beat_phase import (
@@ -532,6 +533,35 @@ class TestBuildEventMetricsCallback:
         callbacks = build_callbacks(cfg)
 
         assert not any(isinstance(c, EventMetricsLogger) for c in callbacks)
+
+    def test_build_callbacks_orders_the_report_last(self):
+        """TrainingReportLogger reads `trainer.callback_metrics` in the same
+        hook the event metrics are written in, and collects the best metrics
+        from the printer, so it has to see both first."""
+
+        cfg = self._cfg({"enabled": True, "n_tracks": 2}, **_CHECKPOINT_CFG)
+
+        with self._split():
+            callbacks = build_callbacks(cfg)
+
+        types = [type(c) for c in callbacks]
+        assert types.index(EventMetricsLogger) < types.index(BestMetricsPrinter)
+        assert types.index(BestMetricsPrinter) < types.index(TrainingReportLogger)
+
+    def test_report_can_be_switched_off(self):
+        cfg = self._cfg(
+            {"enabled": False}, training_report={"enabled": False}, **_CHECKPOINT_CFG
+        )
+        callbacks = build_callbacks(cfg)
+
+        assert not any(isinstance(c, TrainingReportLogger) for c in callbacks)
+
+    def test_report_is_on_by_default(self):
+        """A config predating the block still gets a report."""
+
+        cfg = self._cfg({"enabled": False}, **_CHECKPOINT_CFG)
+
+        assert any(isinstance(c, TrainingReportLogger) for c in build_callbacks(cfg))
 
 
 class TestMetricNaming:
