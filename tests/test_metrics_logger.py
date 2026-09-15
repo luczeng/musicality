@@ -56,3 +56,20 @@ class TestBestMetricsPrinter:
 
         cb.on_validation_epoch_end(_FakeTrainer({"val/loss": 5.0}), None)
         assert cb.best["val/loss"] == pytest.approx(5.0)
+
+    def test_event_metrics_namespace_is_tracked(self):
+        """`val_event/*` is a separate namespace from `val/*` precisely so it
+        cannot collide with the monitored `val/loss` — but it is still a
+        validation metric and still needs a best tracked for it."""
+
+        cb = BestMetricsPrinter(keys=("val_event/f_beat",))
+        cb.on_validation_epoch_end(_FakeTrainer({"val_event/f_beat": 0.5}), None)
+        cb.on_validation_epoch_end(_FakeTrainer({"val_event/f_beat": 0.9}), None)
+
+        assert cb.best["val_event/f_beat"] == pytest.approx(0.9)
+
+    def test_train_metrics_are_not_tracked(self):
+        cb = BestMetricsPrinter(keys=("train/loss",))
+        cb.on_validation_epoch_end(_FakeTrainer({"train/loss": 1.0}), None)
+
+        assert cb.best == {}

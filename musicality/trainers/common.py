@@ -44,6 +44,30 @@ def resolve_split_refs(
     return Splitter.load_refs(splits_dir, split_name)
 
 
+def resolve_beat_split_refs(
+    cfg: DictConfig,
+) -> tuple[list[TrackRef], list[TrackRef]]:
+    """``(train_refs, val_refs)`` for a beat / beat-phase training config.
+
+    :func:`resolve_split_refs` with this project's beat-split naming
+    convention applied — :func:`~musicality.loaders.beat_dataset.beat_split_name`
+    folds ``binary_only`` into the split name, so a config that flips that flag
+    reads a different split file.
+
+    Its own function because more than one thing has to agree on which tracks
+    are "val": the validation dataloader, and
+    :class:`~musicality.callbacks.event_metrics.EventMetricsLogger`, which
+    scores the validation refs directly rather than through a loader. Two
+    call sites re-deriving the split name is two chances to disagree.
+    """
+
+    binary_only = cfg.get("binary_only", False)
+    splits_dir = dataformats.ROOT / dataformats.load().splits_dir
+    split_name = beat_split_name(cfg.data.input, binary_only)
+
+    return resolve_split_refs(cfg, splits_dir, split_name)
+
+
 def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
     """Build train/val DataLoaders over a :class:`~musicality.loaders.beat_dataset.BeatDataset`.
 
@@ -70,11 +94,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
         binary_only=binary_only,
     )
 
-    _fmt = dataformats.load()
-    splits_dir = dataformats.ROOT / _fmt.splits_dir
-    split_name = beat_split_name(cfg.data.input, binary_only)
-
-    train_refs, val_refs = resolve_split_refs(cfg, splits_dir, split_name)
+    train_refs, val_refs = resolve_beat_split_refs(cfg)
 
     # Separate dataset instances for train/val so only the train split draws
     # a random crop window per track per epoch — val stays fixed at the

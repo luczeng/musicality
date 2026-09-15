@@ -21,6 +21,15 @@ _TRACKED_KEYS = (
 )
 _LOWER_BETTER = ("loss", "mae")  # substring match against the metric key
 
+# Which keys count as validation metrics, and so get a "best" tracked for them.
+# `val_event/` is the event-level set logged by
+# :class:`~musicality.callbacks.event_metrics.EventMetricsLogger`; it is a
+# separate namespace rather than more `val/` keys because `val/loss` is
+# monitored by ModelCheckpoint and ReduceLROnPlateau, and keeping the
+# expensive, occasionally-logged metrics out of that namespace makes it
+# impossible for one to collide with it.
+_VAL_PREFIXES = ("val/", "val_event/")
+
 
 def _is_better(key: str, val: float, current_best: float) -> bool:
     if any(s in key for s in _LOWER_BETTER):
@@ -46,7 +55,7 @@ class BestMetricsPrinter(L.Callback):
 
         metrics = trainer.callback_metrics
         for key in self.keys:
-            if not key.startswith("val/"):
+            if not key.startswith(_VAL_PREFIXES):
                 continue
             val = metrics.get(key)
             if val is None:

@@ -114,6 +114,16 @@ train_subsample: null  # fraction of the training split to use (e.g. 0.2), for q
 # subdirectory below this (named after wandb.run_name, or a timestamp when
 # that is null), holding that run's trainer.save_top_k best checkpoints.
 checkpoint_dir: checkpoints_beat/
+# Event-level validation metrics, logged as `val_event/*`: beats and bar
+# positions decoded on full tracks, scored through the same path as
+# tools/eval_beat.py. Costs one full-track model pass per track, hence a
+# subsample scored every few epochs. Postprocessing is NOT configured here — it
+# comes from configs/eval_beat.yaml. See musicality/callbacks/event_metrics.py
+# for why these differ from the frame metrics beside them.
+event_metrics:
+  enabled: true
+  n_tracks: 50  # tracks scored per pass; null scores the whole validation split
+  every_n_epochs: 5  # scored on epoch 0, then every N — plus the final epoch, always
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto

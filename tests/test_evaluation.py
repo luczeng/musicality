@@ -37,6 +37,7 @@ def _fake_dataset(n_tracks, corpora=None):
     ]
     names = corpora or ["ballroom"] * n_tracks
     dataset.refs = [MagicMock(dataset_name=name) for name in names]
+    dataset.__len__.return_value = n_tracks
 
     return dataset
 
@@ -490,3 +491,69 @@ class TestBeatEvaluatorVerbose:
         assert "pos=" in out
         assert "best=" in out
         assert "position_acc_best_offset" in out
+
+
+class TestFromModule:
+    """`from_module` is the seam a training run scores itself through
+    (musicality/callbacks/event_metrics.py): an in-memory module and an
+    already-built dataset, with checkpoint loading and split resolution
+    skipped. Everything downstream must behave as if `load()` had run."""
+
+    @staticmethod
+    def _module(task="beat_phase", group_size=4):
+        module = MagicMock()
+        module.hparams = {"task": task, "group_size": group_size}
+
+        return module
+
+    def test_detects_the_task_from_the_modules_hyperparameters(self):
+        evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(2))
+
+        _module, task, _dataset, _indices = evaluator.load()
+        assert task == "beat_phase"
+
+    def test_explicit_task_wins_over_detection(self):
+        evaluator = BeatEvaluator.from_module(
+            self._module(task="beat_phase"), _fake_dataset(2), task="beat_only"
+        )
+
+        assert evaluator.load()[1] == "beat_only"
+
+    def test_selects_every_track_in_the_dataset(self):
+        evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(5))
+
+        assert evaluator.load()[3] == [0, 1, 2, 3, 4]
+
+    def test_limit_still_applies(self):
+        """`load()` is bypassed, so the limit has to be applied here or it is
+        silently ignored."""
+
+        evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(5), limit=2)
+
+        assert evaluator.load()[3] == [0, 1]
+
+    def test_never_touches_the_checkpoint_loader(self):
+        with patch("musicality.evaluation.load_module") as load:
+            evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(2))
+            evaluator.load()
+
+        load.assert_not_called()
+
+    def test_constructor_settings_still_reach_postprocessing(self):
+        evaluator = BeatEvaluator.from_module(
+            self._module(), _fake_dataset(2), group_size=8, beat_threshold=0.42
+        )
+        knobs = evaluator.resolve_postprocess()
+
+        assert knobs["group_size"] == 8
+        assert knobs["beat_threshold"] == 0.42
+        # ...and everything left unset still falls back to the task defaults
+        # in configs/eval_beat.yaml, the same file tools/eval_beat.py reads.
+        assert knobs["decoder"] == DEFAULTS["beat_phase"]["decoder"]
+
+    def test_track_corpora_still_line_up(self):
+        evaluator = BeatEvaluator.from_module(
+            self._module(), _fake_dataset(3, corpora=["ballroom", "jtd", "jtd"])
+        )
+
+        assert evaluator.track_corpora() == ["ballroom", "jtd", "jtd"]

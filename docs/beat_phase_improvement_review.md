@@ -504,7 +504,7 @@ Tests: `tests/test_position_head.py` (22 cases). Suite: 483 passing.
   for the beat head, taking the whole `pos_weight`/`phase_conditioning`
   coupling with it.
 - *The logged metric becomes meaningful.* `acc_one`/`acc_last` are replaced by
-  `acc_position` — argmax over the softmax against the target, weighted by
+  `position_acc` — argmax over the softmax against the target, weighted by
   beat. A model that never fires cannot score well on it: it has to pick a
   position, and picking the wrong one is a miss. That was the original
   complaint about frame accuracy.
