@@ -12,11 +12,38 @@ from musicality.splits.splitter import Splitter
 from tools.merge_datasets import merge
 
 
-def _refs(*pairs):
-    return [
+def _write_track_files(ref):
+    """Create the files a split entry must resolve to — audio plus its
+    default-slot annotation. Split reads verify both exist (see
+    ``musicality.splits.splitter.verify_refs_present``), so a ref that isn't
+    backed by files is a *missing data* ref, not a generic one.
+    """
+
+    fmt = dataformats.FORMAT
+    paths = (
+        ref.data_home / fmt.tracks_dirname / f"{ref.track_id}.wav",
+        ref.data_home / fmt.annotations_dirname / f"{ref.track_id}{fmt.beats_suffix}",
+    )
+
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+
+def _refs(*pairs, on_disk=True):
+    """Build refs, materializing their files unless ``on_disk=False`` — which
+    is how a test stages the partial-data-pull case."""
+
+    refs = [
         TrackRef(name, track_id, dataformats.DATA_DIR / name)
         for name, track_id in pairs
     ]
+
+    if on_disk:
+        for ref in refs:
+            _write_track_files(ref)
+
+    return refs
 
 
 @pytest.fixture(autouse=True)

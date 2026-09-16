@@ -102,6 +102,9 @@ Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits
 ### Splits (`musicality/splits/splitter.py`)
 
 `Splitter` manages train/val splits. Pre-computed splits live in `splits/`.
+Reading a split verifies every track it lists is on disk and raises
+`MissingTrackDataError` otherwise, so a partial `dvc pull` fails a run instead
+of silently shrinking its dataset (see `docs/source/data.rst`).
 
 ### Tools (`tools/`)
 

@@ -163,6 +163,32 @@ re-run ``create_splits.py``. Only the default annotation slot's metadata is
 consulted, matching which slot the loaders read. Clearing the flag in the
 annotator puts the track straight back in.
 
+A split's tracks must be on disk
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Reading a split checks that every track it lists actually resolves to files
+— ``tracks/<id>.wav`` and ``annotations/<id>.beats`` — and raises
+``musicality.splits.splitter.MissingTrackDataError`` naming the corpora that
+are short if any doesn't. The check runs in ``_read_refs``, so it covers
+every read path (``run()``, ``load_refs``, ``load_refs_from_dir``) and
+therefore every trainer and ``tools/eval_beat.py``. Flagged tracks are
+dropped before it, so a track that is both flagged and absent is simply out
+of the split rather than an error.
+
+This exists because the failure it catches is invisible otherwise. Tracks
+whose audio couldn't be resolved used to be dropped one by one with a single
+printed line, so an incomplete ``dvc pull`` on a fresh remote instance — a
+whole corpus that never arrived — produced a run that trained on a strictly
+smaller dataset than its split describes and reported its metrics as if
+nothing had happened. A run must fail on that, not shrink.
+
+When the split is genuinely the thing that's stale (tracks deleted from the
+data repo, say), regenerate it with ``tools/create_splits.py`` rather than
+loosening the check. The one caller that opts out is the annotator, which
+reads splits only to badge tracks train/val in its tree
+(``Splitter.load_refs_from_dir(..., verify=False)``) — browsing the data you
+do have shouldn't require having all of it.
+
 Merging datasets
 -----------------
 
