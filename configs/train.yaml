@@ -1,30 +1,37 @@
+# Tempo training (tools/train_tempo.py).
+# Every key is documented in docs/source/configuration.rst — put explanations
+# there, not here. Trailing comments list legal values only.
 defaults:
-  - model: TCN
+  - model: tcn
   - _self_
+
+# --- Loss ---------------------------------------------------------------
 loss: classification  # absolute | relative | classification
-classification:
+classification:  # read by `loss: classification` only
   bpm_min: 30
   bpm_max: 286
   n_bins: 256
   sigma: 1.5
-lr: 5e-4  # learning rate
-weight_decay: 0.0  # L2 regularisation
+
+# --- Optimisation -------------------------------------------------------
+lr: 5e-4
+weight_decay: 0.0
 batch_size: 32
 n_mels: 128
 hop_length: 512
-train_subsample: null  # fraction of the training split to use (e.g. 0.2), for quick smoke runs
-# Parent directory for checkpoints — one subdirectory per run below it.
-checkpoint_dir: checkpoints/
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
+
+# --- Data ---------------------------------------------------------------
+train_subsample: null  # fraction of the training split, for smoke runs
 data:
-  input: ballroom  # split name (looked up under splits_dir, see musicality.dataformats) or, if it contains a "/", a direct path to a folder with train.txt/val.txt
+  input: ballroom  # split name, or a path containing "/" to a train.txt/val.txt folder
   sample_rate: 22050
-  duration: 15.0  # audio clip length, in seconds
+  duration: 15.0  # seconds
   num_workers: 4
 augmentations:
   enabled: true
@@ -39,6 +46,9 @@ augmentations:
   noise:
     enabled: false
     std: 0.005
+
+# --- Logging and outputs ------------------------------------------------
+checkpoint_dir: checkpoints/  # one subdirectory per run below this
 wandb:
   project: musicality
   run_name: null

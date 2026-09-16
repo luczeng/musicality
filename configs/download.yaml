@@ -1,3 +1,5 @@
+# Datasets for tools/download_dataset.py, fetched via mirdata.
+# Documented in docs/source/configuration.rst.
 data_home: ../musicality_db
 datasets:
   - ballroom
@@ -5,7 +7,5 @@ datasets:
   - rwc_jazz
   - rwc_popular
   - jtd
-  # gtzan_genre: mirdata's loader has a dead audio link (opihi.cs.uvic.ca).
-  # Use data_home/dl_gtzan.py instead (HuggingFace marsyas/gtzan mirror) to
-  # populate data_home/gtzan/, drop in beat annotations under
-  # gtzan/annotations/beats/, then tools/migrate_gtzan.py.
+# gtzan is deliberately absent — mirdata's audio link is dead. See the docs for
+# the HuggingFace mirror route.

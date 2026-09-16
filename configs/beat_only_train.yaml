@@ -1,47 +1,43 @@
+# Beat-only training (tools/train_beat_only.py).
+# Every key is documented in docs/source/configuration.rst — put explanations
+# there, not here. Trailing comments list legal values only.
 defaults:
   - model: tcn_frames_beat
   - _self_
-# Declares which task this config trains, saved into the checkpoint's
-# hyperparameters (BeatModule) and used by musicality.inference.detect_task to
-# pick the right module class/postprocessing at eval/inference time.
+
 task: beat_only
 
-# Positive-class weight for the beat head's BCE loss, compensating for beat
-# frames being a small fraction of all frames (~6:1 negative:positive on
-# ballroom, measured directly from BeatDataset — see docs/beat_phase_pos_weight_notes.md).
-pos_weight: 6.0
-lr: 5e-4
-weight_decay: 1e-4
-# Unused: the beat head is scored by peak_f_measure (logged as f_beat), which
-# picks peaks before matching and so has no true-negative term to balance.
-# Kept because it is stored in every existing checkpoint's hyperparameters and
-# passed back to the module on load.
-balanced: true
-batch_size: 2
+# --- Head ---------------------------------------------------------------
 n_mels: 128
 hop_length: 512
 sigma_frames: 1.5
-# Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. ballroom's
-# waltz/Viennese waltz tracks, triple meter). Not required for a beat-only
-# detector (meter doesn't affect the beat head), but kept as a lever for data
-# selection. Must match whatever the split was built with, since it changes
-# dataset length.
-binary_only: false
-train_subsample: null
-# Parent directory for checkpoints — one subdirectory per run below it.
-checkpoint_dir: checkpoints_beat_only/
+
+# --- Loss ---------------------------------------------------------------
+pos_weight: 6.0  # ~6:1 negative:positive on ballroom
+balanced: true  # unused by this task; kept because it is stored in every checkpoint
+
+# --- Optimisation -------------------------------------------------------
+lr: 5e-4
+weight_decay: 1e-4
+batch_size: 2
 trainer:
   max_epochs: 100
-  accelerator: auto
+  accelerator: auto  # cpu | gpu | auto
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
+
+# --- Data ---------------------------------------------------------------
+# binary_only is folded into the split name, so it must match the split it is
+# read with (`--binary-only` on tools/create_splits.py).
+binary_only: false
+train_subsample: null  # fraction of the training split, for smoke runs
 data:
-  input: ballroom  # split name (looked up under splits_dir, see musicality.dataformats) or, if it contains a "/", a direct path to a folder with train.txt/val.txt
+  input: ballroom  # split name, or a path containing "/" to a train.txt/val.txt folder
   sample_rate: 22050
-  duration: 16.0
+  duration: 16.0  # seconds
   num_workers: 4
-  random_crop: true  # train: draw a random offset window per track each access; val is always a fixed window from the track's middle (avoids intros)
+  random_crop: true  # train only; val is always a fixed window from the middle
 augmentations:
   enabled: true
   time_stretch:
@@ -55,6 +51,9 @@ augmentations:
   noise:
     enabled: false
     std: 0.005
+
+# --- Logging and outputs ------------------------------------------------
+checkpoint_dir: checkpoints_beat_only/  # one subdirectory per run below this
 wandb:
   project: musicality-beat-only
   run_name: null
