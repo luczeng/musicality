@@ -179,10 +179,10 @@ Under the shipped defaults, the phase profile reads: modal offset correct on
 218/275 tracks (79.3%), half-cycle on 26 (9.5%); within-track stability mean
 0.669, **173 tracks (62.9%) flip phase mid-track**.
 
-- **Anchoring.** jtd: `position_acc` 0.530 against `position_acc_best_offset`
-  0.680. A single whole-track rotation would recover 0.15 — the model hears the
-  meter and starts counting on the wrong beat. This is a *musical* problem
-  (jazz trio downbeats are carried by bass and harmony, not by a kick).
+- **Anchoring, and it is almost entirely jtd.** `position_acc` 0.530 against
+  `position_acc_best_offset` 0.699 — a single whole-track rotation would
+  recover 0.17. See §2.4: the anchor error is concentrated in one corpus to a
+  degree the aggregate hides.
 - **Stability.** 63% of tracks change their phase answer partway through. The
   trunk's receptive field is `3 × (2^8 − 1) = 765` frames ≈ **17.8 s**, so the
   model *cannot* enforce consistency beyond ~18 s by construction. Consistency
@@ -191,6 +191,53 @@ Under the shipped defaults, the phase profile reads: modal offset correct on
 - **A broken corpus.** rwc_classical fails at the beat level, not the phase
   level (`f_beat` 0.514, `cmlt` 0.118). It is 32 train / 7 val tracks, so every
   number on it is noise on a sample of seven.
+
+</details>
+
+<details>
+<summary><b>2.4 — The anchor error is one corpus, and the usual explanations do not fit</b></summary>
+
+Per corpus, shipped defaults. `anchor_error` is
+`position_acc_best_offset − position_acc`: how much a single whole-track
+rotation would recover. The last column is the distribution of each track's
+*dominant* phase offset.
+
+| corpus | n | cmlt | pos_acc | best_off | anchor | modal offset 0 / 1 / 2 / 3 |
+|---|---|---|---|---|---|---|
+| **jtd** | 96 | 0.896 | 0.529 | 0.699 | **0.170** | **66% / 12% / 12% / 9%** |
+| ballroom | 104 | 0.494 | 0.635 | 0.669 | 0.034 | 86% / 3% / 10% / 2% |
+| gtzan | 28 | 0.674 | 0.700 | 0.719 | 0.019 | 86% / 4% / 11% / 0% |
+| rwc_popular | 19 | 0.415 | 0.679 | 0.679 | 0.000 | 100% / 0% / 0% / 0% |
+| rwc_genre | 16 | 0.261 | 0.532 | 0.536 | 0.004 | 88% / 0% / 6% / 6% |
+| rwc_jazz | 7 | 0.525 | 0.653 | 0.653 | 0.000 | 100% / 0% / 0% / 0% |
+| rwc_classical | 7 | 0.118 | 0.267 | 0.302 | 0.035 | 50% / 33% / 0% / 17% |
+
+jtd's anchor error is **5× the next largest**, and it is the only corpus where a
+third of tracks settle on the wrong count. Four explanations that would
+otherwise be reached for are ruled out by the numbers:
+
+- **Not beat tracking.** jtd has the *best*-tracked beats in the set
+  (`f_beat` 0.950, `cmlt` 0.896). The model knows where the beats are.
+- **Not lack of data.** jtd is 1107 of 1854 train tracks — 60% of everything
+  the position head has ever seen.
+- **Not track length.** rwc_popular (median 108 bars/track), rwc_genre (104) and
+  rwc_jazz (158) are all *longer* than jtd (80 bars) and anchor at 0.000–0.004.
+- **Not annotation structure.** Every jtd val track is a strict 4-beat cycle
+  with zero breaks — cleaner than rwc_classical (29% of tracks with breaks),
+  rwc_genre (25%) or rwc_popular (5%).
+
+What is left is a property of the material, and the errors' shape is the clue:
+they are spread roughly evenly across all three wrong offsets (12/12/9) rather
+than piling onto one, which is what a systematic convention shift would look
+like. That is the signature of a model with no usable evidence, guessing. jtd is
+also by far the fastest corpus (median **185 BPM**, up to 300, against 103–158
+elsewhere) — a bar lasts under a second — and it is piano-trio swing, where no
+kick or snare marks the bar start.
+
+> **Unverified.** "The audio carries weak downbeat evidence" is the hypothesis
+> that survives, not a measurement — nobody has listened. The one alternative it
+> cannot be separated from by inspection is that jtd's annotated "1" is itself
+> debatable in fast swing; that would need an annotator, not a script.
 
 </details>
 
@@ -325,12 +372,14 @@ near-term help for rwc_classical. Worth a dedup pass — gtzan's duplicate and
 corrupt files are well documented.
 
 **4.4 Rebalance the sampler.** jtd is **1107 of 1854 train tracks (60%)**, and
-jtd is the corpus with the weakest downbeat cues (`cmlt` 0.903 but
-`position_acc` 0.530). The position head is trained mostly on the corpus whose
-answer is hardest to hear, which is a plausible driver of the memorisation in
-§1.2. A `WeightedRandomSampler` or a per-corpus per-epoch cap in
-`build_beat_dataloaders` is a few lines. Even with all of gtzan, jtd stays at
-41% unweighted.
+it is the corpus the model is least able to anchor (§2.4: anchor error 0.170
+against ≤0.035 everywhere else, despite the best-tracked beats in the set). So
+the position head spends most of its gradient on the one corpus where it cannot
+find the answer — a plausible, *untested*, driver of the memorisation in §1.2:
+a head that cannot generalise on 60% of its input can still drive the loss down
+by memorising it. A `WeightedRandomSampler` or a per-corpus per-epoch cap in
+`build_beat_dataloaders` is a few lines, and it doubles as the experiment that
+tests the hypothesis. Even with all of gtzan, jtd stays at 41% unweighted.
 
 **4.5 Regularise the position head specifically** — that is where the whole
 overfit lives (§1.2: gap 0.194 on position vs 0.038 on beat):
