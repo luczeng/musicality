@@ -3,7 +3,88 @@ from pathlib import Path
 from torch.utils.data import Dataset, Subset, random_split
 
 import musicality.dataformats as dataformats
-from musicality.dataformats.track_io import TrackRef, load_metadata
+from musicality.dataformats.track_io import TrackRef, load_metadata, resolve_track_audio
+
+
+class MissingTrackDataError(FileNotFoundError):
+    """A split lists tracks whose files are not on this machine.
+
+    Raised by :func:`verify_refs_present`, and therefore by every path that
+    reads a ``train.txt``/``val.txt`` (see :func:`_read_refs`). The failure it
+    exists to stop is a partial data pull — e.g. ``dvc pull`` fetching some
+    corpora but not others on a fresh remote instance. Before this check, a
+    corpus missing from disk was dropped track by track with nothing but a
+    printed line, so a run could train on a strictly smaller dataset than its
+    split describes and report metrics as if nothing had happened.
+    """
+
+
+def missing_files(ref: TrackRef) -> list[Path]:
+    """Return the files *ref* needs but doesn't have on disk.
+
+    A track is loadable when both halves of this project's format are
+    present: its audio under ``tracks/`` and its default-slot annotation
+    under ``annotations/`` (see docs/source/data.rst). Either one absent
+    makes the track unusable, so both are reported.
+
+    :returns: The absent paths — empty when the track is fully present.
+    """
+
+    missing = []
+
+    if resolve_track_audio(ref.dataset_name, ref.track_id, ref.data_home) is None:
+        missing.append(
+            ref.data_home / dataformats.FORMAT.tracks_dirname / f"{ref.track_id}.wav"
+        )
+
+    beats_path = (
+        ref.data_home
+        / dataformats.FORMAT.annotations_dirname
+        / f"{ref.track_id}{dataformats.FORMAT.beats_suffix}"
+    )
+    if not beats_path.exists():
+        missing.append(beats_path)
+
+    return missing
+
+
+def verify_refs_present(refs: list[TrackRef], context: str = "") -> None:
+    """Raise unless every ref in *refs* resolves to files on disk.
+
+    :param refs: Refs to check, typically one side of a split.
+    :param context: Where the refs came from (a split file), named in the
+        error so a failure points at the list to fix.
+    :raises MissingTrackDataError: If any ref is missing its audio or its
+        annotation, with a per-corpus breakdown — a partial pull usually
+        takes out whole corpora, and the count per corpus is what tells that
+        apart from a handful of individually broken tracks.
+    """
+
+    missing = [(ref, paths) for ref in refs if (paths := missing_files(ref))]
+
+    if not missing:
+        return
+
+    per_dataset: dict[str, int] = {}
+    for ref, _ in missing:
+        per_dataset[ref.dataset_name] = per_dataset.get(ref.dataset_name, 0) + 1
+
+    breakdown = "\n".join(
+        f"  {name}: {count} of {sum(r.dataset_name == name for r in refs)} track(s)"
+        for name, count in sorted(per_dataset.items(), key=lambda kv: -kv[1])
+    )
+    examples = "\n".join(f"  {path}" for _, paths in missing[:5] for path in paths[:2])
+
+    where = f" in {context}" if context else ""
+
+    raise MissingTrackDataError(
+        f"{len(missing)} of {len(refs)} track(s){where} are not on disk:\n"
+        f"{breakdown}\n"
+        f"Missing files (first few):\n{examples}\n"
+        "The split lists data this machine does not have — the usual cause is an "
+        "incomplete `dvc pull` in the data directory (see tools/setup_remote.sh). "
+        "Pull the missing corpora, or regenerate the split from the data you do have."
+    )
 
 
 def is_flagged(ref: TrackRef) -> bool:
@@ -54,7 +135,16 @@ def _write_refs(path: Path, refs: list[TrackRef]) -> None:
     path.write_text("\n".join(f"{r.dataset_name}/{r.track_id}" for r in refs))
 
 
-def _read_refs(path: Path) -> list[TrackRef]:
+def _read_refs(path: Path, verify: bool = True) -> list[TrackRef]:
+    """Read one side of a split file into refs.
+
+    :param verify: Fail (:class:`MissingTrackDataError`) if any listed track
+        is not on disk. On by default: a split is a claim about which tracks
+        a run uses, so silently loading fewer of them makes every number that
+        run reports a number about a different dataset. Turn it off only
+        where the refs are read as labels rather than as data to load (the
+        annotator's split badges).
+    """
 
     refs = []
     for line in path.read_text().splitlines():
@@ -66,7 +156,12 @@ def _read_refs(path: Path) -> list[TrackRef]:
             TrackRef(dataset_name, track_id, dataformats.DATA_DIR / dataset_name)
         )
 
-    return drop_flagged_refs(refs, context=f"{path.parent.name}/{path.name}")
+    refs = drop_flagged_refs(refs, context=f"{path.parent.name}/{path.name}")
+
+    if verify:
+        verify_refs_present(refs, context=f"{path.parent.name}/{path.name}")
+
+    return refs
 
 
 class Splitter:
@@ -85,6 +180,12 @@ class Splitter:
     same files (typically version-controlled via DVC) produce the same split
     on every machine. Use ``create()`` (or ``tools/create_splits.py``) to
     generate the files in the first place.
+
+    Every read path also checks that the tracks a split lists are actually
+    on disk, and raises :class:`MissingTrackDataError` if they aren't (see
+    :func:`verify_refs_present`) — a split is a claim about which tracks a
+    run uses, and a partial data pull must stop the run rather than quietly
+    shrink it.
 
     Tracks their annotator flagged (``warning`` or ``needs_review`` in the
     track metadata — see :func:`is_flagged`) are skipped on both sides:
@@ -113,6 +214,8 @@ class Splitter:
         """Return (train_ds, val_ds) loaded from disk.
 
         :raises FileNotFoundError: If no split has been generated for ``name`` yet.
+        :raises MissingTrackDataError: If the split lists tracks that are not
+            on disk.
         :returns: Tuple of (train_ds, val_ds).
         :rtype: tuple[Subset, Subset]
         """
@@ -169,9 +272,11 @@ class Splitter:
         """Return (train_indices, val_indices) into ``self.dataset``, or None
         if no split file exists.
 
-        Each saved track not found in ``self.dataset.refs`` (e.g. removed
-        since the split was created) is dropped, with a printed warning,
-        rather than failing.
+        Each saved track not found in ``self.dataset.refs`` is dropped, with
+        a printed warning, rather than failing. By the time this runs the
+        split's tracks are known to be on disk (:func:`_read_refs` verifies
+        that), so a drop here means the dataset itself filtered the track out
+        — e.g. ``binary_only`` rejecting a waltz — not missing data.
 
         :returns: Tuple of index lists, or None if no split file exists.
         :rtype: tuple[list, list] or None
@@ -212,17 +317,27 @@ class Splitter:
         return _indices(_read_refs(train_file)), _indices(_read_refs(val_file))
 
     @staticmethod
-    def load_refs(splits_dir: Path, name: str) -> tuple[list[TrackRef], list[TrackRef]]:
+    def load_refs(
+        splits_dir: Path, name: str, verify: bool = True
+    ) -> tuple[list[TrackRef], list[TrackRef]]:
         """Return a split's ``(train_refs, val_refs)`` directly — no parent
         dataset needed. The read counterpart to :meth:`save_refs`, and what
         lets ``TempoDataset``/``BeatDataset`` be built straight from a split
         via their ``refs=`` argument, for a plain or a merged name alike.
 
+        :param verify: See :meth:`load_refs_from_dir`.
         :raises FileNotFoundError: If no split has been generated for ``name`` yet.
+        :raises MissingTrackDataError: If ``verify`` and any listed track is
+            not on disk.
         """
 
         try:
-            return Splitter.load_refs_from_dir(splits_dir / name)
+            return Splitter.load_refs_from_dir(splits_dir / name, verify=verify)
+        except MissingTrackDataError:
+            # A FileNotFoundError subclass, so it would otherwise be rewritten
+            # below into "no split found" — the opposite of what happened: the
+            # split is right there, it's the data it names that is missing.
+            raise
         except FileNotFoundError:
             raise FileNotFoundError(
                 f"No split found for '{name}' in {splits_dir}. Run "
@@ -231,7 +346,9 @@ class Splitter:
             ) from None
 
     @staticmethod
-    def load_refs_from_dir(split_path: Path) -> tuple[list[TrackRef], list[TrackRef]]:
+    def load_refs_from_dir(
+        split_path: Path, verify: bool = True
+    ) -> tuple[list[TrackRef], list[TrackRef]]:
         """Return ``(train_refs, val_refs)`` read straight from *split_path*'s
         ``train.txt``/``val.txt`` — the same format :meth:`load_refs` reads,
         but for a folder anywhere on disk rather than one registered under a
@@ -239,7 +356,12 @@ class Splitter:
         directly at a folder of lists (``data.input``, when it contains a
         ``/``) without going through ``splits_dir`` lookup at all.
 
+        :param verify: Fail if a listed track is not on disk — see
+            :func:`_read_refs`. Leave it on for anything that will load the
+            audio; pass ``False`` only to read a split as a list of names.
         :raises FileNotFoundError: If *split_path* has no ``train.txt``/``val.txt``.
+        :raises MissingTrackDataError: If ``verify`` and any listed track is
+            not on disk.
         """
 
         train_file = split_path / "train.txt"
@@ -248,7 +370,7 @@ class Splitter:
         if not (train_file.exists() and val_file.exists()):
             raise FileNotFoundError(f"No split found at {split_path}.")
 
-        return _read_refs(train_file), _read_refs(val_file)
+        return _read_refs(train_file, verify), _read_refs(val_file, verify)
 
     @staticmethod
     def save_refs(

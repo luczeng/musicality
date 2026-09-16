@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import TrackMetadata, TrackRef, save_metadata
-from musicality.splits.splitter import Splitter
+from musicality.splits.splitter import MissingTrackDataError, Splitter
 
 
 class _FakeDataset(Dataset):
@@ -25,11 +25,38 @@ class _FakeDataset(Dataset):
         return self.refs[idx]
 
 
-def _refs(*pairs):
-    return [
+def _write_track_files(ref):
+    """Create the files a split entry must resolve to — audio plus its
+    default-slot annotation. Split reads verify both exist (see
+    ``musicality.splits.splitter.verify_refs_present``), so a ref that isn't
+    backed by files is a *missing data* ref, not a generic one.
+    """
+
+    fmt = dataformats.FORMAT
+    paths = (
+        ref.data_home / fmt.tracks_dirname / f"{ref.track_id}.wav",
+        ref.data_home / fmt.annotations_dirname / f"{ref.track_id}{fmt.beats_suffix}",
+    )
+
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+
+
+def _refs(*pairs, on_disk=True):
+    """Build refs, materializing their files unless ``on_disk=False`` — which
+    is how a test stages the partial-data-pull case."""
+
+    refs = [
         TrackRef(name, track_id, dataformats.DATA_DIR / name)
         for name, track_id in pairs
     ]
+
+    if on_disk:
+        for ref in refs:
+            _write_track_files(ref)
+
+    return refs
 
 
 def _flag(dataset_name, track_id, *, warning=False, needs_review=False):
@@ -283,3 +310,132 @@ class TestFlaggedTracks:
 
         assert [r.track_id for r in loaded_train] == ["a"]
         assert [r.track_id for r in loaded_val] == ["c"]
+
+
+# ---------------------------------------------------------------------------
+# Missing data (a partial dvc pull)
+# ---------------------------------------------------------------------------
+
+
+class TestMissingTrackData:
+    """A split names the tracks a run uses. If some of them aren't on this
+    machine — the usual cause being a `dvc pull` that fetched some corpora
+    and not others — every read path fails instead of quietly training on
+    whatever happens to be there.
+    """
+
+    def test_load_refs_raises_when_audio_is_missing(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        Splitter.save_refs(
+            splits_dir,
+            "ballroom",
+            _refs(("ballroom", "a")) + _refs(("ballroom", "b"), on_disk=False),
+            [],
+        )
+
+        with pytest.raises(MissingTrackDataError):
+            Splitter.load_refs(splits_dir, "ballroom")
+
+    def test_load_refs_raises_when_only_the_annotation_is_missing(
+        self, monkeypatch, tmp_path
+    ):
+        """Audio alone isn't enough — a track with no .beats file carries no
+        supervision, and the loader would crash on it mid-epoch."""
+
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        (ref,) = _refs(("ballroom", "a"))
+        beats = (
+            ref.data_home
+            / dataformats.FORMAT.annotations_dirname
+            / f"a{dataformats.FORMAT.beats_suffix}"
+        )
+        beats.unlink()
+
+        Splitter.save_refs(splits_dir, "ballroom", [ref], [])
+
+        with pytest.raises(MissingTrackDataError):
+            Splitter.load_refs(splits_dir, "ballroom")
+
+    def test_a_missing_val_side_also_raises(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        Splitter.save_refs(
+            splits_dir,
+            "ballroom",
+            _refs(("ballroom", "a")),
+            _refs(("ballroom", "c"), on_disk=False),
+        )
+
+        with pytest.raises(MissingTrackDataError):
+            Splitter.load_refs(splits_dir, "ballroom")
+
+    def test_error_names_the_corpus_and_its_share(self, monkeypatch, tmp_path):
+        """A partial pull takes out whole corpora, so the message has to say
+        which one and how much of it — that's what turns "some tracks are
+        missing" into "gtzan never arrived"."""
+
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        present = _refs(("ballroom", "a"), ("ballroom", "b"))
+        absent = _refs(
+            ("gtzan", "blues_00001"), ("gtzan", "blues_00002"), on_disk=False
+        )
+        Splitter.save_refs(splits_dir, "merged", present + absent, [])
+
+        with pytest.raises(MissingTrackDataError) as excinfo:
+            Splitter.load_refs(splits_dir, "merged")
+
+        message = str(excinfo.value)
+        assert "2 of 4 track(s)" in message
+        assert "gtzan: 2 of 2 track(s)" in message
+        assert "blues_00001.wav" in message
+        assert "merged/train.txt" in message
+
+    def test_run_raises_too(self, monkeypatch, tmp_path):
+        """The Subset-returning path used by eval — it used to drop the
+        missing tracks with a printed warning."""
+
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        refs = _refs(("ballroom", "a")) + _refs(("ballroom", "b"), on_disk=False)
+        Splitter.save_refs(splits_dir, "ballroom", refs, [])
+
+        with pytest.raises(MissingTrackDataError):
+            Splitter(_FakeDataset(refs), splits_dir, "ballroom", 0.5).run()
+
+    def test_verify_false_reads_the_split_anyway(self, monkeypatch, tmp_path):
+        """The annotator reads splits for their train/val badges only, and
+        must keep working on a machine holding part of the data."""
+
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        split_path = tmp_path / "splits" / "ballroom"
+
+        train_refs = _refs(("ballroom", "a"), ("ballroom", "b"), on_disk=False)
+        Splitter.save_refs(split_path.parent, "ballroom", train_refs, [])
+
+        loaded_train, loaded_val = Splitter.load_refs_from_dir(split_path, verify=False)
+
+        assert loaded_train == train_refs
+        assert loaded_val == []
+
+    def test_flagged_tracks_are_not_required_on_disk(self, monkeypatch, tmp_path):
+        """Flagged tracks are dropped before the check, so a track that is
+        both flagged and absent is simply out of the split — not a failure."""
+
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        refs = _refs(("ballroom", "a")) + _refs(("ballroom", "gone"), on_disk=False)
+        Splitter.save_refs(splits_dir, "ballroom", refs, [])
+        _flag("ballroom", "gone", warning=True)
+
+        loaded_train, _ = Splitter.load_refs(splits_dir, "ballroom")
+
+        assert [r.track_id for r in loaded_train] == ["a"]

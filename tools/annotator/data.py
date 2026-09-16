@@ -400,8 +400,13 @@ def _split_lookup(dataset_name: str) -> dict[str, str] | None:
     custom-recorded datasets (e.g. "Luc", "swing") have none."""
     if dataset_name not in _split_lookup_cache:
         try:
+            # verify=False: the tree only wants a train/val badge per track,
+            # so a split naming a track whose audio isn't on this machine
+            # must not stop the annotator from browsing the ones that are —
+            # unlike a training run, which fails on it (see
+            # musicality.splits.splitter.verify_refs_present).
             train_refs, val_refs = Splitter.load_refs_from_dir(
-                dataformats.SPLITS_DIR / dataset_name
+                dataformats.SPLITS_DIR / dataset_name, verify=False
             )
         except FileNotFoundError:
             lookup = None
