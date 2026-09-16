@@ -115,12 +115,17 @@ Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits
 
 ## Configuration
 
-Hydra configs live in `configs/`:
+Hydra configs live in `configs/`. The files hold values only — **every key is
+documented in `docs/source/configuration.rst`**, which is the source of truth
+for what a key means, which keys are coupled, and the measurements behind the
+defaults. Add explanations there, not as YAML comments.
 
-- `train.yaml` — Top-level training config (loss, lr, batch size, dataset, augmentations, W&B).
+- `beat_train.yaml` — Beat-phase training (`tools/train_beat.py`). The config the project currently trains with.
+- `beat_only_train.yaml` — Beat-only training (`tools/train_beat_only.py`).
+- `train.yaml` — Tempo training (`tools/train_tempo.py`).
+- `eval_beat.yaml` — `tools/eval_beat.py` defaults. Also loaded at import time as `musicality.evaluation.DEFAULTS` and by the annotator, so it is the project-wide postprocessing default, not just CLI defaults.
 - `download.yaml` — List of datasets to download and their `data_home`.
-- `model/` — Per-model overrides: `tcn.yaml`, `beat.yaml`, `cnn.yaml`, `wav2vec2.yaml`.
-- `trainer/` — Lightning Trainer overrides.
+- `model/` — Backbone overrides selected by each config's `defaults:` list: `tcn.yaml` (tempo), `tcn_frames.yaml` (beat-phase), `tcn_frames_beat.yaml` (beat-only).
 
 ## Describing Work
 

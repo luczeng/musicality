@@ -1,148 +1,50 @@
+# Beat-phase training (tools/train_beat.py).
+# Every key is documented in docs/source/configuration.rst — put explanations
+# there, not here. Trailing comments list legal values only.
 defaults:
   - model: tcn_frames
   - _self_
-# Declares which task this config trains, saved into the checkpoint's
-# hyperparameters (BeatPhaseModule) and used by musicality.inference.detect_task
-# to pick the right module class/postprocessing at eval/inference time.
+
 task: beat_phase
-# Which frames the one/last BCE terms are averaged over.
-#   mask — every frame of a position-annotated track (the original behaviour)
-#   beat — only frames at or near a beat, weighted by the beat target channel
-# `beat` matches how the heads are actually read at inference: postprocess's
-# bar-position stage samples one/last *only* at detected beat times, so under
-# `mask` ~96% of the phase gradient goes into re-learning "is this a beat at
-# all" — which the beat head already does at 0.92 F. See
-# docs/beat_phase_improvement_review.md step 2.
-phase_conditioning: beat
-# How bar position is parameterised.
-#   one_last  — two independent sigmoids for positions 1 and group_size.
-#               Positions in between get identical supervision (negative on
-#               both), so the model is never asked "is this a 1 or a 3?".
-#   positions — one logit per bar position with a softmax over them, so the
-#               positions compete and 1-vs-3 becomes a single decision. Widens
-#               the head to 1 + group_size channels and switches the loss to
-#               beat_position_loss. See docs/beat_phase_improvement_review.md
-#               section 3.
-# NOW `positions`. This was held at one_last so that `phase_conditioning: beat`
-# (step 2) and `positions` (step 3) could not land in the same run; both have
-# since been trained and measured separately, in that order, so the
-# attributability concern is settled. Measured on ballroom val (binary,
-# viterbi=2): confusion 0.185 -> 0.130, f_one 0.756 -> 0.774, f_last 0.730 ->
-# 0.769. See plans/04_beat_phase_generalization_and_data_prep.md §2.2.
-target_layout: positions
-# Positive-class weight for the beat/one/last BCE heads — scalar (shared across
-# heads) or a 3-element list for per-head weights.
-# COUPLED TO phase_conditioning — change both together or neither.
-# Measured neg:pos mass on ballroom (binary_only, 150 tracks, 16s clips):
-#
-#   head   mask    beat
-#   one    20.2     4.7
-#   last   20.0     4.6
-#   beat    4.3     4.3   (unconditioned either way)
-#
-# Note 4.7, not the naive 3.0 you get from "1 beat in 4 is a downbeat": the
-# weight is the smeared beat channel and the target is the smeared one channel,
-# so the positive mass is a product of two Gaussians (sum ~2.66 per downbeat)
-# while the total weight is a single one (sum ~3.76 per beat). The positive
-# side loses relatively more mass than the weight does.
-# Values below follow the existing convention of shading ~10% under the
-# measured ratio — exact inverse-frequency weighting on a soft target tends to
-# overshoot into false positives.
-#
-# COUPLED TO target_layout — the two must be changed together:
-#   positions — a scalar, or `auto` below. A 3-element list is rejected at
-#               construction with an error naming both keys.
-#   one_last  — the 3-element list [5, 4, 4] from the table above. `auto` is
-#               NOT supported here, and the failure is worse than an error:
-#               it dies inside torch as `TypeError: new(): invalid data type
-#               'str'`, which names neither config key.
-# So a one_last run is: target_layout=one_last pos_weight=[5,4,4]
-pos_weight: auto
-# `pos_weight: auto` derives the weight per sample from the beat target
-# instead, as alpha * (1 - mean(beat_y)) / mean(beat_y). A fixed value is only
-# right at one tempo: the true neg:pos ratio is 2.6 on jtd (193 BPM), 4.5 on
-# ballroom (125) and 11.3 at classical's 10th percentile (56), because the
-# smeared target carries a constant ~3.75 frames of mass per beat while the
-# beat period does not. Deriving it also keeps it correct under time_stretch,
-# which invalidates a hand-tuned value on every augmented clip.
-#
-# 1.11 reproduces the 5 above at ballroom's median tempo, so switching to
-# `auto` is a pure cross-tempo recalibration — neutral on the corpus every
-# previous measurement was taken on. 1.0 is exact inverse-frequency weighting.
-pos_weight_alpha: 1.11
-# How the bar-position cross-entropy is averaged (target_layout: positions only).
-#   global   — one weighted mean over the batch, i.e. a micro-average over
-#              *beats*. A clip's influence is then proportional to its beat
-#              count: measured on merge, jtd takes 73.7% of the position
-#              gradient against 63.8% of the tracks, ballroom 18.0% against
-#              24.1%. The share ratio between two corpora is exactly their
-#              tempo ratio.
-#   per_item — normalize each clip by its own beat weight first, so every
-#              annotated clip carries 1/n_valid regardless of tempo. That is a
-#              macro-average over tracks, matching the per-genre metric.
-# NOW `per_item`, matching the macro-over-tracks per-genre metric the project is
-# actually judged on (`tools/eval_beat.py --per-genre`). Under `global`, measured on
-# merge: jtd took 73.7% of the position gradient against 63.8% of the tracks.
-# Changes the value of val/loss, which ModelCheckpoint splices into checkpoint
-# filenames — runs before and after are not loss-comparable.
-position_norm: per_item
-lr: 5e-4  # learning rate
-weight_decay: 1e-4  # L2 regularisation
-# Balance the logged acc_one/acc_last metrics (average of true-positive and
-# true-negative rate) instead of a pooled mean, which is dominated by the
-# true-negative rate since one/last frames are a small minority. Only reaches
-# the one_last layout — under target_layout: positions nothing reads it.
-# The beat head is scored by peak_f_measure (logged as f_beat), which picks
-# peaks before matching and so has no true-negative term to balance.
-balanced: true
-batch_size: 16
+
+# --- Head ---------------------------------------------------------------
+phase_conditioning: beat  # mask | beat
+target_layout: positions  # one_last | positions
+group_size: 4  # 4 = bar position, 8 = phrase position
 n_mels: 128
 hop_length: 512
 sigma_frames: 1.5
-# Beats per group that the dataset's position annotations count across: 4 for a
-# bar-position (1-4) dataset (e.g. ballroom), 8 for a phrase-position (1-8)
-# dataset. Only changes what the "last" target/head means (positions == group_size);
-# "one" is always position 1. Override on the CLI, e.g. `group_size=8 data.input=<phrase_dataset>`.
-group_size: 4
-# Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. ballroom's
-# waltz/Viennese waltz tracks, which are in triple meter — 1, 2, 3 — rather
-# than binary meter). Must match whatever the split was built with (see
-# `--binary-only` on tools/create_splits.py), since it changes dataset length.
-binary_only: true
-train_subsample: null  # fraction of the training split to use (e.g. 0.2), for quick smoke runs
-# Parent directory for checkpoints. Each run writes into its own
-# subdirectory below this (named after wandb.run_name, or a timestamp when
-# that is null), holding that run's trainer.save_top_k best checkpoints.
-checkpoint_dir: checkpoints_beat/
-# Event-level validation metrics, logged as `val_event/*`: beats and bar
-# positions decoded on full tracks, scored through the same path as
-# tools/eval_beat.py. Costs one full-track model pass per track, hence a
-# subsample scored every few epochs. Postprocessing is NOT configured here — it
-# comes from configs/eval_beat.yaml. See musicality/callbacks/event_metrics.py
-# for why these differ from the frame metrics beside them.
-event_metrics:
-  enabled: true
-  n_tracks: 50  # tracks scored per pass; null scores the whole validation split
-  every_n_epochs: 5  # scored on epoch 0, then every N — plus the final epoch, always
-# One JSON report per run (musicality/callbacks/training_report.py), written
-# beside that run's checkpoints and uploaded to the W&B run's Files tab as
-# training_report.json. Holds final/best metrics, the per-epoch history, the
-# per-track and per-corpus event scores, and the resolved config — so a run can
-# be handed over as a single attachment instead of a dashboard link.
-training_report:
-  enabled: true
+
+# --- Loss ---------------------------------------------------------------
+# pos_weight is coupled to target_layout: `positions` takes a scalar or `auto`,
+# `one_last` takes [5, 4, 4]. Mixing them fails obscurely — see the docs.
+pos_weight: auto
+pos_weight_alpha: 1.11
+position_norm: per_item  # global | per_item
+balanced: true
+
+# --- Optimisation -------------------------------------------------------
+lr: 5e-4
+weight_decay: 1e-4
+batch_size: 16
 trainer:
   max_epochs: 100
   accelerator: auto  # cpu | gpu | auto
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
+
+# --- Data ---------------------------------------------------------------
+# binary_only is folded into the split name, so it must match the split it is
+# read with (`--binary-only` on tools/create_splits.py).
+binary_only: true
+train_subsample: null  # fraction of the training split, for smoke runs
 data:
-  input: ballroom  # split name (looked up under splits_dir, see musicality.dataformats) or, if it contains a "/", a direct path to a folder with train.txt/val.txt
+  input: merge  # split name, or a path containing "/" to a train.txt/val.txt folder
   sample_rate: 22050
-  duration: 16.0  # audio clip length, in seconds
+  duration: 16.0  # seconds
   num_workers: 4
-  random_crop: true  # train: draw a random offset window per track each access; val is always a fixed window from the track's middle (avoids intros)
+  random_crop: true  # train only; val is always a fixed window from the middle
 augmentations:
   enabled: true
   time_stretch:
@@ -156,6 +58,15 @@ augmentations:
   noise:
     enabled: false
     std: 0.005
+
+# --- Logging and outputs ------------------------------------------------
+checkpoint_dir: checkpoints_beat/  # one subdirectory per run below this
+event_metrics:  # val_event/*, decoded on full tracks; postprocessing comes from eval_beat.yaml
+  enabled: true
+  n_tracks: 50  # null scores the whole validation split
+  every_n_epochs: 5
+training_report:
+  enabled: true
 wandb:
   project: musicality-beat-phase
   run_name: null

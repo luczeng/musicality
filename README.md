@@ -158,36 +158,36 @@ Tailscale.
 `musicality/models/tcn.py` (`TCNTempoNet`) is the default backbone, wrapped by
 `musicality/trainers/tempo_module.py` (`TempoModule`) — see the
 [API documentation](#api-documentation) for architecture, loss modes, and metrics.
-Alternate backbones: `musicality/models/tempo_net.py` (a simpler CNN),
+Alternate backbones live in `musicality/models/tempo_net.py` (a simpler CNN),
 `musicality/models/huggingface.py` (wraps HuggingFace `transformers` models, e.g.
-wav2vec2/BEaT), `musicality/models/torch_audio.py` (wraps pretrained `torchaudio`
-models).
+wav2vec2/BEaT) and `musicality/models/torch_audio.py` (wraps pretrained
+`torchaudio` models); they have no config of their own, so point `model._target_`
+at one to use it.
 
 Training is configured with [Hydra](https://hydra.cc) and overridable on the
-command line; every key in `configs/train.yaml` is documented in place — see the
-[configuration reference](https://luczeng.github.io/musicality/configuration.html)
-for the full file.
+command line. `configs/train.yaml` holds values only — every key is explained in
+the [configuration reference](https://luczeng.github.io/musicality/configuration.html).
 
 ```bash
-uv run python tools/train.py
+uv run python tools/train_tempo.py
 ```
 
 Override any value on the command line:
 
 ```bash
 # Change batch size and learning rate
-uv run python tools/train.py batch_size=16 lr=3e-4
+uv run python tools/train_tempo.py batch_size=16 lr=3e-4
 
 # Train for more epochs on GPU
-uv run python tools/train.py trainer.max_epochs=200 trainer.accelerator=gpu
+uv run python tools/train_tempo.py trainer.max_epochs=200 trainer.accelerator=gpu
 
-# Use a different model config
-uv run python tools/train.py model=cnn n_mels=64
+# Train on a different split
+uv run python tools/train_tempo.py data.input=merge n_mels=64
 ```
 
 Hydra writes logs and run configs to `outputs/<date>/<time>/` by default.
-Checkpoints are saved to `checkpoint_dir` (top-3 by `val/loss`, with early stopping
-after 10 epochs without improvement).
+Checkpoints are saved to `checkpoint_dir`, one subdirectory per run, top-3 by
+`val/loss`.
 
 ### Beat-phase detection
 
@@ -195,9 +195,8 @@ A second pipeline, alongside tempo estimation, detects frame-level **beat** /
 **"one"** (downbeat) / **"last"** (last beat of the group — bar position 4 by
 default) events. It reuses the same dataset/training scaffolding as tempo
 estimation (`BeatDataset`, Hydra config, Lightning). Configured through
-`configs/beat_train.yaml`, every key documented in place — see the
-[configuration reference](https://luczeng.github.io/musicality/configuration.html)
-for the full file.
+`configs/beat_train.yaml`; every key is explained in the
+[configuration reference](https://luczeng.github.io/musicality/configuration.html).
 
 ```bash
 uv run python tools/train_beat.py
@@ -242,7 +241,7 @@ uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
 
 | Tool | Description |
 |---|---|
-| `tools/train.py` | Hydra entry point for training a tempo model |
+| `tools/train_tempo.py` | Hydra entry point for training a tempo model |
 | `tools/train_beat.py` | Hydra entry point for training a beat-phase model |
 | `tools/create_splits.py` | Create the train/val splits under `../musicality_db/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
 | `tools/eval_beat.py` | The single evaluation entry point for a beat-only or beat-phase checkpoint (task auto-detected), on full-length tracks rather than the fixed-duration training clips. Default: the canonical metric report (`f_beat`, `cmlt`/`amlt`, `position_acc` and its offset-invariant twin). `--per-genre` breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and says whether the error is the model's or the decoder's, `--sweep` grid-searches the postprocessing knobs, `--output` writes per-track rows to CSV |

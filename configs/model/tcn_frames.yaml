@@ -1,3 +1,5 @@
+# Dilated TCN, frame-level beat/position heads. Used by configs/beat_train.yaml.
+# Documented in docs/source/configuration.rst.
 _target_: musicality.models.tcn.TCNTempoNet
 arch: TCN-frames
 n_mels: ${n_mels}
@@ -6,17 +8,12 @@ channels: 256
 hop_length: ${hop_length}
 n_layers: 8
 dropout: 0.2
-# frame_level and n_outputs are forced to True/3 by BeatPhaseModule regardless of
-# what's set here — listed for documentation only.
+
+# Forced to true/3 by BeatPhaseModule; listed for documentation only.
 frame_level: true
 n_outputs: 3
-# Self-attention head for the one/last channels (see docs/beat_phase_context_ideas.md):
-# gives them context beyond the trunk's fixed dilated-conv receptive field. The
-# beat channel is unaffected — it always reads straight off the trunk. Off by
-# default to keep existing runs unchanged; enable via `model.use_self_attention=true`.
-# Note: needs training clips longer than the trunk's own receptive field
-# (~11.9s at the defaults above) to have any long-range context to draw on —
-# see docs/beat_phase_context_ideas.md's "Decision" section before enabling.
-use_self_attention: true
+
+# Off on purpose, not merely unexercised — see the docs before enabling.
+use_self_attention: false
 n_attn_layers: 1
 n_attn_heads: 4

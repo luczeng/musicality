@@ -1,3 +1,4 @@
+# Dilated TCN, clip-level tempo regression. Used by configs/train.yaml.
 _target_: musicality.models.tcn.TCNTempoNet
 arch: TCN
 n_mels: ${n_mels}
