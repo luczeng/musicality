@@ -12,6 +12,7 @@ API reference for the ``musicality`` tempo-estimation library.
    losses
    metrics
    postprocess
+   baselines
    loaders
    models
    trainers

@@ -253,6 +253,86 @@ def summarize(rows: list[dict]) -> dict:
     return summary
 
 
+def build_eval_dataset(
+    dataset: str,
+    *,
+    data_home: Path | None = None,
+    split: str = "val",
+    val_split: float = 0.2,
+    sample_rate: int = 22050,
+    hop_length: int = 512,
+    group_size: int = 4,
+    binary_only: bool = False,
+    limit: int | None = None,
+) -> tuple[BeatDataset, list[int]]:
+    """Resolve a dataset name and a split into a built
+    :class:`~musicality.loaders.beat_dataset.BeatDataset` and the indices of
+    the tracks that split selects.
+
+    The single place "which tracks does ``--dataset merge --split val`` mean?"
+    is answered, shared by :meth:`BeatEvaluator.load` and
+    :class:`~musicality.baselines.evaluator.BaselineEvaluator`. A baseline
+    scored against a different set of tracks than the checkpoint is not a
+    comparison, and nothing in the printed output would say so — hence one
+    implementation rather than two.
+
+    Two ways of building it, chosen by whether *data_home* is a real directory:
+
+    - **A single dataset** (the usual case): built by ``name`` from its own
+      directory, then narrowed to *split* via
+      :func:`~musicality.loaders.beat_dataset.indices_for_split`.
+    - **A merged split** (e.g. ``dataset="merge"``): ``tools/merge_datasets.py``
+      deliberately never creates a merged dataset directory, so there is
+      nothing to build by name. The split's ``TrackRef`` entries carry their own
+      per-track ``data_home`` and source corpus, so the dataset is built
+      straight from them. This is also the only case where more than one corpus
+      is present, which is what makes a per-genre breakdown meaningful.
+
+    :param dataset: Dataset or merged-split name.
+    :param data_home: Dataset directory; defaults to ``DATA_DIR/<dataset>``.
+    :param split: ``"train"``, ``"val"`` or ``"all"``.
+    :param val_split: Held-out fraction — must match how the split was created.
+    :param sample_rate: Target sample rate.
+    :param hop_length: Frame hop, in samples.
+    :param group_size: Beats per group the position annotations are folded onto.
+    :param binary_only: Must match how the split was created.
+    :param limit: Keep only the first N selected indices.
+    :returns: ``(dataset, indices)``.
+    """
+
+    home = Path(data_home) if data_home is not None else DATA_DIR / dataset
+
+    if split != "all" and not home.is_dir():
+        splits_dir = dataformats.ROOT / dataformats.load().splits_dir
+        train_refs, val_refs = Splitter.load_refs(
+            splits_dir, beat_split_name(dataset, binary_only)
+        )
+
+        built = BeatDataset(
+            refs=train_refs if split == "train" else val_refs,
+            sample_rate=sample_rate,
+            hop_length=hop_length,
+            group_size=group_size,
+            binary_only=binary_only,
+        )
+        indices = list(range(len(built)))
+    else:
+        built = BeatDataset(
+            name=dataset,
+            data_home=home,
+            sample_rate=sample_rate,
+            hop_length=hop_length,
+            group_size=group_size,
+            binary_only=binary_only,
+        )
+        indices = indices_for_split(built, dataset, split, val_split, binary_only)
+
+    if limit is not None:
+        indices = indices[:limit]
+
+    return built, indices
+
+
 class BeatEvaluator:
     """Evaluates a beat-only or beat-phase checkpoint (task auto-detected from
     the checkpoint itself) on full-length tracks.
@@ -396,38 +476,18 @@ class BeatEvaluator:
         if self._loaded is None:
             module, task = load_module(self.checkpoint, self.device)
 
-            if self.split != "all" and not self.data_home.is_dir():
-                splits_dir = dataformats.ROOT / dataformats.load().splits_dir
-                split_name = beat_split_name(self.dataset_name, self.binary_only)
-                train_refs, val_refs = Splitter.load_refs(splits_dir, split_name)
+            dataset, indices = build_eval_dataset(
+                self.dataset_name,
+                data_home=self.data_home,
+                split=self.split,
+                val_split=self.val_split,
+                sample_rate=self.sample_rate,
+                hop_length=self.hop_length,
+                group_size=self.group_size if self.group_size is not None else 4,
+                binary_only=self.binary_only,
+                limit=self.limit,
+            )
 
-                dataset = BeatDataset(
-                    refs=train_refs if self.split == "train" else val_refs,
-                    sample_rate=self.sample_rate,
-                    hop_length=self.hop_length,
-                    group_size=self.group_size if self.group_size is not None else 4,
-                    binary_only=self.binary_only,
-                )
-                indices = list(range(len(dataset)))
-            else:
-                dataset = BeatDataset(
-                    name=self.dataset_name,
-                    data_home=self.data_home,
-                    sample_rate=self.sample_rate,
-                    hop_length=self.hop_length,
-                    group_size=self.group_size if self.group_size is not None else 4,
-                    binary_only=self.binary_only,
-                )
-                indices = indices_for_split(
-                    dataset,
-                    self.dataset_name,
-                    self.split,
-                    self.val_split,
-                    self.binary_only,
-                )
-
-            if self.limit is not None:
-                indices = indices[: self.limit]
             self._loaded = (module, task, dataset, indices)
 
         return self._loaded

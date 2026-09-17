@@ -16,6 +16,9 @@ uv pip install -e .
 # Bootstrap a fresh remote instance (e.g. vast.ai): uv, Backblaze data via DVC, W&B login
 bash tools/setup_remote.sh
 
+# Install the optional public beat trackers (madmom, Beat This!)
+uv sync --extra baselines
+
 # Run tests
 uv run pytest tests/
 
@@ -42,6 +45,10 @@ uv run python tools/plot_tempo_histograms.py
 
 # Visualize BeatDataset's smeared beat/one/four targets for one clip
 uv run python tools/plot_beat_targets.py --dataset ballroom
+
+# Benchmark a public beat tracker on our own val split
+uv run python tools/eval_baseline.py --baseline madmom \
+    --dataset merge --split val --binary-only
 
 # Add a dependency
 uv add <package>
@@ -95,6 +102,21 @@ separate reasons — see `docs/frame_vs_event_metrics.md` before quoting either.
 - `metrics_logger.py` — `BestMetricsPrinter`: prints best validation metrics at the end of training.
 - `training_report.py` — `TrainingReportLogger`: at `on_fit_end`, writes one `training_report.json` beside the run's checkpoints and uploads it to the W&B run's Files tab. Holds final/best metrics, the per-epoch history, per-track and per-corpus event scores, the resolved config, and the run's identity (W&B id, git commit, best checkpoint) — a run as a single shareable attachment. Decodes nothing; it reuses `EventMetricsLogger`'s last scoring pass.
 
+### Baselines (`musicality/baselines/`)
+
+Third-party beat trackers, scored on our splits with our metrics — the
+experiment `plans/08_rethinking_the_approach.md` §6.1 asks for. `madmom_baseline.py`
+wraps madmom's RNN+DBN tracker, `beat_this_baseline.py` wraps Beat This!.
+Everything after the prediction is shared with `tools/eval_beat.py`
+(`build_eval_dataset` picks the tracks, `score_events` scores them), so a
+baseline row and a checkpoint row differ only in who produced the beats.
+Predictions are cached per track under `outputs/baselines/`.
+
+**Both trackers were trained on most of our validation split.** `gtzan`,
+`rwc_genre` and `jtd` are the only clean rows; see
+`musicality.baselines.base.CORPUS_EXPOSURE`, which the tool prints before the
+numbers. Optional dependency: `uv sync --extra baselines`.
+
 ### Data Formats (`musicality/dataformats/`)
 
 Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits dir) as a typed `DataFormat` object.
@@ -114,6 +136,7 @@ of silently shrinking its dataset (see `docs/source/data.rst`).
 - `plot_tempo_histograms.py` — Plots BPM distributions across datasets.
 - `summarize_datasets.py` — Prints summary statistics for all datasets.
 - `train.py` — Hydra entry point for training.
+- `eval_baseline.py` — Scores a public tracker (madmom, Beat This!) on our splits, through the same scorer `eval_beat.py` uses. `--predict-only` fills the prediction cache without scoring; `--profile` and `--per-genre` are the same report sections.
 - `eval_beat.py` — The one evaluation tool for beat-only/beat-phase checkpoints (task auto-detected), on full-length tracks. Default is the canonical metric report; `--per-genre` (automatic on a merged split) breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and calls model-vs-decoder, `--sweep` grid-searches the postprocessing knobs that `configs/eval_beat.yaml` holds, `--output` writes per-track rows to CSV. Every mode runs the model once per track and re-uses the cached probabilities.
 
 ## Configuration
@@ -126,6 +149,7 @@ defaults. Add explanations there, not as YAML comments.
 - `beat_train.yaml` — Beat-phase training (`tools/train_beat.py`). The config the project currently trains with.
 - `beat_only_train.yaml` — Beat-only training (`tools/train_beat_only.py`).
 - `train.yaml` — Tempo training (`tools/train_tempo.py`).
+- `eval_baseline.yaml` — `tools/eval_baseline.py` defaults. Not a library default — nothing else reads it.
 - `eval_beat.yaml` — `tools/eval_beat.py` defaults. Also loaded at import time as `musicality.evaluation.DEFAULTS` and by the annotator, so it is the project-wide postprocessing default, not just CLI defaults.
 - `download.yaml` — List of datasets to download and their `data_home`.
 - `model/` — Backbone overrides selected by each config's `defaults:` list: `tcn.yaml` (tempo), `tcn_frames.yaml` (beat-phase), `tcn_frames_beat.yaml` (beat-only).

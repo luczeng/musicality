@@ -1,0 +1,28 @@
+# Defaults for tools/eval_baseline.py — third-party trackers scored on our
+# splits. Every key is documented in docs/source/configuration.rst; put
+# explanations there, not here. Every key is overridable via the matching
+# --flag.
+
+# --- Run ----------------------------------------------------------------
+dataset: merge  # the 7-corpus merged split plans/08 argues about
+split: val  # train | val | all
+val_split: 0.2  # must match how the split was created
+sample_rate: 22050  # dataset geometry only; each tracker resamples for itself
+hop_length: 512  # dataset geometry only
+tolerance: 0.07  # F-measure matching window, seconds — same as eval_beat.yaml
+group_size: 4  # 4 = bar position, 8 = phrase position
+cache_dir: outputs/baselines
+
+# --- Per-baseline settings ----------------------------------------------
+madmom:
+  variant: downbeat  # downbeat | beat
+  beats_per_bar: [3, 4]
+  min_bpm: 55.0
+  max_bpm: 215.0
+  transition_lambda: 100.0
+
+beat_this:
+  model: final0  # final0/1/2 | small0/1/2 | single_final0/1/2 | fold0..7
+  dbn: false  # true replaces peak-picking with madmom's DBN
+  device: cpu
+  float16: false

@@ -40,6 +40,9 @@ Which config drives what
    * - ``eval_beat.yaml``
      - ``tools/eval_beat.py``, :mod:`musicality.evaluation`, the annotator
      - —
+   * - ``eval_baseline.yaml``
+     - ``tools/eval_baseline.py``
+     - —
    * - ``download.yaml``
      - ``tools/download_dataset.py``
      - —
@@ -530,6 +533,86 @@ no-resync decode (``null``) alongside, and doubles as the variant list for
 .. literalinclude:: ../../configs/eval_beat.yaml
    :language: yaml
    :caption: configs/eval_beat.yaml
+
+Public-tracker evaluation (``configs/eval_baseline.yaml``)
+-----------------------------------------------------------
+
+Defaults for ``tools/eval_baseline.py``, which scores madmom or Beat This! on
+our splits with our metrics (see :doc:`baselines`). Unlike ``eval_beat.yaml``
+this file is **not** a library default — nothing outside that one tool reads it.
+
+Top level
+~~~~~~~~~
+
+``dataset``, ``split``, ``val_split``, ``tolerance`` and ``group_size`` mean
+exactly what they do in ``eval_beat.yaml``, and must be set to the same values
+as the checkpoint run being compared against — a baseline scored on a different
+set of tracks is not a comparison, and nothing in the output would say so.
+
+``dataset`` defaults to ``merge`` rather than ``ballroom``: the question this
+tool exists to answer is about the 7-corpus split, and a single-corpus default
+invites a headline number drawn from the one corpus both trackers were trained
+on. Pass ``--binary-only`` with it, as the beat-phase checkpoints are trained
+and validated on ``beat_phase-merge-binary``; the tool warns when you do not.
+
+``sample_rate`` — ``22050``
+    Frame geometry for :class:`~musicality.loaders.beat_dataset.BeatDataset`
+    only. It does **not** reach the tracker: each baseline loads and resamples
+    the audio itself, at whatever rate its own weights expect (madmom 44.1 kHz,
+    Beat This! 22.05 kHz). Resampling into ours would handicap them for no
+    reason.
+``hop_length`` — ``512``
+    Likewise, dataset geometry only.
+``cache_dir`` — ``outputs/baselines``
+    Where per-track predictions are cached. Running a tracker is seconds to
+    minutes per track and scoring one is milliseconds, so the two are separated:
+    the cache is keyed by ``<corpus>/<track_id>``, stays valid across splits,
+    and carries the baseline's configuration in its header so a file written
+    with one checkpoint is never read back into a run that asked for another.
+
+``madmom:``
+~~~~~~~~~~~
+
+``variant`` — ``downbeat``
+    ``downbeat`` runs ``RNNDownBeatProcessor`` + ``DBNDownBeatTrackingProcessor``
+    and is the only variant that produces bar positions. ``beat`` runs the
+    beat-only pair, which is the system the literature's "madmom" beat
+    F-measures are usually measured on; the two do not agree on beats.
+``beats_per_bar`` — ``[3, 4]``
+    Bar lengths the DBN may choose between. Pinning it to ``[4]`` hands the
+    tracker the meter, which our model never gets — leave it alone for a fair
+    comparison.
+``min_bpm`` / ``max_bpm`` — ``55`` / ``215``
+    Tempo bounds of the DBN's state space, and a real constraint rather than a
+    formality: jtd's median tempo is around 185 BPM, so a double-time reading
+    is outside the space and cannot be chosen at all, which flatters ``cmlt``
+    relative to any tracker without that prior.
+``transition_lambda`` — ``100``
+    Tempo-change penalty in the DBN transition model. Higher is stiffer.
+
+``beat_this:``
+~~~~~~~~~~~~~~
+
+``model`` — ``final0``
+    Checkpoint name, local path or URL. ``final0``/``final1``/``final2`` are the
+    main models and ``small0..2`` the ~8 MB variant; all of them held out GTZAN
+    and nothing else. When the corpus being argued about is *not* GTZAN, prefer
+    ``single_final0..2`` or ``fold0..7``, which hold out a documented validation
+    split — see the warning in :doc:`baselines`.
+``dbn`` — ``false``
+    ``false`` peak-picks the frame probabilities, which is Beat This!'s own
+    default and the direct counterexample to "our decoder is the bottleneck".
+    ``true`` postprocesses them with madmom's DBN instead, giving the one
+    genuinely controlled decoder comparison available: same probabilities, two
+    decoders. Requires madmom.
+``device``, ``float16``
+    Execution only — they do not change the prediction, and are therefore
+    deliberately absent from the cache header, so a cache built on GPU is valid
+    for a CPU run.
+
+.. literalinclude:: ../../configs/eval_baseline.yaml
+   :language: yaml
+   :caption: configs/eval_baseline.yaml
 
 Dataset download (``configs/download.yaml``)
 ---------------------------------------------
