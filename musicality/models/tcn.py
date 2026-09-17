@@ -162,7 +162,7 @@ class Conv2dStem(nn.Module):
     trunk's dilations are what buy context — pooling time here would spend
     precision the 70 ms evaluation tolerance cannot afford. The 3x3 kernels do
     widen the receptive field by ``2 * n_layers`` frames, which is negligible
-    beside the trunk's ``3 * (2 ** n_layers - 1)``.
+    beside the trunk's ``1 + 2 * sum(dilations)``.
 
     :param n_mels: Number of input mel bands.
     :param channels: Feature maps per 2D layer. 16 is madmom-scale; the stem is
@@ -260,10 +260,21 @@ class TCNTempoNet(nn.Module):
       pair with ``BCEWithLogitsLoss`` downstream, matching the classification
       mode's convention of returning raw logits.
 
-    Receptive field ≈ kernel_size × (2^n_layers − 1) frames — the same trunk is
-    shared between both modes, so this is unaffected by ``frame_level``. A
-    ``conv2d_stem`` adds ``2 × stem_layers`` frames to that, which is noise
-    beside it.
+    Receptive field is ``1 + (kernel_size - 1) * sum(dilations)`` frames — with
+    the default schedule ``1, 2, ..., 2^(n_layers-1)`` that is
+    ``2^(n_layers+1) - 1``, so 511 frames ≈ 11.9 s at ``n_layers=8``,
+    ``hop_length=512``. (This docstring used to quote
+    ``kernel_size × (2^n_layers − 1)``, a loose upper bound ~1.5x the truth; see
+    ``docs/beat_phase_context_ideas.md`` and ``plans/08`` §1.2/§3.1.) The same
+    trunk is shared between both modes, so this is unaffected by
+    ``frame_level``. A ``conv2d_stem`` adds ``2 × stem_layers`` frames to that,
+    which is noise beside it.
+
+    **The receptive field is only real if the input is at least that long.**
+    Every trunk conv uses ``padding=dilation``, so a layer whose dilation exceeds
+    the input length has both off-centre taps in zero padding at every frame and
+    collapses to a 1x1 conv. On a 16 s clip at ``hop_length=512`` (689 frames)
+    that is any layer past the ninth. See ``plans/08`` §3.1.
 
     ``conv2d_stem`` is the one structural option here. Off, the first operation
     is a 1x1 mix over mel bands and no layer ever sees a time-frequency
@@ -275,8 +286,9 @@ class TCNTempoNet(nn.Module):
     :param hop_length: Hop length for the mel transform. Controls temporal resolution
         (smaller = more frames per second). Defaults to 512 (≈43 fps at 22050 Hz).
     :param channels: Channel width for the TCN.
-    :param n_layers: Number of dilated layers. Keep receptive field
-        (3 × (2^n_layers − 1) frames) within the input sequence length.
+    :param n_layers: Number of dilated layers; dilation doubles per layer. Keep
+        the *dilation* of the deepest layer (``2^(n_layers-1)`` frames) below the
+        input sequence length, or that layer only ever convolves padding.
     :param dropout: Dropout probability applied right before each head's final
         ``Conv1d``/``Linear`` — the pooled regression head's last ``Linear``,
         the frame head's 1x1 conv, or (when ``use_self_attention=True``) the
@@ -302,11 +314,13 @@ class TCNTempoNet(nn.Module):
     :param n_attn_heads: Attention heads per :class:`SelfAttentionBlock`. Only
         used when ``use_self_attention=True``.
     :param conv2d_stem: Run a :class:`Conv2dStem` between the mel and the trunk
-        instead of projecting the raw bands. Off by default, so existing
-        checkpoints load into identical parameter shapes. Measured cost at
-        ``n_mels=128, channels=256``: 1.613 M parameters to 1.643 M — the stem
-        itself is 4.9 k, the rest is ``input_proj`` widening from 128 to 224
-        inputs.
+        instead of projecting the raw bands. Defaults to ``False`` *here* so
+        that checkpoints predating the stem reconstruct into identical parameter
+        shapes from their own saved hyperparameters; the shipped frame-level
+        configs (``configs/model/tcn_frames*.yaml``) turn it on. Measured cost
+        at those configs' ``channels=32``: 32,805 parameters to 40,773 — the
+        stem itself is 4.9 k, the rest is ``input_proj`` widening from 128 to
+        224 inputs.
     :param stem_channels: Feature maps per stem layer. ``conv2d_stem`` only.
     :param stem_layers: ``Conv2d`` blocks in the stem; frequency is pooled after
         all but the last. ``conv2d_stem`` only.

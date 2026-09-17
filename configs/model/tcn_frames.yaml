@@ -4,10 +4,13 @@ _target_: musicality.models.tcn.TCNTempoNet
 arch: TCN-frames
 n_mels: ${n_mels}
 sample_rate: 22050
-channels: 256
 hop_length: ${hop_length}
-n_layers: 8
 dropout: 0.2
+
+# Trunk size — plans/08 section 3.1. 32x9 replaces the 256x8 every checkpoint up
+# to v6 was trained at; see the docs before widening it back.
+channels: 32
+n_layers: 9
 
 # Forced to true/3 by BeatPhaseModule; listed for documentation only.
 frame_level: true
@@ -19,9 +22,7 @@ n_attn_layers: 1
 n_attn_heads: 4
 
 # 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
-# Off by default: it changes the first operation of the network, so turning it
-# on is an experiment, not a tweak.
-conv2d_stem: false
+conv2d_stem: true
 stem_channels: 16
 stem_layers: 3
 stem_freq_pool: 3

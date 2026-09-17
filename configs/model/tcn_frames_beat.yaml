@@ -1,21 +1,23 @@
 # Dilated TCN, single frame-level beat head. Used by configs/beat_only_train.yaml.
+# Documented in docs/source/configuration.rst.
 _target_: musicality.models.tcn.TCNTempoNet
 arch: TCN-frames-beat
 n_mels: ${n_mels}
 sample_rate: 22050
-channels: 256
 hop_length: ${hop_length}
-n_layers: 8
 dropout: 0.2
+
+# Trunk size — plans/08 section 3.1, tracking tcn_frames.yaml so the two tasks
+# stay comparable. The width evidence there is the position head's; see the docs.
+channels: 32
+n_layers: 9
 
 # Forced to true/1 by BeatModule; listed for documentation only.
 frame_level: true
 n_outputs: 1
 
 # 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
-# Off by default: it changes the first operation of the network, so turning it
-# on is an experiment, not a tweak.
-conv2d_stem: false
+conv2d_stem: true
 stem_channels: 16
 stem_layers: 3
 stem_freq_pool: 3
