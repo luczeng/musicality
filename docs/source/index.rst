@@ -9,7 +9,6 @@ API reference for the ``musicality`` tempo-estimation library.
    workflows
    configuration
    augmentations
-   input_stats
    losses
    metrics
    postprocess

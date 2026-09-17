@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 import pytest
 
+from musicality.trainers.common import fit_input_stats
 from musicality.models.tcn import (
     Conv2dStem,
     PositionalEncoding,
@@ -480,3 +481,86 @@ class TestConv2dStemIntegration:
         out = model(torch.randn(2, 1, N_SAMPLES))
 
         assert out.shape[:2] == (2, 3)
+
+
+# ---------------------------------------------------------------------------
+# Frozen per-band normalisation (fixed_norm) — plans/08 section 2.1 item 4
+# ---------------------------------------------------------------------------
+
+
+class TestFixedNorm:
+    def _model(self, fixed_norm=True):
+        return TCNTempoNet(
+            n_mels=16,
+            hop_length=256,
+            channels=8,
+            n_layers=3,
+            n_outputs=1,
+            frame_level=True,
+            fixed_norm=fixed_norm,
+        )
+
+    def test_buffers_exist_only_when_enabled(self):
+        assert "norm_mean" in dict(self._model().named_buffers())
+        assert "norm_mean" not in dict(self._model(fixed_norm=False).named_buffers())
+
+    def test_fit_input_stats_measures_per_band_statistics(self):
+        model = self._model()
+        wav = torch.randn(4, 1, 8000)
+
+        fit_input_stats(model, [(wav, None)], max_batches=1)
+
+        expected = model.mel(wav).squeeze(1)
+        assert torch.allclose(model.norm_mean, expected.mean(dim=(0, 2)), atol=1e-3)
+        assert torch.allclose(
+            model.norm_std, expected.std(dim=(0, 2), correction=0), atol=1e-3
+        )
+
+    def test_fit_input_stats_skips_models_that_do_not_use_it(self):
+        assert fit_input_stats(self._model(fixed_norm=False), []) is None
+
+    def test_a_crop_normalises_like_the_same_window_in_a_long_input(self):
+        """The whole point: with frozen statistics the network sees the same
+        thing whether audio arrives as a clip or inside a full track."""
+
+        model = self._model().eval()
+        model.norm_mean.fill_(3.0)
+        model.norm_std.fill_(9.0)
+
+        long_wav = torch.randn(1, 1, 256 * 400)
+        crop = long_wav[..., 256 * 50 : 256 * 150]
+
+        with torch.no_grad():
+            from_crop = model(crop)
+            from_long = model(long_wav)[..., 50:150]
+
+        # Interior only: conv padding still differs at the crop's edges.
+        assert torch.allclose(from_crop[..., 30:70], from_long[..., 30:70], atol=1e-4)
+
+    def test_per_tensor_normalisation_does_not_have_that_property(self):
+        """Pins the bug being fixed — if this ever passes, the premise changed."""
+
+        model = self._model(fixed_norm=False).eval()
+        long_wav = torch.cat(
+            [torch.randn(1, 1, 256 * 300) * 0.01, torch.randn(1, 1, 256 * 100)], dim=-1
+        )
+        crop = long_wav[..., 256 * 300 :]
+
+        with torch.no_grad():
+            from_crop = model(crop)
+            from_long = model(long_wav)[..., 300:]
+
+        assert not torch.allclose(
+            from_crop[..., 30:70], from_long[..., 30:70], atol=1e-3
+        )
+
+    def test_statistics_survive_a_state_dict_round_trip(self):
+        trained = self._model()
+        trained.norm_mean.copy_(torch.arange(16).float())
+        trained.norm_std.fill_(4.0)
+
+        restored = self._model()
+        restored.load_state_dict(trained.state_dict())
+
+        assert torch.allclose(restored.norm_mean, trained.norm_mean)
+        assert torch.allclose(restored.norm_std, trained.norm_std)
