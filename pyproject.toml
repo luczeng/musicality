@@ -34,6 +34,30 @@ test = [
     "black",
     "pytest"
 ]
+# Public beat trackers benchmarked by tools/eval_baseline.py. Optional because
+# neither is needed to train, evaluate or annotate: madmom is a source build of
+# an unmaintained PyPI release (0.16.1 does not import on Python 3.10+, hence
+# the git pin), and beat-this pulls its own transformer stack.
+#     uv sync --extra baselines
+baselines = [
+    "madmom",
+    "beat-this",
+]
+
+[tool.uv.sources]
+madmom = { git = "https://github.com/CPJKU/madmom" }
+beat-this = { git = "https://github.com/CPJKU/beat_this" }
+
+# madmom compiles Cython extensions against numpy's C API and declares none of
+# it as a build dependency. `match-runtime` builds against the same numpy the
+# project resolves to, which is what keeps the built extension from raising
+# "numpy.dtype size changed" at import.
+[tool.uv.extra-build-dependencies]
+madmom = [
+    "setuptools",
+    "cython",
+    { requirement = "numpy", match-runtime = true },
+]
 
 [build-system]
 requires = ["setuptools>=61.0"]
