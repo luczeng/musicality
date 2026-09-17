@@ -13,6 +13,7 @@ from musicality.trainers.beat_module import BeatModule
 from musicality.trainers.common import (
     build_beat_dataloaders,
     build_checkpoint_callback,
+    fit_input_stats,
     build_trainer,
 )
 
@@ -32,6 +33,9 @@ def train(cfg: DictConfig) -> None:
     train_loader, val_loader, n_train, n_val = build_beat_dataloaders(cfg)
 
     module = build_module(cfg)
+
+    fit_input_stats(module.model, train_loader)
+
     callbacks = build_callbacks(cfg)
     trainer = build_trainer(cfg, callbacks)
 

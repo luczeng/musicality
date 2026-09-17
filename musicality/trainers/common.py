@@ -2,9 +2,11 @@
 
 import random
 from datetime import datetime
+from itertools import islice
 from pathlib import Path
 
 import lightning as L
+import torch
 from lightning.pytorch.callbacks import ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from omegaconf import DictConfig, OmegaConf
@@ -214,3 +216,46 @@ def build_trainer(cfg: DictConfig, callbacks: list) -> L.Trainer:
         ),
         enable_progress_bar=True,
     )
+
+
+@torch.no_grad()
+def fit_input_stats(model, loader, max_batches: int = 64):
+    """Measure per-band log-mel mean/std and freeze them into *model*.
+
+    A no-op unless the model was built with ``fixed_norm=True``. Call before
+    ``trainer.fit`` so the statistics land in every checkpoint the run writes;
+    they are buffers, so inference restores them with the weights.
+
+    Measured through the training loader with augmentation live, so they
+    describe the distribution actually trained on — which makes them depend on
+    the seed. ``plans/08`` §2.1 item 4 has the measurement that motivates this.
+
+    :param model: A :class:`~musicality.models.tcn.TCNTempoNet`.
+    :param loader: Training dataloader, yielding ``(wav, target)``.
+    :param max_batches: Batches to measure over. 64 at the shipped batch size is
+        ~700k frames per band, far past what a mean and a variance need.
+    :returns: The ``(mean, std)`` installed, or ``None`` if the model does not
+        use fixed normalisation.
+    """
+
+    if not getattr(model, "fixed_norm", False):
+        return None
+
+    total = 0.0
+    sum_x = sum_x2 = 0.0
+
+    for wav, _ in islice(loader, max_batches):
+        x = model.mel(wav).double().squeeze(1)  # (B, n_mels, T)
+
+        sum_x = sum_x + x.sum(dim=(0, 2))
+        sum_x2 = sum_x2 + (x * x).sum(dim=(0, 2))
+        total += x.shape[0] * x.shape[2]
+
+    mean = sum_x / total
+    # clamp: a band that is silent throughout would otherwise divide by ~0.
+    std = ((sum_x2 / total) - mean * mean).clamp_min(1e-6).sqrt()
+
+    model.norm_mean.copy_(mean)
+    model.norm_std.copy_(std)
+
+    return mean.float(), std.float()

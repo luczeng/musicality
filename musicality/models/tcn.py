@@ -276,10 +276,10 @@ class TCNTempoNet(nn.Module):
     collapses to a 1x1 conv. On a 16 s clip at ``hop_length=512`` (689 frames)
     that is any layer past the ninth. See ``plans/08`` §3.1.
 
-    ``conv2d_stem`` is the one structural option here. Off, the first operation
-    is a 1x1 mix over mel bands and no layer ever sees a time-frequency
-    neighbourhood; on, a small :class:`Conv2dStem` runs first. See that class
-    for why it exists.
+    ``conv2d_stem`` is the one structural option here. Off, the first
+    operation is a 1x1 mix over mel bands and no layer ever sees a
+    time-frequency neighbourhood; on, a small :class:`Conv2dStem` runs first.
+    See that class for why it exists.
 
     :param n_mels: Number of mel filterbanks.
     :param sample_rate: Audio sample rate used to build the mel transform.
@@ -326,6 +326,14 @@ class TCNTempoNet(nn.Module):
         all but the last. ``conv2d_stem`` only.
     :param stem_freq_pool: Frequency pooling factor per stem pool.
         ``conv2d_stem`` only.
+    :param fixed_norm: Normalise the log-mel with frozen per-band statistics
+        (``norm_mean``/``norm_std``, filled by
+        :func:`~musicality.trainers.common.fit_input_stats` at the start of
+        training and saved in the checkpoint) instead of statistics taken over
+        the input tensor. Off reproduces what every checkpoint up to v6 was
+        trained with; on removes a train/inference mismatch, since the
+        per-tensor statistics depend on whether the input is a 16 s crop or a
+        whole track. ``plans/08`` §2.1 item 4 has the measurement.
     """
 
     def __init__(
@@ -345,11 +353,14 @@ class TCNTempoNet(nn.Module):
         stem_channels: int = 16,
         stem_layers: int = 3,
         stem_freq_pool: int = 3,
+        fixed_norm: bool = False,
     ):
         super().__init__()
         self.n_outputs = n_outputs
         self.frame_level = frame_level
         self.use_self_attention = use_self_attention
+
+        self.fixed_norm = fixed_norm
 
         self.mel = nn.Sequential(
             T.MelSpectrogram(
@@ -360,6 +371,12 @@ class TCNTempoNet(nn.Module):
             ),
             T.AmplitudeToDB(),
         )
+
+        # Buffers, so they are saved in the checkpoint and restored with the
+        # weights — inference must normalise exactly as training did.
+        if fixed_norm:
+            self.register_buffer("norm_mean", torch.zeros(n_mels))
+            self.register_buffer("norm_std", torch.ones(n_mels))
 
         self.stem = (
             Conv2dStem(
@@ -429,10 +446,16 @@ class TCNTempoNet(nn.Module):
 
         x = self.mel(wav).squeeze(1)  # (B, 1, n_mels, T) → (B, n_mels, T')
 
-        # Per-sample normalisation — stabilises inputs across varying loudness
-        mean = x.mean(dim=(1, 2), keepdim=True)
-        std = x.std(dim=(1, 2), keepdim=True)
-        x = (x - mean) / (std + 1e-6)
+        if self.fixed_norm:
+            # Frozen stats: the same audio normalises identically whether it
+            # arrives as a 16 s crop or inside a whole track.
+            x = (x - self.norm_mean[None, :, None]) / self.norm_std[None, :, None]
+        else:
+            # Per-tensor stats, so a crop and a full track disagree on the same
+            # bars. Kept for checkpoints trained before fixed_norm existed.
+            mean = x.mean(dim=(1, 2), keepdim=True)
+            std = x.std(dim=(1, 2), keepdim=True)
+            x = (x - mean) / (std + 1e-6)
 
         if self.stem is not None:
             x = self.stem(x)  # (B, n_mels, T') → (B, stem.out_channels, T')

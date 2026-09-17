@@ -471,6 +471,35 @@ command line (``model=tcn``). All three are the same dilated TCN trunk
        own receptive field (~23.8 s at the default ``n_layers: 9``) to have any
        long-range context to draw on — which a 16 s crop no longer is.
 
+``fixed_norm`` — ``true``
+    Normalise the log-mel with frozen per-band statistics instead of statistics
+    taken over the input tensor.
+
+    Off, the model takes one mean and one std over *both* axes of whatever it is
+    handed. Training passes a 16 s crop; ``run_inference`` passes a whole track.
+    The same bars therefore arrive at a different scale depending on what
+    surrounds them. Measured over 100 tracks, the shift is 0.04 sigma on gtzan
+    and 0.33 (worst 1.61) on rwc_classical — the corpus where every tracker
+    collapses. ``plans/08_rethinking_the_approach.md`` §2.1 item 4 has the full
+    table.
+
+    On, one mean and std per mel band are measured once at the start of training
+    by :func:`~musicality.trainers.common.fit_input_stats` and stored as
+    buffers, so they travel in the checkpoint and inference normalises exactly
+    as training did. The window dependence is then gone by construction —
+    verified on real audio, where a 16 s crop's network input is bit-identical
+    to the same window read out of a 60 s pass.
+
+    Two caveats. The model no longer adapts to a recording's overall level, so
+    more rests on gain augmentation (±6 dB). And this fixes only the
+    normalisation term: convolution padding is a separate train/inference
+    difference, and at ``n_layers: 9`` the receptive field exceeds the crop, so
+    a whole-track pass is still not equivalent to a crop end to end.
+
+    Default-off in the code so checkpoints predating it reconstruct their own
+    behaviour; on in both frame-level configs. ``tcn.yaml`` (tempo) keeps it
+    off, on the same reasoning as the trunk size.
+
 ``conv2d_stem`` — ``true``
     Runs a :class:`~musicality.models.tcn.Conv2dStem` between the log-mel and
     the dilated trunk instead of projecting the raw bands straight through a
