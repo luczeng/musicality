@@ -264,9 +264,17 @@ Data
 
 ``data.sample_rate`` — ``22050``, ``data.duration`` — ``16.0``
     Audio sample rate, and clip length in seconds. The clip length interacts
-    with the model's receptive field: the TCN trunk reaches
-    ``1 + (k-1)(2^n - 1)`` = 511 frames ≈ 11.87 s at the default depth, so
-    there is little context beyond it in a 16 s clip.
+    with the model's receptive field in *both* directions. The trunk reaches
+    ``1 + (kernel_size - 1) * sum(dilations)`` frames — 1023 frames ≈ 23.8 s at
+    the default ``n_layers: 9``, so the receptive field now exceeds the 16 s
+    crop rather than falling short of it as it did at eight layers (511 frames
+    ≈ 11.9 s). That is the intended state: edge frames seeing some padding is
+    normal. The hard limit is per layer, not per stack — a layer whose *own*
+    dilation exceeds the crop has both off-centre taps in padding at every
+    frame and degenerates into a 1x1 convolution. At ``n_layers: 9`` the
+    deepest dilation is 256 frames (5.9 s), comfortably inside a 16 s crop;
+    ``n_layers: 11`` would put two layers past it and silently waste them. See
+    ``plans/08_rethinking_the_approach.md`` §3.1.
 
 ``data.random_crop`` — ``true``
     Train only: draw a random offset window per track on each access. The
@@ -399,6 +407,52 @@ command line (``model=tcn``). All three are the same dilated TCN trunk
     Frame-level, 1 output. Used by ``beat_only_train.yaml``. ``frame_level`` and
     ``n_outputs`` are likewise forced, to ``True``/``1``, by ``BeatModule``.
 
+``channels`` — ``32`` / ``n_layers`` — ``9``
+    Trunk width and depth. Both frame-level backbones moved here from
+    ``256``/``8`` on 2026-09-17; ``tcn.yaml`` (tempo) did **not** — see below.
+
+    **Width.** ``channels`` is quadratic in parameters, and 256 was buying
+    memorisation rather than accuracy. Three measurements agree:
+    ``plans/07_beat_phase_v6_and_next_moves.md`` §1.2 shows the train/val gap on
+    ``pos_acc`` widening 0.026 → 0.194 while the gap on ``f_beat`` barely moves
+    (0.024 → 0.038); a training run reached 0.007 half-cycle confusion on train
+    against 0.130 on val; and at 256 channels the model held 1.61 M parameters
+    against 1.28 M labelled frames per epoch — more parameters than data points.
+    At ``32`` the same backbone is 40,773 parameters, a 40x cut, still above the
+    tens-of-thousands the reference convolutional beat trackers use.
+
+    **Depth.** ``n_layers`` is linear in parameters and doubles the receptive
+    field each time, so eight layers reached 11.9 s — less than the 16 s crop
+    being trained on. Nine reaches 23.8 s and every layer stays fully live (see
+    ``data.duration``). Nine is the ceiling for a 16 s crop, not a free
+    parameter: ten is half-wasted and eleven is two dead layers. Going deeper
+    needs a repeating dilation schedule rather than a longer crop —
+    ``plans/08_rethinking_the_approach.md`` §3.1 specifies it; it is not
+    implemented.
+
+    .. note::
+
+       Existing checkpoints are unaffected. ``musicality.inference.load_module``
+       reads a checkpoint's own saved ``hyper_parameters`` and never consults
+       these files, so ``checkpoint_v6.ckpt`` and friends still load and
+       evaluate at 256x8. Only new training runs change shape.
+
+    .. warning::
+
+       A run at these defaults changes **three** things at once against v6 —
+       width, depth, and the ``conv2d_stem`` below — so its result attributes to
+       none of them individually. To separate them, override one at a time:
+       ``model.channels=256 model.n_layers=8`` isolates the stem,
+       ``model.conv2d_stem=false`` isolates the resize, and
+       ``model.channels=64`` / ``model.channels=16`` walk the width ladder.
+
+``tcn.yaml`` is deliberately left at ``256``/``8``
+    The evidence above is entirely beat-phase: a frame-level position head, its
+    own overfitting signature, and a receptive-field argument that assumes
+    per-frame outputs. Tempo regression pools globally over time, so neither the
+    depth argument nor the measured train/val gap transfers. Resizing it would
+    be extrapolation from another task's data.
+
 ``use_self_attention`` — ``false``
     Adds a self-attention head over the phase channels only; the beat channel
     always reads straight off the trunk. ``n_attn_layers`` and ``n_attn_heads``
@@ -414,9 +468,10 @@ command line (``model=tcn``). All three are the same dilated TCN trunk
        encoding is actively harmful under ``random_crop``, the softmax flattens
        at full-track length, post-LN sits on an unnormalized input, and there is
        no dropout inside the block. It also needs clips longer than the trunk's
-       own receptive field (~11.9 s) to have any long-range context to draw on.
+       own receptive field (~23.8 s at the default ``n_layers: 9``) to have any
+       long-range context to draw on — which a 16 s crop no longer is.
 
-``conv2d_stem`` — ``false``
+``conv2d_stem`` — ``true``
     Runs a :class:`~musicality.models.tcn.Conv2dStem` between the log-mel and
     the dilated trunk instead of projecting the raw bands straight through a
     1x1 convolution.
@@ -442,14 +497,18 @@ command line (``model=tcn``). All three are the same dilated TCN trunk
     ``f_beat`` / 0.818 ``position_acc`` on gtzan with *no decoder at all*, so its
     advantage lives in the front end and trunk.
 
-    **Cost.** At ``n_mels=128, channels=256``: 1.613 M parameters to 1.643 M.
-    The stem itself is 4.9 k; the rest is ``input_proj`` widening from 128 to
-    224 inputs.
+    **Cost.** At the current ``channels: 32``, 32,805 parameters to 40,773 — the
+    stem itself is 4.9 k and the rest is ``input_proj`` widening from 128 to 224
+    inputs. It was measured at the old ``channels: 256`` as 1.613 M to 1.643 M;
+    the absolute cost is the same, which is why it *composes* with the resize
+    above rather than competing with it.
 
-    **Off by default on purpose.** It changes the first operation of the
-    network, so enabling it is an experiment, not a tweak — and default-off is
-    what lets a checkpoint trained before the stem existed load into identical
-    parameter shapes.
+    **On by default since 2026-09-17**, for the frame-level backbones only.
+    ``tcn.yaml`` (tempo) keeps it off, on the same reasoning as the trunk size.
+    Turning it off is still a supported comparison
+    (``model.conv2d_stem=false``), and checkpoints trained before the stem
+    existed load into identical parameter shapes either way, since inference
+    reads their saved hyperparameters rather than this file.
 
 ``stem_channels`` — ``16`` / ``stem_layers`` — ``3`` / ``stem_freq_pool`` — ``3``
     Read only when ``conv2d_stem`` is on. ``stem_layers`` ``Conv2d`` blocks, with

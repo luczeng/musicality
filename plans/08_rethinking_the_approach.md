@@ -98,15 +98,24 @@ whether 0.505 is bad or whether jazz trio downbeats are simply hard.
 <summary><b>1.2 — The model is ~150× the reference size and has 8× less context</b></summary>
 
 Parameter counts and receptive fields for `TCNTempoNet`, measured by
-instantiating it (`3 × (2^n_layers − 1)` frames at 23.2 ms/frame):
+instantiating it and by back-propagating from one output frame (23.2 ms/frame):
 
 | config | params | receptive field |
 |---|---|---|
-| **current** (256 ch × 8 layers) | **1.613 M** | **17.8 s** |
-| v5, with attention | 2.403 M | 17.8 s |
-| 64 ch × 8 | 0.108 M | 17.8 s |
-| 32 ch × 11 | 0.039 M | 142.6 s |
-| **16 ch × 11** (madmom-TCN-like) | **0.011 M** | **142.6 s** |
+| **current** (256 ch × 8 layers) | **1.613 M** | **11.9 s** |
+| v5, with attention | 2.403 M | 11.9 s |
+| 64 ch × 8 | 0.108 M | 11.9 s |
+| 32 ch × 11 | 0.039 M | 95.1 s |
+| **16 ch × 11** (madmom-TCN-like) | **0.011 M** | **95.1 s** |
+
+> **Correction (2026-09-17).** This table first quoted 17.8 s and 142.6 s, from
+> the `3 × (2^n_layers − 1)` formula in `TCNTempoNet`'s docstring. That formula
+> is a loose upper bound, ~1.5× the truth; the real diameter is
+> `1 + (kernel_size − 1) × Σ dilations` = `1 + 2 × 255` = 511 frames = **11.9 s**
+> for eight layers. `docs/beat_phase_context_ideas.md` established this before
+> this document existed and the docstring was never fixed; §3.1 fixes both. The
+> error flattered the current model — it has *less* context than §1.2 claimed,
+> which strengthens everything below.
 
 The reference convolutional beat tracker in the literature is in the tens of
 thousands of parameters and reaches beat F in the low 0.90s on ballroom. We have
@@ -114,12 +123,14 @@ thousands of parameters and reaches beat F in the low 0.90s on ballroom. We have
 
 The shape is backwards in both directions at once: wide layers spend parameters
 on memorisation (`plans/07` §1.2 measured the position head's train/val gap
-widening to 0.194), while too few layers starve the model of context. Thin and
-deep fixes both with one config change — and note what 142 s buys musically: a
-jazz standard is a 32-bar form (≈40 s at jtd's median 185 BPM) and a blues is 12
-bars (≈15 s). **A 142 s receptive field can see the form repeat; 17.8 s cannot.**
+widening to 0.194), while too few layers starve the model of context — and note
+what depth buys musically: a jazz standard is a 32-bar form (≈40 s at jtd's
+median 185 BPM) and a blues is 12 bars (≈15 s). **A 95 s receptive field can see
+the form repeat; 11.9 s cannot** — it cannot even hold one chorus.
 `plans/07` §2.4's unexplained jtd anchor failure and our context budget may well
-be the same fact.
+be the same fact. §3.1 is where that stops being a free lunch: a receptive field
+is only real if the input is at least that long, and this project is committed
+to *shorter* inputs.
 
 </details>
 
@@ -289,11 +300,14 @@ existing trunk:
 | `Conv1d(224, channels, 1)` | `(B, channels, T)` | the existing `input_proj`, kept as the adapter |
 | existing dilated trunk | `(B, channels, T)` | unchanged |
 
-**Implemented** as `musicality.models.tcn.Conv2dStem`, off by default behind
-`conv2d_stem:` in `configs/model/*.yaml`. Measured cost at `n_mels=128,
-channels=256`: **1.613 M parameters to 1.643 M** — the stem itself is 4.9 k and
-the rest is `input_proj` widening from 128 to 224 inputs. (This block previously
-estimated "~10 k"; that was the stem alone and ignored the wider projection.)
+**Implemented** as `musicality.models.tcn.Conv2dStem`, and **on by default**
+since 2026-09-17 in the two frame-level backbones (`tcn_frames.yaml`,
+`tcn_frames_beat.yaml`); `tcn.yaml` (tempo) keeps it off, since none of the
+evidence here is from that task. Measured cost at the new default
+`channels=32`: **32,805 parameters to 40,773**; at the old `channels=256` it was
+1.613 M to 1.643 M. Either way the stem itself is 4.9 k and the rest is
+`input_proj` widening from 128 to 224 inputs. (This block previously estimated
+"~10 k"; that was the stem alone and ignored the wider projection.)
 Negligible beside the trunk either way, and it *composes* with §3.1's
 shrink-and-deepen rather than competing for the budget — shrinking `channels`
 shrinks the projection too. Two rules: pool frequency aggressively, and **never
@@ -345,15 +359,244 @@ Both target downbeats specifically, which §1.1 says is where the gap is:
 ## 3. Architecture
 
 <details>
-<summary><b>3.1 — Shrink it, deepen it, and feed it longer crops</b></summary>
+<summary><b>3.1 — Shrink it, and deepen it only as far as the audio allows</b></summary>
 
-The one-line version of §1.2: go to 16–32 channels and 11 layers, and train on
-60–90 s crops so the receptive field has something to look at. This attacks
-capacity and context simultaneously and is a config change, not a rewrite.
+*Rewritten 2026-09-17. This block used to read, in full: "go to 16–32 channels
+and 11 layers, and train on 60–90 s crops so the receptive field has something
+to look at… a config change, not a rewrite." The shrink half survives intact and
+is better evidenced than before. The deepen half does not: 11 layers is not a
+config change, it is a config change plus three layers that provably compute
+nothing, and the 60–90 s crops it needs are the opposite of where the project is
+going. What follows re-derives it.*
 
-Expect it to *also* change what the regularisation discussion in `plans/07` §4.5
-is for: label smoothing and SpecAugment are treatments for a model that is too
-big. Fix the size first, then see what is left.
+**What the code actually does.** The trunk is eight residual blocks with
+exponentially growing dilation:
+
+```python
+self.layers = nn.ModuleList([
+    nn.Sequential(
+        nn.Conv1d(channels, channels, kernel_size=3, padding=2**i, dilation=2**i),
+        nn.BatchNorm1d(channels),
+        nn.GELU(),
+    )
+    for i in range(n_layers)          # n_layers=8, channels=256
+])
+...
+for layer in self.layers:
+    x = x + layer(x)
+```
+
+`channels=256`, `n_layers=8`. Dilations 1, 2, 4, …, 128. Every block is the same
+width, so the parameter count is `n_layers × (3 × channels² + …)` — quadratic in
+width, linear in depth. That single fact is why the two halves of this section
+pull in opposite directions on cost.
+
+---
+
+### Motivation 1 — the width is being spent on memorisation
+
+Three independent measurements say the same thing.
+
+1. **The fit is already solved; generalisation is not.** The step-3 softmax run
+   reached a *training* half-cycle confusion of 0.007 against 0.130 on
+   validation. Whatever is wrong, it is not that the model lacks the capacity to
+   represent the answer — it represents it almost perfectly on data it has seen.
+2. **The divergence is the position head specifically.** `plans/07` §1.2: between
+   epochs 43 and 199 the train/val gap on `pos_acc` goes 0.026 → **0.194**, while
+   the gap on `f_beat` goes 0.024 → 0.038. Train loss falls 28% after the best
+   epoch while val loss rises 11%. That is a capacity surplus being spent, and it
+   is being spent by the head we care about.
+3. **There are more parameters than there is labelled data.** 1854 training
+   tracks × 689-frame crops = **1.28 M labelled frames per epoch**, against
+   **1.61 M parameters** — 1.26 parameters for every frame the model sees in an
+   epoch, and 870 parameters per training track. The reference convolutional beat
+   tracker in the literature is in the tens of thousands of parameters total.
+
+The regularisation discussion in `plans/07` §4.5 — label smoothing, SpecAugment —
+is a treatment for this. Fix the size first and re-ask what is left; it is
+cheaper to not create the problem.
+
+**What shrinking costs.** Nothing measurable in wall-clock: width is quadratic in
+parameters but the trunk is tiny either way beside the mel transform and the data
+loader. The risk is the opposite one — that 16 channels is now too *few* once the
+§2.1 stem is feeding it 224 richer inputs instead of 128 raw mel bands. Hence the
+ladder in the implementation table rather than a jump straight to the floor.
+
+---
+
+### Motivation 2 — the depth is short on context, and the fix is capped
+
+Eight layers is a **511-frame = 11.9 s** receptive field (§1.2's correction).
+That is less than the 16 s crop the model is trained on, and far less than one
+32-bar jazz chorus. Nothing in the current model can compare bar 1 to bar 9.
+
+The obvious move is more layers — each one doubles the reach. The reason it is
+not obvious:
+
+> **A receptive field is only real if the input is at least that long.**
+
+Every `Conv1d` in the trunk uses `padding=2**i`, so a layer whose dilation
+exceeds the input length has *both* off-centre taps in zero padding at every
+frame, and collapses to a 1×1 convolution. Measured directly — same layer, run
+twice, second time with the two off-centre taps zeroed:
+
+| layer | dilation | reach | output identical to centre-tap-only, on a 16 s clip? | frames with a real off-centre tap |
+|---|---|---|---|---|
+| 8 | 256 | ±5.9 s | no | 689/689 (100%) |
+| 9 | 512 | ±11.9 s | no | 354/689 (51%) |
+| 10 | 1024 | ±23.8 s | **yes** | 0/689 (**0%**) |
+| 11 | 2048 | ±47.6 s | **yes** | 0/689 (**0%**) |
+
+So "16–32 channels and 11 layers" on today's 16 s crops is nine working layers
+plus two that are provably 1×1 convolutions with a BatchNorm and a GELU. The
+nominal 95 s receptive field would be **entirely fictional at training time**.
+
+Worse, it is fictional *asymmetrically*. `musicality.inference.run_inference`
+passes the whole track through in one forward call, so at evaluation those same
+layers suddenly receive real audio spanning ±24 s and ±48 s — weights trained
+only against zero padding, applied to music. That is a second train/inference
+mismatch sitting beside the normalisation one in §2.1 #4, and it would be
+introduced *by this change*, not inherited.
+
+**How deep can we actually go?** The deepest layer that is ≥99% live, by input
+duration:
+
+| input | hop 512 (43 fps, today) | hop 256 (86 fps, §2.2) |
+|---|---|---|
+| 8 s | 8 layers (RF 11.9 s) | 9 layers (RF 11.9 s) |
+| 15 s | **9 layers** (RF 23.8 s) | **10 layers** (RF 23.8 s) |
+| 30 s | 10 layers (RF 47.5 s) | 11 layers (RF 47.5 s) |
+| 60 s | 11 layers (RF 95.1 s) | 12 layers (RF 95.1 s) |
+
+Two things fall out of that table.
+
+- **The standing constraint sets the ceiling.** If the deployment target is 15 s
+  of audio, nine layers at hop 512 — or ten at hop 256 — is the most the input
+  can support, and the resulting 23.8 s receptive field already exceeds the
+  audio. Everything past that is parameters trained on padding. The "60–90 s
+  crops" recommendation this block used to make is not merely disfavoured by the
+  constraint; under it the extra layers cannot be trained at all.
+- **§2.2 pays for a layer.** Halving the hop doubles the frames per second, so
+  the same audio duration supports one more dilated layer at the same receptive
+  field *in seconds*. Doing §2.2 first makes §3.1's depth budget cheaper, which
+  is an argument for keeping them adjacent in §7.
+
+---
+
+### Motivation 3 — depth buys two different things, and we conflated them
+
+Dilation buys **context**; layer count buys **abstraction**. Stacking
+`1, 2, 4, …` couples them, so "deeper" has meant "further" and the ceiling above
+looks like a ceiling on depth. It is not — it is a ceiling on *dilation*.
+
+Once dilation saturates the input, additional depth is still worth having for
+the other reason: more nonlinear composition over the same window, which is what
+turns "energy rose here" into "this is beat 3 of a bar in swung 4/4". Cycling the
+dilation schedule buys it. The quantity that decides whether a layer is alive is
+**its own dilation**, not the stack's total reach — so repeating the schedule
+caps the former while the latter grows only linearly:
+
+| schedule | layers | max dilation | RF | dead on 15 s |
+|---|---|---|---|---|
+| plain `1…256` | 9 | 256 (5.9 s) | 23.8 s | 0 |
+| plain `1…131072` | 18 | 131072 (50 min) | — | **8, plus 1 half-dead** |
+| **cycled `1…256` ×2** | **18** | **256 (5.9 s)** | **47.5 s** | **0** |
+
+Doubling the depth the naive way kills half the stack; doubling it by cycling
+costs nothing but parameters, and those are linear in depth. Note the third
+row's RF still exceeds 15 s — that is fine and is not the same failure. A total
+reach longer than the input only means edge frames see some padding, which is
+always true to a degree; a *layer* whose own dilation exceeds the input is
+exactly a 1×1 convolution, which is a different and total loss.
+
+This is also what the field does. madmom's TCN and Beat This!'s transformer both
+get their depth at bounded context; neither relies on a receptive field longer
+than the clip it was trained on.
+
+---
+
+### Implementation
+
+**Step 1 — shrink. Config only, no code. *Applied 2026-09-17.***
+`configs/model/tcn_frames.yaml` and `tcn_frames_beat.yaml` now read
+`channels: 32`, `n_layers: 9`, `conv2d_stem: true` — 40,773 parameters, verified
+by composing the config and running a batch through it. `tcn.yaml` (tempo) was
+left at 256×8: none of the evidence below is from that task. Measured, at
+`n_outputs=5` (`group_size: 4`) and with §2.1's stem where noted:
+
+| config | params | vs. now | RF | params/track |
+|---|---|---|---|---|
+| **current** (256 ch × 8) | 1,613,317 | 1.00× | 11.9 s | 870 |
+| current + stem | 1,642,789 | 1.02× | 11.9 s | 886 |
+| 64 ch × 9 | 120,901 | 0.07× | 23.8 s | 65 |
+| **32 ch × 9 + stem** | **40,773** | **0.03×** | **23.8 s** | **22** |
+| 16 ch × 9 + stem | 15,925 | 0.01× | 23.8 s | 9 |
+| 32 ch × 10 + stem, hop 256 | 43,941 | 0.03× | 23.8 s | 24 |
+
+**32 ch × 9 + stem is the recommended first point** and is now the default: a
+40× parameter cut, twice the context, still above the literature's reference
+size, and it composes with §2.1 (the stem shrinks with `channels`, since most of
+its cost is `input_proj`). Then run the ladder 64 → 32 → 16 and stop where
+validation stops improving.
+
+**The default changes three things at once against v6** — width, depth and the
+stem — so the first run at it attributes to none of them individually. Separate
+them with Hydra overrides rather than by editing the file:
+`model.channels=256 model.n_layers=8` isolates the stem,
+`model.conv2d_stem=false` isolates the resize, `model.channels=64` and
+`model.channels=16` walk the width ladder. Existing checkpoints are untouched:
+`musicality.inference.load_module` rebuilds from a checkpoint's own saved
+hyperparameters, verified by loading `checkpoint_v6.ckpt` after the change and
+getting 256 channels, 8 layers, no stem, 1,613,317 parameters.
+
+**Step 2 — cycle the dilations. Small code change.** `TCNTempoNet.__init__`
+currently hard-codes `dilation=2**i`. Add one parameter:
+
+```python
+def __init__(self, ..., n_layers: int = 8, dilation_cycle: int | None = None):
+    ...
+    dilations = [2 ** (i % dilation_cycle if dilation_cycle else i)
+                 for i in range(n_layers)]
+    self.layers = nn.ModuleList([
+        nn.Sequential(
+            nn.Conv1d(channels, channels, kernel_size=3, padding=d, dilation=d),
+            nn.BatchNorm1d(channels),
+            nn.GELU(),
+        )
+        for d in dilations
+    ])
+```
+
+`dilation_cycle=None` reproduces today's schedule exactly, so existing
+checkpoints keep loading. `n_layers=18, dilation_cycle=9` is the cycled variant
+above. One thing to watch: `padding` must track the per-layer dilation — it is
+written `padding=2**i` today, which silently desynchronises the moment the
+dilation stops being `2**i`, and a wrong padding changes the output length
+rather than raising. `TCNTempoNet`'s docstring has already been corrected to
+`1 + (kernel_size − 1) × Σ dilations`, which stays right under any schedule.
+
+**Step 3 — evaluate at the length we actually care about.** Every configuration
+here gets scored at **15 s, 30 s and full track**, not full track only.
+`tools/eval_beat.py` runs on whole tracks by design, so this needs a duration
+flag or a pre-cropped split; the alternative is shipping a model whose numbers
+exist only on inputs the product will never have. This is the measurement the
+standing constraint implies and the one nothing in this repo currently makes.
+
+**What to hold fixed.** The crop length (`data.duration: 16.0`), the loss, the
+decoder and the postprocessing knobs — the last of these because
+`project_eval_beat_stale_knobs` shows re-sweeping them alone moves `f_beat` by
++0.036, which would swamp the effect being measured. Sweep after, not during.
+
+**Cost.** Step 1 is one training run per rung, three rungs. Step 2 is ~20 lines
+plus tests. Step 3 is the only part that needs new tooling.
+
+**What would falsify it.** If 32 ch × 9 does not close most of the 0.194
+train/val position gap, then the capacity story in §1.2 is wrong and the problem
+is the data (§5) or the targets (§4.1) — and the cheap regularisation in
+`plans/07` §4.5 goes back on the table. If it closes the gap but `val/pos_acc`
+does not move, capacity was never the binding constraint and §5 is where the
+remaining error lives. Both outcomes are informative, which is the argument for
+running the ladder before anything more elaborate.
 
 </details>
 
@@ -612,23 +855,36 @@ step 4 and the front end at step 3; §1.3 reversed both.*
    literature numbers now that measured ones are available. **Half a day, and
    it is the only step that is pure measurement.**
 
-2. **§2.1 — add a 2D convolutional stem** with frequency pooling. Promoted from
+2. **§2.1 — add a 2D convolutional stem** with frequency pooling — *built, and
+   on by default since 2026-09-17; not yet trained.* Promoted from
    step 3 to the first thing built, because §1.3 removed the competing
    explanation: Beat This! reaches 0.935 `f_beat` / 0.818 `position_acc` on
    gtzan with *no decoder*, so its advantage is in the front end and trunk.
-   ~10 k parameters, composes with step 3, and §2.1 states what would falsify
-   it in one training run.
+   +8 k parameters at the new default width (32,805 → 40,773), composes with
+   step 3, and §2.1 states what would falsify it in one training run.
 
-3. **§3.1 — shrink and deepen** (16–32 channels, 11 layers), trained on 60 s
-   crops but **evaluated at 15 s and 30 s as well**, per the constraint above.
-   Still expected to be a large gain and still one config change; it is second
-   rather than first only because step 2 is cheaper and better evidenced.
+3. **§3.1 — shrink, and deepen to the ceiling the input sets** — *the config
+   change is applied; the runs are not.* `tcn_frames.yaml` and
+   `tcn_frames_beat.yaml` now read 32 channels, 9 layers, stem on, on today's
+   16 s crops. What remains is to train it, **evaluated at 15 s and 30 s as
+   well** per the constraint above, and to walk the ladder in §3.1 rather than
+   trusting the first rung. §3.1 was rewritten on 2026-09-17: the shrink is a
+   40× parameter cut and a pure config change, but the "11 layers on 60–90 s
+   crops" this step used to call for is measurably three layers that only ever
+   convolve zero padding. Depth past nine layers needs cycled dilations (a
+   ~20-line change), not a longer crop.
+
+   Note that steps 2 and 3 are now folded into one default. That was a
+   deliberate trade — a single config carrying the recommendation, with the
+   ablations available as overrides — but it means the *first* run measures the
+   combination, not either part.
 
 4. **§2.2 + the normalisation fix.** Move to 50–100 fps (hop 256), and fix the
    whole-input `mean`/`std` in `TCNTempoNet.forward` that makes the same eight
    bars normalise differently in training (16 s clip) and at inference (full
    track). The second of those is a few lines and is the cheapest item in this
-   document.
+   document. Worth doing *before* step 3 if the order is free: doubling the frame
+   rate buys one more live dilated layer at the same audio duration (§3.1).
 
 5. **§4.1 — shift-tolerant BCE**, plus a dedicated downbeat activation. Beat
    This!'s own ablations single this out, and §1.3 is consistent with it: their
