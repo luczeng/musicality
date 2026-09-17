@@ -52,6 +52,8 @@ uv add <package>
 ### Models (`musicality/models/`)
 
 - `tcn.py` — Dilated TCN (`TCNTempoNet`), the default architecture. Log-mel → residual dilated convolutions → global pool → regression head.
+  Optionally a `Conv2dStem` first (`conv2d_stem: true`): 2D convolutions with frequency-only pooling, so the model sees a time-frequency
+  neighbourhood before the band axis is collapsed. Off by default — see `plans/08` §2.1 and `docs/source/configuration.rst`.
 - `tempo_net.py` — Alternative tempo model.
 - `huggingface.py` — Wraps HuggingFace `transformers` models (e.g. wav2vec2) for tempo estimation.
 - `torch_audio.py` — Wraps `torchaudio` pretrained models.

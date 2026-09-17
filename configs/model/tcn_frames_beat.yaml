@@ -11,3 +11,11 @@ dropout: 0.2
 # Forced to true/1 by BeatModule; listed for documentation only.
 frame_level: true
 n_outputs: 1
+
+# 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
+# Off by default: it changes the first operation of the network, so turning it
+# on is an experiment, not a tweak.
+conv2d_stem: false
+stem_channels: 16
+stem_layers: 3
+stem_freq_pool: 3

@@ -115,6 +115,132 @@ class SelfAttentionBlock(nn.Module):
         return h
 
 
+class Conv2dStem(nn.Module):
+    """Local time-frequency processing in front of the 1D trunk.
+
+    ``TCNTempoNet``'s first operation used to be
+    ``Conv1d(n_mels, channels, kernel_size=1)``: at every frame, a fixed linear
+    mixture of all mel bands, after which the band axis is gone and every
+    remaining layer convolves over time only. Nothing in the model ever saw a
+    time-frequency neighbourhood.
+
+    That is the wrong first operation for beat tracking, for two reasons
+    (``plans/08_rethinking_the_approach.md`` §2.1 has the long version):
+
+    - **A 1x1 mixer is frequency-absolute; onsets are frequency-relative.** It
+      learns one weight per band, applied identically at every frame — so it can
+      learn "these bands matter", but not "energy rose in *whichever* band it
+      rose in". A kick drum and a walking bass note are the same event shape at
+      different absolute frequencies, and a mixer must spend separate output
+      channels on each register to detect the same thing twice. A ``Conv2d``
+      shares one kernel across frequency and gets that equivariance for free,
+      which is the reason to put audio on a log-frequency axis at all.
+    - **Mixing before differencing lets onsets cancel.** Onset strength is a
+      difference across time *within* a band. With the bands summed first, a
+      band rising and another falling by the same weighted amount produces a
+      flat mixture, and the event is gone before any layer could see it. That is
+      exactly a harmonic change with no percussive attack — the dominant
+      downbeat cue wherever no drum marks the bar.
+
+    Every published tracker does local spectro-temporal processing first
+    (madmom's TCN opens with 3x3 convolutions and frequency max-pooling; Beat
+    This! uses frequency-wise partial attention), and both reach their numbers
+    with a weak decoder or none at all, which is what points at the front end.
+
+    Shape, with the defaults and ``n_mels=128``::
+
+        (B, 128, T)                 log-mel, as the trunk used to receive it
+        (B, 1, 128, T)              band axis promoted to a spatial axis
+        (B, 16, 128, T)             Conv2d 3x3 + BN + GELU
+        (B, 16,  42, T)             MaxPool2d((3, 1)) — frequency only
+        (B, 16,  42, T)             Conv2d 3x3 + BN + GELU
+        (B, 16,  14, T)             MaxPool2d((3, 1))
+        (B, 16,  14, T)             Conv2d 3x3 + BN + GELU
+        (B, 224, T)                 frequency folded into channels
+
+    **Time is never pooled.** The frame rate is the output resolution, and the
+    trunk's dilations are what buy context — pooling time here would spend
+    precision the 70 ms evaluation tolerance cannot afford. The 3x3 kernels do
+    widen the receptive field by ``2 * n_layers`` frames, which is negligible
+    beside the trunk's ``3 * (2 ** n_layers - 1)``.
+
+    :param n_mels: Number of input mel bands.
+    :param channels: Feature maps per 2D layer. 16 is madmom-scale; the stem is
+        meant to be cheap next to the trunk, not to hold capacity.
+    :param n_layers: Number of ``Conv2d`` blocks. Frequency is pooled after
+        every block *except the last*, so ``n_layers=3`` pools twice.
+    :param freq_pool: Frequency pooling factor per pool.
+    :raises ValueError: If *n_layers* is below 1, or if the pooling schedule
+        would leave fewer than one frequency bin.
+    """
+
+    def __init__(
+        self,
+        n_mels: int,
+        channels: int = 16,
+        n_layers: int = 3,
+        freq_pool: int = 3,
+    ):
+        super().__init__()
+
+        if n_layers < 1:
+            raise ValueError(f"n_layers must be >= 1, got {n_layers}")
+        if freq_pool < 1:
+            raise ValueError(f"freq_pool must be >= 1, got {freq_pool}")
+
+        blocks = []
+        in_channels = 1
+        n_freq = n_mels
+
+        for layer in range(n_layers):
+            blocks += [
+                nn.Conv2d(in_channels, channels, kernel_size=3, padding=1),
+                nn.BatchNorm2d(channels),
+                nn.GELU(),
+            ]
+            in_channels = channels
+
+            # No pool after the last block: the frequency axis is about to be
+            # folded into channels anyway, and one more pool would throw away
+            # resolution the trunk could have used.
+            if layer < n_layers - 1:
+                blocks.append(
+                    nn.MaxPool2d(kernel_size=(freq_pool, 1), stride=(freq_pool, 1))
+                )
+                n_freq //= freq_pool
+
+                if n_freq < 1:
+                    raise ValueError(
+                        f"Frequency axis collapses to {n_freq} bins: n_mels={n_mels} "
+                        f"cannot survive {n_layers - 1} pool(s) of {freq_pool}. "
+                        "Lower n_layers/freq_pool or raise n_mels."
+                    )
+
+        self.blocks = nn.Sequential(*blocks)
+
+        #: Frequency bins surviving the pooling schedule.
+        self.n_freq = n_freq
+
+        #: Channel count the trunk's ``input_proj`` must expect.
+        self.out_channels = channels * n_freq
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        :param x: Normalised log-mel, shape ``(B, n_mels, T)``.
+        :returns: ``(B, out_channels, T)`` — *T* unchanged.
+        """
+
+        x = self.blocks(x.unsqueeze(1))  # (B, 1, n_mels, T) → (B, C, n_freq, T)
+
+        batch, channels, n_freq, frames = x.shape
+
+        # Fold frequency into channels rather than pooling it away: the trunk is
+        # 1D, and which band a feature fired in is information the bar-position
+        # head has no other way to recover. `reshape`, not `view` — MaxPool2d's
+        # output is not guaranteed contiguous.
+        return x.reshape(batch, channels * n_freq, frames)
+
+
 class TCNTempoNet(nn.Module):
     """Dilated TCN for tempo regression (Davies & Böck, 2019), or per-frame beat-phase detection.
 
@@ -135,7 +261,14 @@ class TCNTempoNet(nn.Module):
       mode's convention of returning raw logits.
 
     Receptive field ≈ kernel_size × (2^n_layers − 1) frames — the same trunk is
-    shared between both modes, so this is unaffected by ``frame_level``.
+    shared between both modes, so this is unaffected by ``frame_level``. A
+    ``conv2d_stem`` adds ``2 × stem_layers`` frames to that, which is noise
+    beside it.
+
+    ``conv2d_stem`` is the one structural option here. Off, the first operation
+    is a 1x1 mix over mel bands and no layer ever sees a time-frequency
+    neighbourhood; on, a small :class:`Conv2dStem` runs first. See that class
+    for why it exists.
 
     :param n_mels: Number of mel filterbanks.
     :param sample_rate: Audio sample rate used to build the mel transform.
@@ -168,6 +301,17 @@ class TCNTempoNet(nn.Module):
         ``phase_head``. Only used when ``use_self_attention=True``.
     :param n_attn_heads: Attention heads per :class:`SelfAttentionBlock`. Only
         used when ``use_self_attention=True``.
+    :param conv2d_stem: Run a :class:`Conv2dStem` between the mel and the trunk
+        instead of projecting the raw bands. Off by default, so existing
+        checkpoints load into identical parameter shapes. Measured cost at
+        ``n_mels=128, channels=256``: 1.613 M parameters to 1.643 M — the stem
+        itself is 4.9 k, the rest is ``input_proj`` widening from 128 to 224
+        inputs.
+    :param stem_channels: Feature maps per stem layer. ``conv2d_stem`` only.
+    :param stem_layers: ``Conv2d`` blocks in the stem; frequency is pooled after
+        all but the last. ``conv2d_stem`` only.
+    :param stem_freq_pool: Frequency pooling factor per stem pool.
+        ``conv2d_stem`` only.
     """
 
     def __init__(
@@ -183,6 +327,10 @@ class TCNTempoNet(nn.Module):
         use_self_attention: bool = False,
         n_attn_layers: int = 1,
         n_attn_heads: int = 4,
+        conv2d_stem: bool = False,
+        stem_channels: int = 16,
+        stem_layers: int = 3,
+        stem_freq_pool: int = 3,
     ):
         super().__init__()
         self.n_outputs = n_outputs
@@ -199,7 +347,22 @@ class TCNTempoNet(nn.Module):
             T.AmplitudeToDB(),
         )
 
-        self.input_proj = nn.Conv1d(n_mels, channels, kernel_size=1)
+        self.stem = (
+            Conv2dStem(
+                n_mels,
+                channels=stem_channels,
+                n_layers=stem_layers,
+                freq_pool=stem_freq_pool,
+            )
+            if conv2d_stem
+            else None
+        )
+
+        # Unchanged when there is no stem, so a checkpoint trained without one
+        # loads into exactly the same parameter shapes.
+        proj_in = n_mels if self.stem is None else self.stem.out_channels
+
+        self.input_proj = nn.Conv1d(proj_in, channels, kernel_size=1)
 
         self.layers = nn.ModuleList(
             [
@@ -256,6 +419,9 @@ class TCNTempoNet(nn.Module):
         mean = x.mean(dim=(1, 2), keepdim=True)
         std = x.std(dim=(1, 2), keepdim=True)
         x = (x - mean) / (std + 1e-6)
+
+        if self.stem is not None:
+            x = self.stem(x)  # (B, n_mels, T') → (B, stem.out_channels, T')
 
         x = self.input_proj(x)  # (B, channels, T')
 
