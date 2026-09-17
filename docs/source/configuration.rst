@@ -416,6 +416,55 @@ command line (``model=tcn``). All three are the same dilated TCN trunk
        no dropout inside the block. It also needs clips longer than the trunk's
        own receptive field (~11.9 s) to have any long-range context to draw on.
 
+``conv2d_stem`` — ``false``
+    Runs a :class:`~musicality.models.tcn.Conv2dStem` between the log-mel and
+    the dilated trunk instead of projecting the raw bands straight through a
+    1x1 convolution.
+
+    **What it changes.** With the stem off, the model's first operation is
+    ``Conv1d(n_mels, channels, kernel_size=1)`` — at every frame, a fixed linear
+    mixture of all mel bands — after which the band axis is gone and every
+    remaining layer convolves over time only. Nothing in the network ever sees a
+    time-frequency neighbourhood. With it on, three ``Conv2d`` blocks with
+    frequency-only max-pooling run first, and the surviving frequency bins are
+    folded into channels for the trunk.
+
+    **Why.** An onset is a local, *relative* event: energy rising, within a
+    limited band, over ~20 ms. A 1x1 mixer is frequency-*absolute* — it learns
+    one weight per band applied identically at every frame, so a kick drum and a
+    walking bass note are the same event shape it has to detect twice, in
+    separate output channels. Worse, mixing before differencing lets onsets
+    cancel: with the bands summed first, one band rising while another falls
+    produces a flat mixture, which is exactly a harmonic change with no
+    percussive attack — the dominant downbeat cue wherever no drum marks the
+    bar. ``plans/08_rethinking_the_approach.md`` §2.1 is the long version, and
+    §1.3 there is the measurement that motivates it: Beat This! reaches 0.935
+    ``f_beat`` / 0.818 ``position_acc`` on gtzan with *no decoder at all*, so its
+    advantage lives in the front end and trunk.
+
+    **Cost.** At ``n_mels=128, channels=256``: 1.613 M parameters to 1.643 M.
+    The stem itself is 4.9 k; the rest is ``input_proj`` widening from 128 to
+    224 inputs.
+
+    **Off by default on purpose.** It changes the first operation of the
+    network, so enabling it is an experiment, not a tweak — and default-off is
+    what lets a checkpoint trained before the stem existed load into identical
+    parameter shapes.
+
+``stem_channels`` — ``16`` / ``stem_layers`` — ``3`` / ``stem_freq_pool`` — ``3``
+    Read only when ``conv2d_stem`` is on. ``stem_layers`` ``Conv2d`` blocks, with
+    frequency pooled by ``stem_freq_pool`` after every block **except the last**
+    — so the default schedule takes 128 bands to 42 to 14, and 14 × 16 = 224
+    channels reach the trunk.
+
+    Two invariants worth not breaking. **Time is never pooled**: the frame rate
+    is the output resolution, and ±1 frame of quantisation is already 23.2 ms
+    against a 70 ms tolerance. And the frequency axis is *folded into channels*
+    rather than pooled away, because which band a feature fired in is
+    information the bar-position head has no other route to. A schedule that
+    would leave fewer than one frequency bin raises at construction rather than
+    failing on the first batch.
+
 Evaluation (``configs/eval_beat.yaml``)
 ----------------------------------------
 

@@ -17,3 +17,11 @@ n_outputs: 3
 use_self_attention: false
 n_attn_layers: 1
 n_attn_heads: 4
+
+# 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
+# Off by default: it changes the first operation of the network, so turning it
+# on is an experiment, not a tweak.
+conv2d_stem: false
+stem_channels: 16
+stem_layers: 3
+stem_freq_pool: 3

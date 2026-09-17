@@ -6,7 +6,12 @@ import torch
 import torch.nn as nn
 import pytest
 
-from musicality.models.tcn import TCNTempoNet, PositionalEncoding, SelfAttentionBlock
+from musicality.models.tcn import (
+    Conv2dStem,
+    PositionalEncoding,
+    SelfAttentionBlock,
+    TCNTempoNet,
+)
 
 N_SAMPLES = 4096  # short but > n_fft (2048) so STFT doesn't error
 
@@ -330,3 +335,148 @@ class TestSelfAttentionIntegration:
         attn_params = list(model.phase_head.parameters())
         assert len(attn_params) > 0
         assert any(p.grad is not None and p.grad.abs().sum() > 0 for p in attn_params)
+
+
+# ---------------------------------------------------------------------------
+# Conv2d stem (plans/08 section 2.1)
+# ---------------------------------------------------------------------------
+
+
+def _n_params(module):
+    return sum(p.numel() for p in module.parameters())
+
+
+class TestConv2dStem:
+    def test_frequency_is_pooled_and_folded_into_channels(self):
+        """128 bands, two pools of 3 -> 14 bins, 16 maps each -> 224 channels."""
+
+        stem = Conv2dStem(n_mels=128, channels=16, n_layers=3, freq_pool=3)
+
+        assert stem.n_freq == 14
+        assert stem.out_channels == 224
+
+    def test_time_axis_is_never_pooled(self):
+        """The invariant the whole stem is built around: frame rate is the
+        output resolution, so nothing here may touch the time axis."""
+
+        stem = Conv2dStem(n_mels=64, channels=8, n_layers=3, freq_pool=2)
+        out = stem(torch.randn(2, 64, 137))
+
+        assert out.shape == (2, stem.out_channels, 137)
+
+    def test_a_single_layer_pools_nothing(self):
+        """Pooling happens after every block except the last, so one block is
+        pure 3x3 convolution over the full band axis."""
+
+        stem = Conv2dStem(n_mels=32, channels=4, n_layers=1)
+
+        assert stem.n_freq == 32
+        assert stem.out_channels == 128
+
+    def test_collapsing_the_frequency_axis_is_rejected(self):
+        """Fail at construction rather than produce a zero-width tensor on the
+        first batch."""
+
+        with pytest.raises(ValueError, match="collapses"):
+            Conv2dStem(n_mels=8, channels=4, n_layers=4, freq_pool=3)
+
+    @pytest.mark.parametrize("n_layers", [0, -1])
+    def test_degenerate_layer_counts_are_rejected(self, n_layers):
+        with pytest.raises(ValueError, match="n_layers"):
+            Conv2dStem(n_mels=32, n_layers=n_layers)
+
+    def test_stem_is_cheap(self):
+        """It is meant to add locality, not capacity — the trunk holds the
+        parameters."""
+
+        stem = Conv2dStem(n_mels=128, channels=16, n_layers=3, freq_pool=3)
+
+        assert _n_params(stem) < 10_000
+
+
+class TestConv2dStemIntegration:
+    def test_off_by_default(self):
+        """A checkpoint trained before the stem existed must load into
+        identical parameter shapes, which means default-off."""
+
+        model = TCNTempoNet(n_mels=16, channels=8, n_layers=3, n_outputs=1)
+
+        assert model.stem is None
+        assert model.input_proj.in_channels == 16
+
+    def test_input_proj_widens_to_match_the_stem(self):
+        model = TCNTempoNet(
+            n_mels=32,
+            channels=8,
+            n_layers=3,
+            n_outputs=1,
+            conv2d_stem=True,
+            stem_channels=4,
+            stem_layers=3,
+            stem_freq_pool=2,
+        )
+
+        assert model.stem is not None
+        assert model.input_proj.in_channels == model.stem.out_channels == 4 * 8
+
+    @pytest.mark.parametrize("frame_level", [False, True])
+    def test_output_shape_is_unchanged_by_the_stem(self, frame_level):
+        """The stem is an internal change: same input, same output shape, so it
+        drops into either trainer without touching the loss or the decoder."""
+
+        kwargs = dict(
+            n_mels=32, channels=8, n_layers=3, n_outputs=3, frame_level=frame_level
+        )
+        wav = torch.randn(2, 1, N_SAMPLES)
+
+        plain = TCNTempoNet(**kwargs)(wav)
+        stemmed = TCNTempoNet(**kwargs, conv2d_stem=True, stem_channels=4)(wav)
+
+        assert plain.shape == stemmed.shape
+
+    def test_gradients_reach_the_stem(self):
+        model = TCNTempoNet(
+            n_mels=32,
+            channels=8,
+            n_layers=3,
+            n_outputs=1,
+            frame_level=True,
+            conv2d_stem=True,
+            stem_channels=4,
+        )
+
+        model(torch.randn(2, 1, N_SAMPLES)).sum().backward()
+
+        grads = [p.grad for p in model.stem.parameters() if p.requires_grad]
+        assert grads and all(g is not None and torch.isfinite(g).all() for g in grads)
+
+    def test_output_is_finite_with_the_stem(self):
+        model = TCNTempoNet(
+            n_mels=32,
+            channels=8,
+            n_layers=3,
+            n_outputs=1,
+            conv2d_stem=True,
+            stem_channels=4,
+        )
+
+        assert torch.isfinite(model(torch.randn(4, 1, N_SAMPLES))).all()
+
+    def test_stem_works_with_self_attention(self):
+        """The two structural options are independent — one sits before the
+        trunk, the other after it."""
+
+        model = TCNTempoNet(
+            n_mels=32,
+            channels=8,
+            n_layers=3,
+            n_outputs=3,
+            frame_level=True,
+            use_self_attention=True,
+            conv2d_stem=True,
+            stem_channels=4,
+        )
+
+        out = model(torch.randn(2, 1, N_SAMPLES))
+
+        assert out.shape[:2] == (2, 3)
