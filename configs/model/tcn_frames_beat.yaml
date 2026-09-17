@@ -16,6 +16,9 @@ n_layers: 9
 frame_level: true
 n_outputs: 1
 
+# Log-mel normalisation — plans/08 section 2.1 item 4, musicality/input_stats.py.
+input_norm: fixed  # global | fixed
+
 # 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
 conv2d_stem: true
 stem_channels: 16

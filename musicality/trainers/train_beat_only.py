@@ -9,6 +9,7 @@ logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARN
 from omegaconf import DictConfig
 
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
+from musicality.input_stats import DEFAULT_STATS_BATCHES, fit_input_stats
 from musicality.trainers.beat_module import BeatModule
 from musicality.trainers.common import (
     build_beat_dataloaders,
@@ -32,6 +33,18 @@ def train(cfg: DictConfig) -> None:
     train_loader, val_loader, n_train, n_val = build_beat_dataloaders(cfg)
 
     module = build_module(cfg)
+
+    # Before `fit`, so the statistics land in every checkpoint this run writes.
+    # A no-op unless the model asked for `input_norm: fixed`.
+    stats = fit_input_stats(module.model, train_loader)
+    if stats is not None:
+        print(
+            f"input_norm=fixed: measured per-band statistics over "
+            f"{DEFAULT_STATS_BATCHES} batches "
+            f"(mean {stats[0].mean():.2f} dB, std {stats[1].mean():.2f} dB)",
+            flush=True,
+        )
+
     callbacks = build_callbacks(cfg)
     trainer = build_trainer(cfg, callbacks)
 

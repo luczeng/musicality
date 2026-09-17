@@ -270,9 +270,40 @@ things go wrong.
    passes the entire track in one forward call. The same eight bars therefore
    get a different input scale depending on what surrounds them, and one quiet
    intro re-scales every frame of the track. This is not the frequency-locality
-   problem, but it lives in the same four lines, it is a genuine train/inference
-   mismatch, and it is the cheapest fix in this entire document — a running or
-   per-band normalisation, or simply normalising over a fixed window.
+   problem, but it lives in the same four lines, and it is a genuine
+   train/inference mismatch.
+
+   ***Fixed 2026-09-17.*** `input_norm: fixed` freezes one mean and one std per
+   mel band, measured once at the start of training and stored as buffers so
+   they travel in the checkpoint — see `musicality/input_stats.py`. Verified on
+   real audio: the network input for a 16 s crop is now **bit-identical** to the
+   same window taken from a 60 s pass, against a 0.014 mean difference before.
+
+   It is worth recording how large the defect was, because it is not uniform.
+   Measured over 100 tracks at three crop positions each — mean absolute
+   difference between a window normalised as a clip and normalised inside its
+   parent track, in units of the clip's own sigma:
+
+   | corpus | median | worst | clip/track σ ratio |
+   |---|---|---|---|
+   | gtzan | 0.040 | 0.137 | 0.96–1.03 |
+   | jtd | 0.143 | 0.621 | 0.93–1.12 |
+   | ballroom | 0.214 | 0.396 | 0.52–1.29 |
+   | **rwc_classical** | **0.331** | **1.613** | **0.77–2.51** |
+
+   **That ordering is the inverse of our accuracy ranking**, and rwc_classical —
+   worst here, unsurprisingly given its dynamic range — is where every tracker
+   in §1.3 collapses (madmom: 0.648 `f_beat`, 0.420 `position_acc`). Four
+   corpora is a correlation, not a mechanism, and gtzan's flat number owes
+   something to its being uniform 30 s excerpts. But it is the cheapest
+   hypothesis in this document with a story for our worst corpus, and it is now
+   testable in one training run.
+
+   **What it does not fix.** Only the normalisation term. Convolution padding is
+   an independent train/inference difference, and at §3.1's `n_layers: 9` the
+   23.8 s receptive field exceeds the 16 s crop, so it touches every output
+   frame rather than the edges. A whole-track pass is still not equivalent to a
+   crop end to end.
 
 **What the field does instead, and what §1.3 measured about it.** Every
 published tracker begins with local spectro-temporal processing: madmom's TCN
@@ -879,12 +910,34 @@ step 4 and the front end at step 3; §1.3 reversed both.*
    ablations available as overrides — but it means the *first* run measures the
    combination, not either part.
 
-4. **§2.2 + the normalisation fix.** Move to 50–100 fps (hop 256), and fix the
-   whole-input `mean`/`std` in `TCNTempoNet.forward` that makes the same eight
-   bars normalise differently in training (16 s clip) and at inference (full
-   track). The second of those is a few lines and is the cheapest item in this
-   document. Worth doing *before* step 3 if the order is free: doubling the frame
-   rate buys one more live dilated layer at the same audio duration (§3.1).
+4. **§2.2 + the normalisation fix.** The normalisation half is **done**
+   (`input_norm: fixed`, §2.1 item 4) — it was the cheapest item in this
+   document and it carries the only hypothesis here with a story for
+   rwc_classical. What remains under this heading is §2.2, which is really two
+   proposals with very different prices:
+
+   - **Multi-resolution STFT — cheap, do it.** `n_fft=2048` is hardcoded; three
+     windows (1024/2048/4096) at one hop produce identical frame counts and
+     stack as *stem input channels*, `Conv2d(3, 16, 3×3)` for **+288
+     parameters**. Only cheap because §2.1's stem exists: without it the three
+     resolutions would have to concatenate along frequency, tripling
+     `input_proj` and losing the band correspondence. Targets the drums-free
+     downbeat cue directly — short windows localise onsets, long windows resolve
+     harmony, and one 93 ms window does neither well.
+   - **Hop 256 — 2× the bill, gate it.** Measured: 0.251 → 0.502 GFLOP per 16 s
+     input, and 81% of that is the stem. It buys one more live dilated layer
+     (§3.1) and halves quantisation to 11.6 ms — but a beat already within
+     ~58 ms of its reference stays matched either way, so the precision argument
+     needs evidence. **Gate:** histogram per-beat timing errors on the val split;
+     if under ~2% of matched beats sit in the outer 11.6 ms band, the
+     justification collapses to the extra layer, which cycled dilations buy at
+     zero compute cost.
+
+   Whenever hop changes, two knobs are in *frames* and silently halve in
+   meaning: `sigma_frames` 1.5 → 3.0 and `min_distance_frames` 4 → 8 (sweep grid
+   `[1,2,4]` → `[2,4,8]`). `tolerance`, `beat_threshold`, `switch_penalty`,
+   `anchor_threshold` and `gate_tolerance` are hop-invariant — the last is a
+   fraction of the running period, not a time.
 
 5. **§4.1 — shift-tolerant BCE**, plus a dedicated downbeat activation. Beat
    This!'s own ablations single this out, and §1.3 is consistent with it: their

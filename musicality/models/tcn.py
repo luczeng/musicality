@@ -270,16 +270,19 @@ class TCNTempoNet(nn.Module):
     ``frame_level``. A ``conv2d_stem`` adds ``2 × stem_layers`` frames to that,
     which is noise beside it.
 
+    ``input_norm`` is the other. See that parameter, and
+    :mod:`musicality.input_stats` for the measurement behind the default.
+
     **The receptive field is only real if the input is at least that long.**
     Every trunk conv uses ``padding=dilation``, so a layer whose dilation exceeds
     the input length has both off-centre taps in zero padding at every frame and
     collapses to a 1x1 conv. On a 16 s clip at ``hop_length=512`` (689 frames)
     that is any layer past the ninth. See ``plans/08`` §3.1.
 
-    ``conv2d_stem`` is the one structural option here. Off, the first operation
-    is a 1x1 mix over mel bands and no layer ever sees a time-frequency
-    neighbourhood; on, a small :class:`Conv2dStem` runs first. See that class
-    for why it exists.
+    ``conv2d_stem`` is one of two structural options here. Off, the first
+    operation is a 1x1 mix over mel bands and no layer ever sees a
+    time-frequency neighbourhood; on, a small :class:`Conv2dStem` runs first.
+    See that class for why it exists.
 
     :param n_mels: Number of mel filterbanks.
     :param sample_rate: Audio sample rate used to build the mel transform.
@@ -326,6 +329,23 @@ class TCNTempoNet(nn.Module):
         all but the last. ``conv2d_stem`` only.
     :param stem_freq_pool: Frequency pooling factor per stem pool.
         ``conv2d_stem`` only.
+    :param input_norm: How the log-mel is normalised before the stem/trunk.
+
+        - ``"global"`` (the code default, and what every checkpoint up to v6
+          was trained with): one mean and one std over *both* axes of the input
+          tensor. Cheap, but the statistics depend on how much audio is in the
+          tensor, so a 16 s training crop and a whole-track inference pass
+          normalise the same bars differently.
+        - ``"fixed"`` (what the shipped frame-level configs use): one frozen
+          mean and std *per mel band*, measured once over the training data and
+          carried in the checkpoint as buffers. Removes the length dependence by
+          construction.
+
+        Under ``"fixed"`` the buffers start at 0/1 — an identity transform — and
+        must be filled before training, by
+        :func:`musicality.input_stats.fit_input_stats` or
+        :meth:`set_input_stats`. Both training entry points do this
+        automatically; :attr:`input_stats_fitted` reports the state.
     """
 
     def __init__(
@@ -345,11 +365,19 @@ class TCNTempoNet(nn.Module):
         stem_channels: int = 16,
         stem_layers: int = 3,
         stem_freq_pool: int = 3,
+        input_norm: str = "global",
     ):
         super().__init__()
         self.n_outputs = n_outputs
         self.frame_level = frame_level
         self.use_self_attention = use_self_attention
+
+        if input_norm not in ("global", "fixed"):
+            raise ValueError(
+                f"input_norm must be 'global' or 'fixed', got {input_norm!r}"
+            )
+
+        self.input_norm = input_norm
 
         self.mel = nn.Sequential(
             T.MelSpectrogram(
@@ -360,6 +388,15 @@ class TCNTempoNet(nn.Module):
             ),
             T.AmplitudeToDB(),
         )
+
+        # Registered unconditionally under `fixed` (not only once measured) so
+        # that a checkpoint's state_dict and a freshly constructed model always
+        # agree on their keys, and `load_state_dict` restores the statistics
+        # along with the weights.
+        if input_norm == "fixed":
+            self.register_buffer("norm_mean", torch.zeros(n_mels))
+            self.register_buffer("norm_std", torch.ones(n_mels))
+            self.register_buffer("norm_fitted", torch.zeros((), dtype=torch.bool))
 
         self.stem = (
             Conv2dStem(
@@ -425,14 +462,63 @@ class TCNTempoNet(nn.Module):
                 nn.Linear(128, n_outputs),
             )
 
+    @property
+    def input_stats_fitted(self) -> bool:
+        """Whether ``input_norm="fixed"`` statistics have been measured.
+
+        Always ``False`` under ``input_norm="global"``, which needs none.
+        """
+
+        return self.input_norm == "fixed" and bool(self.norm_fitted)
+
+    def set_input_stats(self, mean: torch.Tensor, std: torch.Tensor) -> None:
+        """Install per-band normalisation statistics and mark them fitted.
+
+        :param mean: Per-band mean, shape ``(n_mels,)``.
+        :param std: Per-band standard deviation, shape ``(n_mels,)``. Must be
+            strictly positive — :func:`musicality.input_stats.compute_band_stats`
+            clamps it for exactly this reason.
+        :raises RuntimeError: If ``input_norm`` is not ``"fixed"``.
+        :raises ValueError: On a shape mismatch, or a non-positive ``std``.
+        """
+
+        if self.input_norm != "fixed":
+            raise RuntimeError(
+                f"set_input_stats() needs input_norm='fixed', got {self.input_norm!r}"
+            )
+
+        mean = torch.as_tensor(mean, dtype=self.norm_mean.dtype)
+        std = torch.as_tensor(std, dtype=self.norm_std.dtype)
+
+        if mean.shape != self.norm_mean.shape or std.shape != self.norm_std.shape:
+            raise ValueError(
+                f"expected statistics of shape {tuple(self.norm_mean.shape)}, got "
+                f"mean {tuple(mean.shape)} and std {tuple(std.shape)}"
+            )
+
+        if not bool((std > 0).all()):
+            raise ValueError("every per-band std must be > 0")
+
+        self.norm_mean.copy_(mean.to(self.norm_mean.device))
+        self.norm_std.copy_(std.to(self.norm_std.device))
+        self.norm_fitted.fill_(True)
+
     def forward(self, wav: torch.Tensor) -> torch.Tensor:
 
         x = self.mel(wav).squeeze(1)  # (B, 1, n_mels, T) → (B, n_mels, T')
 
-        # Per-sample normalisation — stabilises inputs across varying loudness
-        mean = x.mean(dim=(1, 2), keepdim=True)
-        std = x.std(dim=(1, 2), keepdim=True)
-        x = (x - mean) / (std + 1e-6)
+        if self.input_norm == "fixed":
+            # Frozen per-band statistics: the same audio normalises identically
+            # whether it arrives as a 16 s crop or inside a whole track. See
+            # musicality.input_stats for the measurement that motivates this.
+            x = (x - self.norm_mean[None, :, None]) / self.norm_std[None, :, None]
+        else:
+            # Per-sample normalisation over both axes — stabilises inputs across
+            # varying loudness, but the statistics depend on the length of the
+            # input, so training (a crop) and inference (a whole track) disagree.
+            mean = x.mean(dim=(1, 2), keepdim=True)
+            std = x.std(dim=(1, 2), keepdim=True)
+            x = (x - mean) / (std + 1e-6)
 
         if self.stem is not None:
             x = self.stem(x)  # (B, n_mels, T') → (B, stem.out_channels, T')

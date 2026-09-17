@@ -15,6 +15,7 @@ from musicality.callbacks.event_metrics import (
 )
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.callbacks.training_report import TrainingReportLogger
+from musicality.input_stats import DEFAULT_STATS_BATCHES, fit_input_stats
 from musicality.losses import AUTO_POS_WEIGHT_ALPHA
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.common import (
@@ -62,6 +63,18 @@ def train(cfg: DictConfig) -> None:
     train_loader, val_loader, n_train, n_val = build_beat_dataloaders(cfg)
 
     module = build_module(cfg)
+
+    # Before `fit`, so the statistics land in every checkpoint this run writes.
+    # A no-op unless the model asked for `input_norm: fixed`.
+    stats = fit_input_stats(module.model, train_loader)
+    if stats is not None:
+        print(
+            f"input_norm=fixed: measured per-band statistics over "
+            f"{DEFAULT_STATS_BATCHES} batches "
+            f"(mean {stats[0].mean():.2f} dB, std {stats[1].mean():.2f} dB)",
+            flush=True,
+        )
+
     callbacks = build_callbacks(cfg)
     trainer = build_trainer(cfg, callbacks)
 
