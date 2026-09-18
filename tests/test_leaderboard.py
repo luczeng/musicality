@@ -1,6 +1,6 @@
 """What `tools/leaderboard.py` does around the evaluator: which checkpoint
-represents a run, which grid points get swept, how the board is ordered, and
-what makes a board refuse new rows.
+represents a run, which grid points get swept, how the board is ordered, what
+makes a board refuse new rows, and what reaches W&B.
 
 Scoring itself is covered by tests/test_evaluation.py; the evaluator here is a
 stub returning canned rows.
@@ -15,25 +15,23 @@ import pytest
 
 from musicality.dataformats.track_io import TrackRef
 from tools.leaderboard import (
+    ARTIFACT,
     BOARD_COLUMNS,
     DEFAULT_BOARD,
+    FILENAME,
     build_payload,
-    parse_args,
-    dvc,
+    fetch_board,
     find_runs,
     load_board,
     merge,
+    parse_args,
     publish,
     rank_rows,
-    ranked_metric,
-    section,
-    render_page,
     run_checkpoints,
-    write_board,
-    write_page,
     settings_for,
     sweep_evaluator,
     sweep_knobs,
+    write_board,
 )
 
 
@@ -121,46 +119,99 @@ def _rows(**metrics) -> list[dict]:
     return [{"corpus": "ballroom", **metrics}]
 
 
-def _board(n_runs: int = 2, **overrides) -> dict:
-    """A payload shaped like a real board: the best run carries every field a
-    section of the page reads, the rest only what the ranking needs."""
-
-    rows = [
-        {
-            "run": f"run{i}",
-            "n_tracks": 10,
-            "macro_f_beat": 0.9 - i / 100,
-            "f_beat": 0.5,
-            "checkpoint": f"checkpoints/run{i}/epoch{i}.ckpt",
-        }
-        for i in range(n_runs)
-    ]
-    rows[0] |= {
-        "task": "beat_phase",
-        "swept_on": "train",
-        "sweep_n_tracks": 50,
-        "beat_threshold": 0.8,
-        "switch_penalty": None,
-        "measured_utc": "2026-09-18T18:05:45+00:00",
-        "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
-    }
+def _board(n_runs: int = 2) -> dict:
+    """A payload shaped like a real board, small enough to assert on."""
 
     return {
-        "generated_utc": "2026-09-18T18:08:03+00:00",
-        "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
         "eval": {"dataset": "merge", "split": "val", "tolerance": 0.07},
         "ranked_by": "macro_f_beat",
-        "leaderboard": rows,
-        "per_corpus": {
-            "run0": {
-                "ballroom": {"n_tracks": 6, "f_beat": 0.6},
-                "jtd": {"n_tracks": 4, "f_beat": 0.95},
-            },
-            "run1": {"ballroom": {"n_tracks": 6, "f_beat": 0.8}},
-        },
+        "leaderboard": [
+            {
+                "run": f"run{i}",
+                "n_tracks": 10,
+                "macro_f_beat": 0.9 - i / 100,
+                "f_beat": 0.5,
+                "checkpoint": f"checkpoints/run{i}/epoch{i}.ckpt",
+            }
+            for i in range(n_runs)
+        ],
+        "per_corpus": {},
         "failed": {},
-        **overrides,
     }
+
+
+class _PublishedBoard:
+    """The artifact `fetch_board` downloads: a folder holding one board file."""
+
+    name = "leaderboard:v7"
+
+    def __init__(self, directory: Path, payload: dict):
+        self.directory = directory
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / FILENAME).write_text(json.dumps(payload))
+
+    def download(self, root=None) -> str:
+        return str(self.directory)
+
+
+class _StubRun:
+    """The W&B run `publish` opens, remembering everything it was handed."""
+
+    url = "https://wandb.ai/acme/musicality-leaderboard/runs/abc123"
+
+    def __init__(self, **kwargs):
+        self.opened_with = kwargs
+        self.logged: dict = {}
+        self.summary: dict = {}
+        self.artifacts: list = []
+
+    def log(self, data):
+        self.logged.update(data)
+
+    def log_artifact(self, artifact):
+        self.artifacts.append(artifact)
+
+
+class _StubArtifact:
+    def __init__(self, name, type=None):
+        self.name, self.type, self.files = name, type, {}
+
+    def add_file(self, path, name=None):
+        self.files[name] = Path(path).read_text()
+
+
+@pytest.fixture
+def fake_wandb(monkeypatch):
+    """`tools.leaderboard.wandb`, minus the network.
+
+    `state.artifact` is what `wandb.Api().artifact(...)` does — set it per test
+    to a published board, or to a raise for a project that has none.
+    """
+
+    state = SimpleNamespace(run=None, finished=False, asked_for=None)
+
+    def _artifact(name):
+        state.asked_for = name
+
+        return state.artifact(name)
+
+    def _init(**kwargs):
+        state.run = _StubRun(**kwargs)
+
+        return state.run
+
+    monkeypatch.setattr(
+        "tools.leaderboard.wandb",
+        SimpleNamespace(
+            init=_init,
+            Table=lambda columns, data: SimpleNamespace(columns=columns, data=data),
+            Artifact=_StubArtifact,
+            Api=lambda: SimpleNamespace(artifact=_artifact),
+            finish=lambda: setattr(state, "finished", True),
+        ),
+    )
+
+    return state
 
 
 @pytest.fixture
@@ -363,97 +414,52 @@ class TestBoardFile:
     def test_a_missing_board_starts_an_empty_one(self, tmp_path, capsys):
         """So the first invocation is the same command as every later one."""
 
-        assert load_board(tmp_path / "leaderboard" / "leaderboard.json", False) == {}
+        assert load_board(tmp_path / "leaderboard.json", "proj", fetch=False) == {}
         assert "starting one" in capsys.readouterr().out
 
     def test_an_existing_board_is_read_back(self, tmp_path):
         path = tmp_path / "leaderboard.json"
         path.write_text(json.dumps({"leaderboard": [{"run": "a"}, {"run": "b"}]}))
 
-        assert len(load_board(path, False)["leaderboard"]) == 2
+        assert len(load_board(path, "proj", fetch=False)["leaderboard"]) == 2
 
-    def test_the_first_run_does_not_pull(self, tmp_path, monkeypatch):
-        """Nothing to fetch yet, and the error would read like a failure."""
+    def test_the_published_board_wins_over_the_local_copy(self, tmp_path, fake_wandb):
+        """A rented instance's own copy is whatever it last happened to write;
+        the board everyone extends is the published one."""
 
-        def _boom(*args, **kwargs):
-            raise AssertionError("dvc pull should not have run")
-
-        monkeypatch.setattr("tools.leaderboard.subprocess.run", _boom)
-
-        load_board(tmp_path / "leaderboard" / "leaderboard.json", pull=True)
-
-    def test_an_existing_pointer_is_pulled(self, tmp_path, monkeypatch):
-        (tmp_path / ".dvc").mkdir()
-        (tmp_path / "leaderboard.dvc").write_text("")
-        board = tmp_path / "leaderboard" / "leaderboard.json"
-        board.parent.mkdir()
-
-        calls = []
-        monkeypatch.setattr(
-            "tools.leaderboard.subprocess.run",
-            lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0),
+        fake_wandb.artifact = lambda name: _PublishedBoard(
+            tmp_path / "artifact", {"leaderboard": [{"run": "elsewhere"}]}
         )
+        board = tmp_path / "leaderboard" / FILENAME
+        board.parent.mkdir()
+        board.write_text(json.dumps({"leaderboard": [{"run": "stale"}]}))
 
-        load_board(board, pull=True)
+        loaded = load_board(board, "musicality-leaderboard", fetch=True)
 
-        assert calls == [["dvc", "pull", "leaderboard"]]
+        assert fake_wandb.asked_for == f"musicality-leaderboard/{ARTIFACT}:latest"
+        assert loaded["leaderboard"] == [{"run": "elsewhere"}]
 
+    def test_nothing_published_yet_is_not_fatal(self, tmp_path, fake_wandb, capsys):
+        """The first board ever has nothing to fetch, and an unreachable W&B is
+        a reason to score locally rather than to refuse."""
 
-class TestDvcSync:
-    """Syncing must never take a run down with it."""
+        def _missing(name):
+            raise ValueError("artifact not found")
 
-    def _board(self, tmp_path):
-        (tmp_path / "leaderboard").mkdir()
+        fake_wandb.artifact = _missing
 
-        return tmp_path / "leaderboard" / "leaderboard.json"
+        fetch_board(tmp_path / FILENAME, "musicality-leaderboard")
 
-    def test_a_non_dvc_directory_is_skipped_not_fatal(self, tmp_path, capsys):
-        assert dvc(["push", "leaderboard"], self._board(tmp_path)) is False
-        assert "not a DVC repo" in capsys.readouterr().out
-
-    def test_a_failed_add_does_not_push(self, tmp_path, monkeypatch, capsys):
-        """That would upload the previous board under the new commit."""
-
-        monkeypatch.setattr("tools.leaderboard.dvc", lambda command, board: False)
-
-        publish(self._board(tmp_path))
-
-        assert "git commit" not in capsys.readouterr().out
-
-    def test_a_successful_push_says_what_to_commit(self, tmp_path, monkeypatch, capsys):
-        """The pointer is only shared truth once committed, by a human."""
-
-        monkeypatch.setattr("tools.leaderboard.dvc", lambda command, board: True)
-
-        publish(self._board(tmp_path))
-
-        assert "git add leaderboard.dvc" in capsys.readouterr().out
+        assert "nothing fetched" in capsys.readouterr().out
 
 
 class TestWriteBoard:
-    def test_a_symlinked_board_is_replaced_not_written_through(self, tmp_path):
-        """A pulled board is a symlink into DVC's read-only cache."""
-
-        cache = tmp_path / "cache-object"
-        cache.write_text('{"cached": true}')
-        cache.chmod(0o444)
-
-        board = tmp_path / "leaderboard" / "leaderboard.json"
-        board.parent.mkdir()
-        board.symlink_to(cache)
+    def test_it_creates_its_folder_on_the_first_run(self, tmp_path):
+        board = tmp_path / "leaderboard" / FILENAME
 
         write_board({"leaderboard": []}, board)
 
-        assert not board.is_symlink()
-        assert json.loads(cache.read_text()) == {"cached": True}
         assert json.loads(board.read_text()) == {"leaderboard": []}
-
-    def test_it_leaves_no_scratch_file_behind(self, tmp_path):
-        board = tmp_path / "leaderboard" / "leaderboard.json"
-
-        write_board({"leaderboard": []}, board)
-
-        assert [p.name for p in board.parent.iterdir()] == ["leaderboard.json"]
 
 
 class TestRankRows:
@@ -514,159 +520,84 @@ class TestBuildPayload:
         assert payload["failed"] == {"a": "boom"}
 
 
-class TestSection:
-    """The one shape every table on the page goes through."""
+class TestPublish:
+    """The two halves of a published board: the table to look at, the file to
+    keep. Both come from the same payload, so neither can drift."""
 
-    def test_labels_align_left_and_numbers_right(self):
-        lines = section("Ranking", ["run", "f_beat"], [["`a`", "0.900"]], "a note")
+    def _publish(self, tmp_path, payload):
+        board = tmp_path / FILENAME
+        board.write_text(json.dumps(payload))
+        publish(payload, board, "musicality-leaderboard")
 
-        assert lines[0] == "## Ranking"
-        assert lines[3] == "| --- | ---: |"
-        assert lines[-1] == "a note"
+        return board
 
-    def test_a_section_without_a_note_ends_at_its_table(self):
-        assert section("Provenance", ["run"], [["`a`"]])[-1] == "| `a` |"
+    def test_the_table_carries_every_column_of_every_row(self, tmp_path, fake_wandb):
+        """Narrowing it here would make the board on W&B a different board from
+        the one in the file."""
 
+        payload = _board(3)
 
-class TestRenderPage:
-    """What the page says, and what it must not quietly get wrong — the
-    numbers on it are the ones people quote."""
+        self._publish(tmp_path, payload)
+        table = fake_wandb.run.logged["leaderboard"]
 
-    def test_the_ranking_table_reports_the_macro_means(self):
-        """Micro is what the terminal table prints, macro is what ranked the
-        board — printing one under a heading ordered by the other invites
-        exactly the wrong read."""
+        assert table.columns == list(payload["leaderboard"][0])
+        assert [row[0] for row in table.data] == ["run0", "run1", "run2"]
 
-        page = render_page(_board())
-        ranking = page.split("## Ranking")[1].split("##")[0]
+    def test_the_artifact_is_the_board_file_itself(self, tmp_path, fake_wandb):
+        """It is what the next invocation fetches, so it has to be the file
+        that was just written, not a second rendering of it."""
 
-        assert "0.900" in ranking
-        assert "0.500" not in ranking
+        board = self._publish(tmp_path, _board())
+        [artifact] = fake_wandb.run.artifacts
 
-    def test_rows_keep_the_order_the_board_was_written_in(self):
-        """Ranking happens in `rank_rows`; rendering must not re-sort."""
+        assert artifact.name == ARTIFACT
+        assert artifact.files == {FILENAME: board.read_text()}
 
-        page = render_page(_board())
+    def test_the_summary_names_the_leader(self, tmp_path, fake_wandb):
+        """So the project's run list ranks itself without opening a table."""
 
-        assert page.index("`run0`") < page.index("`run1`")
+        self._publish(tmp_path, _board(3))
 
-    def test_the_ranked_column_is_marked(self):
-        page = render_page(_board())
+        assert fake_wandb.run.summary["best/run"] == "run0"
+        assert fake_wandb.run.summary["n_runs"] == 3
 
-        assert "**f_beat ↑**" in page
-        assert "confuse ↓" in page
+    def test_the_run_is_closed_and_its_url_printed(self, tmp_path, fake_wandb, capsys):
+        self._publish(tmp_path, _board())
 
-    def test_the_best_run_per_corpus_is_marked(self):
-        """The macro mean averages this away, and the winner differs per
-        corpus far more often than the headline number suggests."""
-
-        page = render_page(_board())
-        ballroom = next(
-            line for line in page.splitlines() if line.startswith("| `ballroom`")
-        )
-
-        assert "**0.800**" in ballroom
-        assert "**0.600**" not in ballroom
-
-    def test_a_corpus_a_run_never_scored_is_a_gap_not_a_zero(self):
-        page = render_page(_board())
-        jtd = next(line for line in page.splitlines() if line.startswith("| `jtd`"))
-
-        assert jtd.endswith("| n/a |")
-
-    def test_a_none_knob_is_a_value_and_a_missing_one_is_not(self):
-        """`switch_penalty: None` is the exact single-offset decode, not an
-        absent setting."""
-
-        decode = render_page(_board()).split("## Decode")[1].split("\n## ")[0]
-        swept, unswept = [
-            line for line in decode.splitlines() if line.startswith("| ")
-        ][2:]
-
-        assert "| none |" in swept and "| `train` (50 tracks) |" in swept
-        assert "| — |" in unswept and "| config |" in unswept
-
-    def test_an_empty_board_still_renders_a_page(self):
-        """The first invocation can fail every checkpoint it was given."""
-
-        page = render_page({"leaderboard": [], "failed": {"norm": "boom"}})
-
-        assert "Nothing scored yet." in page
-        assert "boom" in page
-
-    def test_an_older_board_names_its_ranking_metric_elsewhere(self):
-        """`ranked_by` moved out of `eval`; a board written before that is
-        still the board people pull."""
-
-        payload = _board(ranked_by=None)
-        payload["eval"]["ranked_by"] = "macro_position_acc"
-
-        assert ranked_metric(payload) == "position_acc"
-
-
-class TestPagePlacement:
-    """Where the page goes, and which boards get one. It is committed to this
-    repo rather than written beside the JSON: the data repo is behind a `dvc
-    pull` and renders nowhere, so a page written there is one nobody opens."""
-
-    def test_every_run_is_listed_by_default(self):
-        """The page is the leaderboard, not an excerpt of one."""
-
-        page = render_page(_board(7))
-
-        assert "`run6`" in page
-        assert "of 7 shown" not in page
-
-    def test_top_cuts_it_to_the_best_few(self):
-        page = render_page(_board(7), top=5)
-
-        assert "best 5 of 7 shown" in page
-        assert "`run4`" in page
-        assert "`run5`" not in page
-
-    def test_each_row_names_the_checkpoint_behind_it(self):
-        """A good number has to lead straight to the model that made it."""
-
-        page = render_page(_board(7), top=2)
-
-        assert "`checkpoints/run0/epoch0.ckpt`" in page
-        assert "`checkpoints/run2/epoch2.ckpt`" not in page
-
-    def test_a_throwaway_board_writes_nothing(self, tmp_path, monkeypatch):
-        """A `--board` elsewhere is a throwaway comparison: committing its
-        numbers would version something nobody can reproduce."""
-
-        monkeypatch.setattr("tools.leaderboard.PAGE_PATH", tmp_path / "PAGE.md")
-
-        write_page(_board(), tmp_path / "leaderboard.json")
-
-        assert not (tmp_path / "PAGE.md").exists()
-
-    def test_the_running_board_writes_it_folder_and_all(self, tmp_path, monkeypatch):
-        """The page's folder is its own, and a fresh clone has neither."""
-
-        page = tmp_path / "leaderboard" / "LEADERBOARD.md"
-        monkeypatch.setattr("tools.leaderboard.PAGE_PATH", page)
-
-        write_page(_board(), DEFAULT_BOARD.resolve())
-
-        assert page.read_text().startswith("# Beat leaderboard")
+        assert fake_wandb.finished
+        assert _StubRun.url in capsys.readouterr().out
 
 
 class TestCliSurface:
-    """The one rule argparse cannot state on its own: runs are optional, but
-    only when there is nothing to score."""
+    """The one rule argparse cannot state on its own."""
 
     def _parse(self, monkeypatch, *argv):
         monkeypatch.setattr("sys.argv", ["leaderboard.py", *argv])
 
         return parse_args()
 
-    def test_a_render_needs_no_runs(self, monkeypatch):
-        args = self._parse(monkeypatch, "--render-only")
+    def test_the_default_board_is_the_shared_one(self, monkeypatch):
+        args = self._parse(monkeypatch, "checkpoints_deeper")
+
+        assert args.board == DEFAULT_BOARD
+        assert args.fetch and args.publish
+
+    def test_a_board_elsewhere_never_touches_wandb(self, monkeypatch, tmp_path):
+        """A throwaway comparison published over the shared board would be
+        merged into by the next run on any machine."""
+
+        args = self._parse(
+            monkeypatch, "checkpoints_deeper", "--board", str(tmp_path / "scratch.json")
+        )
+
+        assert not args.fetch and not args.publish
+
+    def test_publishing_an_existing_board_needs_no_runs(self, monkeypatch):
+        """Putting a board that is already scored on W&B costs no model pass."""
+
+        args = self._parse(monkeypatch, "--publish-only")
 
         assert args.runs == []
-        assert args.top == 0  # the page lists every run unless asked otherwise
 
     def test_naming_nothing_at_all_is_an_error(self, monkeypatch):
         """Otherwise it reads as a no-op run that silently scored nothing."""

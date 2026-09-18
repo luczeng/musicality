@@ -9,14 +9,15 @@ runs already measured.
     uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
     uv run python tools/leaderboard.py checkpoints_new
 
-The board is written twice, to the two places it is read from.
-`leaderboard.json` is the record, DVC-tracked in the data repo beside the
-splits. `leaderboard/LEADERBOARD.md` is the page, git-tracked in *this*
-checkout, so the standings render on GitHub and show up in a diff — no
-`dvc pull` to read them. The page is derived from the board and can be rebuilt
-from it alone, scoring nothing:
+The board lives on W&B, in a project of its own. Every invocation fetches the
+published board, merges its own rows into it, and publishes it back: as a
+sortable table, which is the board to look at, and as one `leaderboard.json`
+artifact holding every number, which is the board to hand to someone else. The
+copy in this checkout is a working file — training runs on rented instances,
+so W&B is what a board survives in. Nothing about publishing needs a model
+pass, so a board in hand goes up on its own:
 
-    uv run python tools/leaderboard.py --render-only
+    uv run python tools/leaderboard.py --publish-only
 
 See `docs/source/workflows.rst` ("Comparing runs") for the design.
 """
@@ -25,11 +26,13 @@ import argparse
 import itertools
 import json
 import math
-import os
 import re
-import subprocess
+import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
+
+import wandb
 
 import musicality.dataformats as dataformats
 from musicality.callbacks.event_metrics import stratified_sample
@@ -44,7 +47,6 @@ from musicality.evaluation import (
 from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
 from tools.eval_beat import (
     _BETTER,
-    _KNOB_LABELS,
     _LABELS,
     rank_key,
     resolve_group_size,
@@ -52,10 +54,19 @@ from tools.eval_beat import (
 )
 
 SCHEMA = 1
+FILENAME = "leaderboard.json"
 
-# In the data repo, not this checkout: a board has to outlive the rented
-# instance that wrote it.
-DEFAULT_BOARD = dataformats.LEADERBOARD_DIR / "leaderboard.json"
+# Its own W&B project: a leaderboard is a different kind of object from a
+# training run, and mixing them makes both harder to find.
+PROJECT = "musicality-leaderboard"
+
+# The artifact every board version is published under. `:latest` is what the
+# next invocation starts from, on whatever machine it runs.
+ARTIFACT = "leaderboard"
+
+# A working copy, not the record — W&B holds that, so this one is gitignored
+# and a fresh clone fetches the board rather than carrying it.
+DEFAULT_BOARD = dataformats.ROOT / "leaderboard" / FILENAME
 
 # What every row was measured under, and what an older row must match to be kept.
 RUN = {
@@ -269,36 +280,43 @@ def evaluate_run(label: str, checkpoint: Path, args) -> dict:
     return {"row": row, "per_corpus": per_corpus}
 
 
-def dvc(command: list[str], board: Path) -> bool:
-    """Run one ``dvc`` command in the data repo holding *board*.
+def fetch_board(board: Path, project: str) -> None:
+    """Replace *board* with the published one, if there is one.
 
-    Never fatal: a board that cannot be synced is still a board.
+    What this invocation extends is whatever was published last, not whatever
+    this machine happens to hold: training runs on rented instances that start
+    empty, and a stale local copy would silently drop every row measured
+    elsewhere since. Never fatal — the first invocation ever finds nothing
+    published, and an unreachable W&B is a reason to score locally rather than
+    to refuse.
     """
 
-    repo = board.parent.parent.resolve()
-    if not (repo / ".dvc").is_dir():
-        print(f"[leaderboard] {repo} is not a DVC repo — skipping dvc {command[0]}")
-        return False
+    try:
+        artifact = wandb.Api().artifact(f"{project}/{ARTIFACT}:latest")
 
-    print(f"[leaderboard] dvc {' '.join(command)} (in {repo})")
-    result = subprocess.run(["dvc", *command], cwd=repo, capture_output=True, text=True)
+        # Downloaded to a scratch directory rather than wandb's default
+        # ./artifacts/, which would keep a second copy of every version ever
+        # fetched in the checkout. The board itself is the only file in there.
+        with tempfile.TemporaryDirectory() as scratch:
+            published = Path(artifact.download(root=scratch)) / FILENAME
 
-    if result.returncode:
-        print(f"[leaderboard] dvc {command[0]} failed: {result.stderr.strip()}")
+            board.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(published, board)
+    except Exception as error:
+        print(f"[leaderboard] nothing fetched ({type(error).__name__}: {error})")
+        return
 
-    return not result.returncode
+    print(f"[leaderboard] {artifact.name} fetched to {board}")
 
 
-def load_board(board: Path, pull: bool) -> dict:
-    """The board already at *board*, pulled from the DVC remote first.
+def load_board(board: Path, project: str, fetch: bool) -> dict:
+    """The board this invocation extends, fetched from W&B first.
 
-    A missing board is not an error — the first invocation creates it, and
-    pulling before the pointer exists would only print a scary non-failure. DVC
-    tracks the *folder*, so that is what pull names.
+    A missing board is not an error: the first invocation starts one.
     """
 
-    if pull and (board.parent.parent / f"{board.parent.name}.dvc").exists():
-        dvc(["pull", board.parent.name], board)
+    if fetch:
+        fetch_board(board, project)
 
     if not board.exists():
         print(f"[leaderboard] no board at {board} yet — starting one")
@@ -310,20 +328,50 @@ def load_board(board: Path, pull: bool) -> dict:
     return previous
 
 
-def publish(board: Path) -> None:
-    """Re-hash the board folder and upload it, then say what to commit.
+def publish(payload: dict, board: Path, project: str) -> None:
+    """Publish the board to W&B: a table to look at, a file to keep.
 
-    The pointer only becomes the shared truth once committed, and committing in
-    someone else's repo is not this tool's call.
+    The table is the board — every column of every row, sortable and filterable
+    in the browser, which is the only place a board of this width reads well.
+    The artifact is the same board as one file, versioned: it is what the next
+    invocation fetches, wherever it runs, and what travels to someone who wants
+    the numbers rather than a browser tab.
+
+    One run per invocation, in a project of its own, so a board is not buried
+    among training runs.
     """
 
-    name = board.parent.name
+    rows = payload["leaderboard"]
+    columns = list(rows[0])
 
-    if dvc(["add", name], board) and dvc(["push", name], board):
-        print(
-            f"\n[leaderboard] pushed. To share it:\n    cd {board.parent.parent.resolve()}"
-            f" && git add {name}.dvc && git commit -m 'Update leaderboard'"
-        )
+    run = wandb.init(project=project, job_type="leaderboard", config=payload["eval"])
+
+    run.log(
+        {
+            "leaderboard": wandb.Table(
+                columns=columns,
+                data=[[row.get(key) for key in columns] for row in rows],
+            )
+        }
+    )
+    run.summary.update(
+        {
+            "n_runs": len(rows),
+            "best/run": rows[0]["run"],
+            **{f"best/{key}": rows[0].get(key) for key in SCORE_KEYS},
+        }
+    )
+
+    artifact = wandb.Artifact(ARTIFACT, type="leaderboard")
+    artifact.add_file(str(board), name=FILENAME)
+    run.log_artifact(artifact)
+
+    url = run.url
+    wandb.finish()
+
+    # No URL offline: the run is sitting unsynced in ./wandb/, which is worth
+    # saying rather than printing `None`.
+    print(f"\n[leaderboard] published to {url or 'offline — `wandb sync` to upload'}")
 
 
 def merge(previous: dict, rows: list[dict], settings: dict) -> list[dict]:
@@ -420,307 +468,19 @@ def settings_for(args) -> dict:
 
 
 def write_board(payload: dict, board: Path) -> None:
-    """Write the board by replacing the path, not by writing into it.
-
-    ``setup_remote.sh`` sets ``cache.type symlink``, so a pulled board is a
-    symlink into DVC's read-only cache: writing to it raises ``PermissionError``,
-    and would corrupt the cache if it did not. Replacing is also atomic.
-    """
+    """Write the board out, creating its folder on the first run."""
 
     board.parent.mkdir(parents=True, exist_ok=True)
-
-    scratch = board.with_suffix(".json.tmp")
-    scratch.write_text(json.dumps(payload, indent=2))
-    os.replace(scratch, board)
+    board.write_text(json.dumps(payload, indent=2))
 
     print(f"\n[leaderboard] written to {board.resolve()}")
-
-
-# The human-readable twin of the board, in *this* checkout rather than beside
-# the JSON: the data repo is behind a `dvc pull` and renders nowhere, so the
-# standings live in git, where GitHub renders them and a diff shows what moved.
-# What the page holds, and why, is docs/source/workflows.rst ("Comparing runs").
-PAGE_PATH = dataformats.ROOT / "leaderboard" / "LEADERBOARD.md"
-
-
-def ranked_metric(payload: dict) -> str:
-    """The metric a board is ordered by, without its macro/micro prefix.
-
-    Read off the payload, not off ``args``: a board written by an older
-    invocation names it under ``eval``, and must still re-render.
-    """
-
-    key = payload.get("ranked_by") or payload.get("eval", {}).get("ranked_by", "")
-
-    return key.removeprefix("macro_").removeprefix("micro_") or "f_beat"
-
-
-def _when(stamp: str | None) -> str:
-    """An ISO timestamp as minutes UTC — the precision a reader uses."""
-
-    return f"{(stamp or '?')[:16].replace('T', ' ')} UTC"
-
-
-def _cell(value: float | None) -> str:
-    """One metric as a table cell: :func:`_fmt` without its terminal padding."""
-
-    return _fmt(value).strip()
-
-
-def _knob(row: dict, key: str) -> str:
-    """One decode knob. ``None`` is a value — on ``switch_penalty`` it is the
-    exact single-offset decode — so only a key the row never carried is a gap."""
-
-    if key not in row:
-        return "—"
-
-    return "none" if row[key] is None else str(row[key])
-
-
-def section(
-    title: str,
-    header: list[str],
-    body: list[list[str]],
-    note: str = "",
-    labels: int = 1,
-) -> list[str]:
-    """One section of the page: a heading, a table, an optional note under it.
-
-    The first *labels* columns are left-aligned and the rest right-aligned, the
-    way numbers read.
-    """
-
-    align = ["---"] * labels + ["---:"] * (len(header) - labels)
-
-    return [
-        f"## {title}",
-        "",
-        *["| " + " | ".join(row) + " |" for row in (header, align, *body)],
-        *(["", note] if note else []),
-    ]
-
-
-def page_header(payload: dict, rows: list[dict], metric: str, total: int) -> list[str]:
-    """Title, who leads, the conditions every row shares, and how to rebuild
-    the page — the question it is most often opened with."""
-
-    settings = payload.get("eval", {})
-    swept = [row for row in rows if row.get("swept_on")]
-    shown = f", best {len(rows)} of {total} shown" if total > len(rows) else ""
-
-    return [
-        "# Beat leaderboard",
-        "",
-        f"**{rows[0]['run']}** leads {total} run(s) on macro `{metric}` "
-        f"({_cell(rows[0].get(f'macro_{metric}'))}){shown}.",
-        "",
-        f"- Scored on `{settings.get('dataset', '?')}` / `{settings.get('split', '?')}`"
-        f"{', binary-only' if settings.get('binary_only') else ''}, full tracks, "
-        f"tolerance {settings.get('tolerance', '?')}s",
-        "- Postprocessing "
-        + (
-            f"swept per checkpoint on `{swept[0]['swept_on']}` (see *Decode*)"
-            if swept
-            else "as shipped in `configs/eval_beat.yaml`, not swept"
-        ),
-        f"- Measured {_when(payload.get('generated_utc'))} at commit "
-        f"`{(payload.get('git_commit') or '?')[:7]}`",
-        "",
-        "Written by `tools/leaderboard.py` from `leaderboard.json` in the data "
-        "repo, which holds every metric, per track and per corpus. Rebuild this "
-        "page from it, scoring nothing: `uv run python tools/leaderboard.py "
-        "--render-only`.",
-    ]
-
-
-def page_ranking(rows: list[dict], metric: str) -> list[str]:
-    """The board itself, as macro means — the numbers the ranking is made of.
-
-    Macro rather than the per-track means the terminal prints: every corpus
-    counts once, so the largest one does not decide the order.
-    """
-
-    def label(column: str) -> str:
-        text = f"{_LABELS[column]} {'↑' if _BETTER[column] is max else '↓'}"
-
-        return f"**{text}**" if column == metric else text
-
-    body = [
-        [str(i), f"`{row['run']}`", str(row.get("n_tracks", 0))]
-        + [_cell(row.get(f"macro_{c}")) for c in BOARD_COLUMNS]
-        for i, row in enumerate(rows, start=1)
-    ]
-
-    return section(
-        "Ranking",
-        ["#", "run", "n", *map(label, BOARD_COLUMNS)],
-        body,
-        f"Macro means, each corpus weighted once; ranked by `{metric}`. The "
-        "per-track (micro) means are in the JSON.",
-    )
-
-
-def page_per_corpus(rows: list[dict], per_corpus: dict, metric: str) -> list[str]:
-    """The ranking metric per corpus, one column per run, best in bold.
-
-    What the macro mean averaged away: the weakest corpus is what gates "works
-    everywhere", and it is rarely the same corpus for every run.
-    """
-
-    if not per_corpus:
-        return []
-
-    counts: dict[str, int] = {}
-    for row in rows:
-        for corpus, stats in per_corpus.get(row["run"], {}).items():
-            counts.setdefault(corpus, stats.get("n_tracks") or 0)
-
-    body = []
-    for corpus, n_tracks in sorted(counts.items(), key=lambda kv: -kv[1]):
-        values = [
-            per_corpus.get(row["run"], {}).get(corpus, {}).get(metric) for row in rows
-        ]
-        scored = [v for v in values if v is not None and not math.isnan(v)]
-        best = _BETTER[metric](scored) if scored else None
-
-        body.append(
-            [f"`{corpus or '<unknown>'}`", str(n_tracks)]
-            + [
-                f"**{_cell(v)}**" if v is not None and v == best else _cell(v)
-                for v in values
-            ]
-        )
-
-    return section(
-        f"`{metric}` per corpus",
-        ["corpus", "n", *[f"#{i}" for i in range(1, len(rows) + 1)]],
-        body,
-        "Columns are the ranking positions above; best per corpus in bold.",
-    )
-
-
-def page_decode(rows: list[dict]) -> list[str]:
-    """What each row was decoded with, and where those knobs came from.
-
-    A swept board ranks models *at their own best decode*, so the decode is
-    part of the result rather than a footnote to it.
-    """
-
-    body = []
-    for i, row in enumerate(rows, start=1):
-        swept_on = row.get("swept_on")
-        tuned = (
-            f"`{swept_on}` ({row.get('sweep_n_tracks', 0)} tracks)"
-            if swept_on
-            else "config"
-        )
-
-        body.append(
-            [str(i), row.get("task", "?"), *[_knob(row, k) for k in KNOB_KEYS], tuned]
-        )
-
-    return section(
-        "Decode",
-        ["#", "task", *[_KNOB_LABELS.get(k, k) for k in KNOB_KEYS], "tuned on"],
-        body,
-        "Tuned on a split the board does not report, so these numbers stay held "
-        "out. `none` on `switch_pen` is the exact single-offset decode.",
-        labels=2,
-    )
-
-
-def page_provenance(rows: list[dict]) -> list[str]:
-    """Each row's checkpoint, when it was measured, and at what commit.
-
-    A running board carries rows measured on different days by different code,
-    so "which of these is stale" has to be answerable from the page — and the
-    path leads straight to the model behind a number.
-    """
-
-    body = [
-        [
-            str(i),
-            f"`{row.get('checkpoint', '?')}`",
-            _when(row.get("measured_utc")),
-            f"`{(row.get('git_commit') or '?')[:7]}`",
-        ]
-        for i, row in enumerate(rows, start=1)
-    ]
-
-    return section(
-        "Provenance", ["#", "checkpoint", "measured", "commit"], body, labels=4
-    )
-
-
-def page_failed(failed: dict) -> list[str]:
-    """Runs that were named but produced no row — the page is the only place
-    their absence is explained."""
-
-    if not failed:
-        return []
-
-    return section(
-        "Not scored",
-        ["run", "error"],
-        [[f"`{run}`", error] for run, error in sorted(failed.items())],
-        labels=2,
-    )
-
-
-def render_page(payload: dict, top: int = 0) -> str:
-    """The whole board as one Markdown page, or its best *top* rows.
-
-    The JSON is the record; this is the thing a person opens. *top* of 0 is
-    every run, and it cuts the whole page rather than one table, so the
-    per-corpus columns and the decode beside a row stay that row's own.
-    """
-
-    all_rows = payload.get("leaderboard", [])
-    rows = all_rows[:top] if top else all_rows
-    metric = ranked_metric(payload)
-
-    if rows:
-        blocks = [
-            page_header(payload, rows, metric, len(all_rows)),
-            page_ranking(rows, metric),
-            page_per_corpus(rows, payload.get("per_corpus", {}), metric),
-            page_decode(rows),
-            page_provenance(rows),
-        ]
-    else:
-        blocks = [["# Beat leaderboard", "", "Nothing scored yet."]]
-
-    blocks.append(page_failed(payload.get("failed", {})))
-
-    return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
-
-
-def write_page(payload: dict, board: Path, top: int = 0) -> None:
-    """Write :data:`PAGE_PATH`, if *board* is the running one.
-
-    Only the running board earns the committed page: a ``--board`` elsewhere is
-    a throwaway comparison by definition, and overwriting the repo's page with
-    one would put numbers nobody can reproduce under version control. The
-    folder is created here — the page is the only thing in it, so a fresh clone
-    that has never scored anything has neither. Written in place rather than
-    through a scratch file the way :func:`write_board` is: this one is in git,
-    never a symlink into DVC's read-only cache.
-    """
-
-    if board.resolve() != DEFAULT_BOARD.resolve():
-        return
-
-    PAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PAGE_PATH.write_text(render_page(payload, top))
-
-    print(f"[leaderboard] page written to {PAGE_PATH} — commit it to share it")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Evaluate trained runs on the split configs/eval_beat.yaml names "
-            "and merge them into one running leaderboard."
+            "and merge them into one running leaderboard on W&B."
         )
     )
     parser.add_argument(
@@ -728,18 +488,6 @@ def parse_args() -> argparse.Namespace:
         nargs="*",
         type=Path,
         help="Checkpoint directories (walked recursively) and/or .ckpt files",
-    )
-    parser.add_argument(
-        "--board",
-        type=Path,
-        default=DEFAULT_BOARD,
-        help=(
-            f"The running board to extend, default {DEFAULT_BOARD}. Rows for "
-            "runs not named here are carried over from it and the merged board "
-            "is written back. A path that does not exist yet starts a new "
-            "board, so the first invocation is the same command as every later "
-            "one."
-        ),
     )
     parser.add_argument(
         "--rank-metric",
@@ -761,43 +509,53 @@ def parse_args() -> argparse.Namespace:
         "--limit", type=int, default=None, help="Score only the first N tracks"
     )
     parser.add_argument("--device", default=EVAL_DEFAULTS["device"])
+    parser.add_argument("--project", default=PROJECT, help="W&B project to publish to")
     parser.add_argument(
-        "--no-pull",
-        dest="pull",
-        action="store_false",
-        help="Skip the `dvc pull`. A stale board then loses whatever it misses.",
-    )
-    parser.add_argument(
-        "--no-push",
-        dest="push",
-        action="store_false",
-        help="Write locally without `dvc add` + `dvc push`",
-    )
-    parser.add_argument(
-        "--top",
-        type=int,
-        default=0,
+        "--board",
+        type=Path,
+        default=DEFAULT_BOARD,
         help=(
-            "List only the best N runs on the page "
-            f"({PAGE_PATH.parent.name}/{PAGE_PATH.name}); default 0, every "
-            "run. Only the default --board has a page."
+            f"Where the board is kept locally, default {DEFAULT_BOARD}. Any "
+            "other path is a throwaway comparison: it is neither fetched from "
+            "nor published to W&B."
         ),
     )
     parser.add_argument(
-        "--render-only",
+        "--no-fetch",
+        dest="fetch",
+        action="store_false",
+        help="Extend the local board as it is, without fetching the published one",
+    )
+    parser.add_argument(
+        "--no-publish",
+        dest="publish",
+        action="store_false",
+        help="Score and write locally, without a W&B run",
+    )
+    parser.add_argument(
+        "--publish-only",
         action="store_true",
         help=(
-            f"Re-write {PAGE_PATH.name} from the board already on disk, and "
-            "stop. Scores nothing, so it costs no model pass — for reading a "
-            "pulled board, or re-rendering one after the page changed. Add "
-            "--no-pull --no-push to touch no remote."
+            "Publish the board already on disk and stop. Scores nothing, so it "
+            "costs no model pass — for putting an existing board on W&B, or "
+            "for retrying a publish that failed."
         ),
     )
 
     args = parser.parse_args()
 
-    if not args.runs and not args.render_only:
-        parser.error("name at least one checkpoint directory, or --render-only")
+    if not args.runs and not args.publish_only:
+        parser.error("name at least one checkpoint directory, or --publish-only")
+
+    if args.board.resolve() != DEFAULT_BOARD.resolve():
+        # A board somewhere else is a throwaway by definition: it must not
+        # start from the shared one, and must certainly not be published over
+        # it — the next run anywhere would merge into numbers meant for one.
+        if args.publish_only:
+            parser.error("--publish-only publishes the shared board, not a --board")
+
+        args.fetch = args.publish = False
+        print(f"[leaderboard] {args.board} is a local board — W&B untouched")
 
     return args
 
@@ -805,16 +563,15 @@ def parse_args() -> argparse.Namespace:
 def main():
     args = parse_args()
 
-    if args.render_only:
-        payload = load_board(args.board, args.pull)
+    if args.publish_only:
+        # Not fetched first: publishing is for the board in hand, and fetching
+        # would replace it with the one already up there.
+        payload = load_board(args.board, args.project, fetch=False)
 
-        if not payload:
-            raise SystemExit(f"[leaderboard] no board at {args.board} to render")
+        if not payload.get("leaderboard"):
+            raise SystemExit(f"[leaderboard] no board at {args.board} to publish")
 
-        write_page(payload, args.board, args.top)
-
-        if args.push:
-            publish(args.board)
+        publish(payload, args.board, args.project)
 
         return
 
@@ -824,7 +581,7 @@ def main():
     if not runs:
         raise SystemExit(f"[leaderboard] no .ckpt found under {args.runs}")
 
-    previous = load_board(args.board, args.pull)
+    previous = load_board(args.board, args.project, args.fetch)
 
     print(
         f"[leaderboard] {len(runs)} run(s)  dataset={RUN['dataset']}  "
@@ -871,10 +628,9 @@ def main():
     payload = build_payload(rows, per_corpus, failed, args)
 
     write_board(payload, args.board)
-    write_page(payload, args.board, args.top)
 
-    if args.push:
-        publish(args.board)
+    if args.publish and rows:
+        publish(payload, args.board, args.project)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,8 @@ logs/
 outputs/
 wandb/
 leaderboards/
+# The local copy of the running board; W&B holds the published one.
+leaderboard/
 
 # macOS
 .DS_Store

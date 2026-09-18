@@ -17,8 +17,6 @@ class DataFormat:
 
     :param data_dir: Root data directory name.
     :param splits_dir: Splits subdirectory name.
-    :param leaderboard_dir: Subdirectory holding the running leaderboard. DVC
-        tracked like ``splits``, so a board survives the machine that wrote it.
     :param tracks_dirname: Per-dataset subfolder holding custom-recorded audio.
     :param annotations_dirname: Per-dataset subfolder holding annotation sidecars.
     :param beats_suffix: File suffix for beat-time annotation files.
@@ -27,7 +25,6 @@ class DataFormat:
 
     data_dir: str
     splits_dir: str
-    leaderboard_dir: str
     tracks_dirname: str
     annotations_dirname: str
     beats_suffix: str
@@ -48,10 +45,9 @@ def load() -> DataFormat:
 
 
 # The canonical, load-once config. Other modules should read
-# FORMAT/DATA_DIR/SPLITS_DIR/LEADERBOARD_DIR directly rather than calling load()
-# again or re-exporting their own copies of individual fields, so there's
-# exactly one place the on-disk layout is defined.
+# FORMAT/DATA_DIR/SPLITS_DIR directly rather than calling load() again or
+# re-exporting their own copies of individual fields, so there's exactly one
+# place the on-disk layout is defined.
 FORMAT = load()
 DATA_DIR = ROOT / FORMAT.data_dir
 SPLITS_DIR = ROOT / FORMAT.splits_dir
-LEADERBOARD_DIR = ROOT / FORMAT.leaderboard_dir

@@ -192,21 +192,17 @@ Three things it does that a loop over ``eval_beat.py`` would not:
   merged train split are N tracks of whichever corpus was written first, so the
   knobs would be tuned for one genre.
 
-- **It keeps one running board, in the data repo rather than this checkout.**
-  The board is a single ``leaderboard.json`` under
-  :data:`musicality.dataformats.LEADERBOARD_DIR` (``musicality_db/leaderboard/``),
-  DVC-tracked beside the splits. It holds the whole comparison — per-run
+- **It keeps one running board, on W&B rather than in a checkout.** The board
+  is a single ``leaderboard.json`` holding the whole comparison — per-run
   metrics, the knobs each row was scored at, the per-corpus breakdown, a
   rendered table in ``readable`` — written the way ``training_report.json`` is,
   ``NaN`` as ``null`` so a strict parser accepts it.
 
-The board being in the data repo is what makes it a *running* board rather than
-a per-machine one. Training happens on rented instances that are torn down, so
-the tool pulls the board before reading and ``dvc add``/``dvc push``es it after
-writing (``--no-pull`` / ``--no-push`` to skip). Only the ``.dvc`` pointer is
-left to commit, and the run prints the command; committing in the data repo is
-not this tool's call to make. The first invocation finds no pointer, says so,
-and starts the board.
+W&B is what makes it a *running* board rather than a per-machine one. Training
+happens on rented instances that are torn down, so every invocation fetches the
+published board before reading and publishes the merged one after writing
+(``--no-fetch`` / ``--no-publish`` to skip). The first invocation finds nothing
+published, says so, and starts the board.
 
 Every invocation extends that board, so the second and every later command names
 only what is new:
@@ -220,8 +216,9 @@ merged board is written back — so adding one experiment costs one experiment's
 evaluation, not the whole board's. A run that *is* named is re-measured and
 replaces its old row; identity is the run label rather than the checkpoint
 filename, because more training on the same folder produces a different epoch's
-file for the same experiment. ``--board`` puts the board somewhere else, which
-is also how a throwaway comparison is made without disturbing the running one.
+file for the same experiment. ``--board`` keeps the board somewhere else, which is how a throwaway
+comparison is made without disturbing the running one: any path but the default
+is local by definition, neither fetched from W&B nor published to it.
 
 Rows that were never measured the same way are refused rather than merged: if
 anything in ``configs/eval_beat.yaml``'s run block, the ``--limit``, or whether
@@ -254,45 +251,36 @@ position head's confidence rather than decoded accuracy, so the lowest-loss
 epoch is not reliably the best-decoding one. Scoring all three of a
 ``save_top_k`` group would cost three model passes per run.
 
-The board is written twice, to the two places it is read from.
-``leaderboard.json`` is the record, DVC-tracked in the data repo;
-``leaderboard/LEADERBOARD.md`` is the page, **git-tracked in this checkout**,
-rewritten from the same payload on every run. It carries five things in the
-order a reader wants them: who leads and under what conditions, the ranked
-table, the ranking metric broken down per corpus with the best run of each in
-bold, the decode each row was scored at, and where each row's checkpoint is. So
-a number can be trusted — or spotted as stale, or traced back to the model that
-produced it — without grepping the JSON.
+A published board is two objects, from the same payload. The **table** is the
+board to look at: every column of every row, sortable and filterable in the
+browser, which is the only place a board this wide reads well. The **artifact**
+is the board to keep — the ``leaderboard.json`` that was just written, one
+version per publish. ``:latest`` is what the next invocation fetches, so a board
+travels between machines without either of them holding it, and the same file
+travels to a person as one download.
 
-The page is in git, not beside the JSON, because a page nobody can open is not
-a page. The data repo is behind a ``dvc pull`` and renders nowhere; in git the
-standings show up on GitHub and move visibly in a diff, which is where "which
-model is current" is actually asked. Its folder is created on write, and
-``--top`` cuts the page to the best N runs if it ever grows long (0, the
-default, is every run).
+They go to a W&B project of their own (``--project``, default
+``musicality-leaderboard``). A leaderboard is a different kind of object from a
+training run, and a board buried among a few hundred training runs is a board
+nobody finds. Each publish also writes the leader and the run count into the
+run summary, so the project's own run list is already a history of what led
+when.
 
-Two things about it are deliberate. Its ranked table reports the **macro**
-means, not the per-track ones the terminal prints: macro is what ordered the
-board, and printing micro under a heading sorted by macro reads as a broken
-sort. And the per-corpus table is of the ranking metric alone, because the
-weakest corpus is what gates "works everywhere" and it is rarely the same
-corpus for every run — the one thing a single ranked column cannot show.
+The copy in this checkout (``leaderboard/leaderboard.json``, gitignored) is a
+working file: what the merge reads before scoring and writes after, kept out of
+git because publishing is what shares a board here.
 
-Only the default ``--board`` writes the page. A board somewhere else is a
-throwaway comparison by definition, and letting one overwrite the committed
-page would version numbers nobody can reproduce. Committing it is a human's
-job, like every other file here; the run only says it was written.
-
-Nothing reads the page back, so it can be rebuilt from the JSON at any time, at
-no model pass:
+Publishing reads that file and nothing else, so it costs no model pass and can
+happen on its own:
 
 .. code-block:: bash
 
-    uv run python tools/leaderboard.py --render-only
+    uv run python tools/leaderboard.py --publish-only
 
-That pulls the board, re-renders the page, and pushes the board back —
-``--no-pull --no-push`` for a purely local render. It is also how the page
-picks up a change to its own layout, without re-measuring a thing.
+That is how a board that already exists gets onto W&B — a board from before
+this was published anywhere, or one whose upload failed — and it is deliberately
+not preceded by a fetch, which would replace the board being published with the
+one already up there.
 
 API reference
 -------------

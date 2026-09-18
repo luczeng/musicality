@@ -1,6 +1,5 @@
 data_dir: ../musicality_db
 splits_dir: ../musicality_db/splits
-leaderboard_dir: ../musicality_db/leaderboard
 tracks_dirname: tracks
 annotations_dirname: annotations
 beats_suffix: .beats

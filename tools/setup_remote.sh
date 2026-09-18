@@ -26,7 +26,7 @@ repo_root="$PWD"
 db_dir="$(uv run python -c 'import yaml; from pathlib import Path; print(Path(yaml.safe_load(open("configs/download.yaml"))["data_home"]).resolve())')"
 split_name="$(uv run python -c 'import yaml; from musicality.loaders.beat_dataset import beat_split_name; c = yaml.safe_load(open("configs/beat_train.yaml")); print(beat_split_name(c["data"]["input"], c.get("binary_only", False)))')"
 # Named by dataformat.yaml so a rename there doesn't leave this pulling a dead path.
-read -r splits_name board_name <<<"$(uv run python -c 'import musicality.dataformats as d; from pathlib import Path; print(Path(d.FORMAT.splits_dir).name, Path(d.FORMAT.leaderboard_dir).name)')"
+splits_name="$(uv run python -c 'import musicality.dataformats as d; from pathlib import Path; print(Path(d.FORMAT.splits_dir).name)')"
 
 echo "Pulling data from musicality_db..."
 if [ -d "$db_dir/.git" ]; then
@@ -47,11 +47,6 @@ split_dir="$db_dir/$splits_name/$split_name"
 corpora="$(cut -d/ -f1 "$split_dir/train.txt" "$split_dir/val.txt" | sort -u | tr '\n' ' ')"
 echo "Split $split_name needs: $corpora"
 (cd "$db_dir" && uv run --project "$repo_root" dvc pull $corpora)
-# Optional: there is no board until a first one has been pushed.
-if [ -f "$db_dir/$board_name.dvc" ]; then
-    (cd "$db_dir" && uv run --project "$repo_root" dvc pull "$board_name")
-fi
-
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"
 
