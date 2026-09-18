@@ -25,6 +25,11 @@ pairs plus their leftovers:
 """
 
 import math
+import os
+import time
+from collections import deque
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from itertools import islice
 from pathlib import Path
 
 import numpy as np
@@ -32,7 +37,12 @@ import torch
 import yaml
 
 import musicality.dataformats as dataformats
-from musicality.inference import detect_task, load_module, load_track_waveform
+from musicality.inference import (
+    detect_task,
+    load_module,
+    load_track_waveform,
+    resolve_device,
+)
 from musicality.loaders.beat_dataset import (
     BeatDataset,
     beat_split_name,
@@ -46,6 +56,25 @@ from musicality.postprocess import readout, readout_beat_only
 from musicality.splits.splitter import Splitter
 
 DATA_DIR = dataformats.ROOT / dataformats.load().data_dir
+
+# Decoding and resampling a full track costs more than the forward pass it
+# feeds — several times more on a GPU — and it is one core's work while the
+# accelerator waits. So it runs ahead on threads: `torchaudio.load` and
+# `T.Resample` both release the GIL, which is what makes threads (and not
+# processes) the cheap answer here — no waveform is ever pickled.
+AUDIO_WORKERS = min(8, os.cpu_count() or 1)
+
+# Grid points, on the other hand, are Python and numpy end to end, and on
+# threads they are measurably *slower* than serial (the GIL serializes them and
+# the contention costs on top). One process each, then.
+SWEEP_WORKERS = min(8, os.cpu_count() or 1)
+
+# What starting those processes costs, in seconds. Each is a fresh interpreter
+# importing this module — torch, lightning and mirdata behind it, ~5 s — and
+# they compete for the same cores doing it: measured at ~25 s for 8 workers on
+# a 10-core laptop. Big enough to lose a whole sweep, which is why `score_grid`
+# times a point and spreads the rest only when they cost more than this.
+POOL_STARTUP_S = 25.0
 
 # Default CLI/postprocessing values — see configs/eval_beat.yaml for what each means.
 DEFAULTS = yaml.safe_load((dataformats.ROOT / "configs" / "eval_beat.yaml").read_text())
@@ -172,6 +201,40 @@ def score_events(
     return row
 
 
+def prefetched_waveforms(paths: list, sample_rate: int, workers: int | None = None):
+    """Waveforms for *paths*, in order, decoded up to *workers* tracks ahead.
+
+    In order because everything downstream zips them against the annotations
+    they belong to. Bounded ahead, because a whole split of decoded audio does
+    not fit in memory: one eight-minute track is ~40 MB, and the point is to
+    keep the next few ready, not to hold them all.
+    """
+
+    workers = AUDIO_WORKERS if workers is None else workers
+
+    if workers <= 1:
+        yield from (load_track_waveform(path, sample_rate) for path in paths)
+        return
+
+    remaining = iter(paths)
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+
+        def submit(path):
+            return pool.submit(load_track_waveform, path, sample_rate)
+
+        pending = deque(submit(path) for path in islice(remaining, workers))
+
+        for path in remaining:
+            waveform = pending.popleft().result()
+            pending.append(submit(path))
+
+            yield waveform
+
+        while pending:
+            yield pending.popleft().result()
+
+
 def group_by_corpus(rows: list[dict]) -> dict[str, list[dict]]:
     """Group scored rows by their source corpus, preserving first-seen order."""
 
@@ -253,6 +316,102 @@ def summarize(rows: list[dict]) -> dict:
     return summary
 
 
+def decode_probs(
+    probs: np.ndarray,
+    knobs: dict,
+    *,
+    fps: float,
+    task: str,
+    softmax_head: bool,
+    advance: str = "index",
+) -> list[dict]:
+    """One track's frame probabilities, decoded into a labelled event list.
+
+    Beat-only output is wrapped as ``{"time", "beat_in_bar": None}`` so that
+    :func:`score_events` sees one shape for both tasks.
+
+    *softmax_head* is what tells the two beat-phase heads apart, not the
+    channel count: at ``group_size=2`` a softmax head is also ``(3, T)``, so
+    any shape heuristic silently misreads it as one/last.
+    """
+
+    if task == "beat_only":
+        times = readout_beat_only(
+            probs,
+            fps=fps,
+            beat_threshold=knobs["beat_threshold"],
+            min_distance_frames=knobs["min_distance_frames"],
+            gate_tolerance=knobs["gate_tolerance"],
+        )
+
+        return [{"time": float(t), "beat_in_bar": None} for t in times]
+
+    # A softmax head emits `beat` plus a group_size-way distribution; the older
+    # head emits three independent sigmoids. one/last are kept for the greedy
+    # decoder, which still speaks that language.
+    if softmax_head:
+        beat_p, position_probs = probs[0], probs[1:]
+        one_p, last_p = position_probs[0], position_probs[-1]
+    else:
+        beat_p, one_p, last_p = probs[0], probs[1], probs[2]
+        position_probs = None
+
+    return readout(
+        beat_p,
+        one_p,
+        last_p,
+        fps=fps,
+        beat_threshold=knobs["beat_threshold"],
+        min_distance_frames=knobs["min_distance_frames"],
+        gate_tolerance=knobs["gate_tolerance"],
+        anchor_threshold=knobs["anchor_threshold"],
+        group_size=knobs["group_size"],
+        decoder=knobs["decoder"],
+        switch_penalty=knobs["switch_penalty"],
+        advance=advance,
+        position_probs=position_probs,
+    )
+
+
+def score_probs(
+    *,
+    cached: list[tuple],
+    corpora: list[str],
+    knobs: dict,
+    fps: float,
+    tolerance: float,
+    trim: bool,
+    task: str,
+    softmax_head: bool,
+    advance: str = "index",
+) -> list[dict]:
+    """Every cached track, decoded under *knobs* and scored. One row each.
+
+    Takes the model pass's output rather than a model, so scoring the same
+    probabilities under a hundred knob sets — what a sweep is — needs nothing
+    on a GPU and can happen anywhere, this process or another.
+    """
+
+    rows = []
+    for (beat_times, positions, has_positions, probs), corpus in zip(cached, corpora):
+        events = decode_probs(
+            probs, knobs, fps=fps, task=task, softmax_head=softmax_head, advance=advance
+        )
+
+        row = score_events(
+            beat_times,
+            positions,
+            has_positions,
+            events,
+            tolerance=tolerance,
+            trim=trim,
+            group_size=knobs["group_size"],
+        )
+        rows.append({"corpus": corpus, **row})
+
+    return rows
+
+
 class BeatEvaluator:
     """Evaluates a beat-only or beat-phase checkpoint (task auto-detected from
     the checkpoint itself) on full-length tracks.
@@ -286,7 +445,7 @@ class BeatEvaluator:
         decoder: str | None = None,
         switch_penalty: float | None = None,
         limit: int | None = None,
-        device: str = "cpu",
+        device: str = "auto",
         verbose: bool = True,
     ):
         self.checkpoint = checkpoint
@@ -307,7 +466,9 @@ class BeatEvaluator:
         self.decoder = decoder
         self.switch_penalty = switch_penalty
         self.limit = limit
-        self.device = device
+        # Resolved here rather than at every `.to()`: one evaluator runs on
+        # one device, and a caller that prints it should see what it got.
+        self.device = resolve_device(device)
         self.verbose = verbose
         self._loaded = None
         self._probs = None
@@ -504,15 +665,16 @@ class BeatEvaluator:
         module, _task, dataset, indices = self.load()
         module_group_size = getattr(module, "hparams", {}).get("group_size")
 
-        cached = []
-        for i in indices:
-            audio_path, beat_times, positions, has_positions = dataset.samples[i]
+        samples = [dataset.samples[i] for i in indices]
+        waveforms = prefetched_waveforms(
+            [audio_path for audio_path, *_rest in samples], self.sample_rate
+        )
 
-            wav = (
-                load_track_waveform(audio_path, self.sample_rate)
-                .unsqueeze(0)
-                .to(self.device)
-            )
+        cached = []
+        for (_audio_path, beat_times, positions, has_positions), wav in zip(
+            samples, waveforms
+        ):
+            wav = wav.unsqueeze(0).to(self.device)
             logits = module(wav)[0]  # (T',) beat-only, or (n_outputs, T') beat-phase
 
             if module_group_size is not None:
@@ -528,57 +690,52 @@ class BeatEvaluator:
 
         return cached
 
-    def decode(
-        self, probs: np.ndarray, knobs: dict, advance: str = "index"
-    ) -> list[dict]:
-        """Turn one track's cached frame probabilities into a labelled event list.
+    def head(self) -> tuple[str, bool]:
+        """The two facts decoding needs about the checkpoint: its task, and
+        whether its bar-position head is a softmax rather than the older
+        one/last sigmoids.
 
-        Beat-only output is wrapped as ``{"time", "beat_in_bar": None}`` so
-        that :func:`score_events` sees one shape for both tasks.
+        Split out because they are all a decode needs of the model — two
+        scalars travel to another process, a loaded module does not.
         """
 
         module, task, _dataset, _indices = self.load()
 
-        if task == "beat_only":
-            times = readout_beat_only(
-                probs,
-                fps=self.fps,
-                beat_threshold=knobs["beat_threshold"],
-                min_distance_frames=knobs["min_distance_frames"],
-                gate_tolerance=knobs["gate_tolerance"],
-            )
+        return task, getattr(module, "hparams", {}).get("group_size") is not None
 
-            return [{"time": float(t), "beat_in_bar": None} for t in times]
+    def decode(
+        self, probs: np.ndarray, knobs: dict, advance: str = "index"
+    ) -> list[dict]:
+        """Turn one track's cached frame probabilities into a labelled event list."""
 
-        # A softmax head emits `beat` plus a group_size-way distribution; the
-        # older head emits three independent sigmoids. one/last are kept for
-        # the greedy decoder, which still speaks that language.
-        #
-        # The checkpoint's own `group_size` hyperparameter is what tells the
-        # two apart, not the channel count: at group_size=2 a softmax head is
-        # also (3, T), so any shape heuristic silently misreads it as one/last.
-        if getattr(module, "hparams", {}).get("group_size") is not None:
-            beat_p, position_probs = probs[0], probs[1:]
-            one_p, last_p = position_probs[0], position_probs[-1]
-        else:
-            beat_p, one_p, last_p = probs[0], probs[1], probs[2]
-            position_probs = None
+        task, softmax_head = self.head()
 
-        return readout(
-            beat_p,
-            one_p,
-            last_p,
+        return decode_probs(
+            probs,
+            knobs,
             fps=self.fps,
-            beat_threshold=knobs["beat_threshold"],
-            min_distance_frames=knobs["min_distance_frames"],
-            gate_tolerance=knobs["gate_tolerance"],
-            anchor_threshold=knobs["anchor_threshold"],
-            group_size=knobs["group_size"],
-            decoder=knobs["decoder"],
-            switch_penalty=knobs["switch_penalty"],
+            task=task,
+            softmax_head=softmax_head,
             advance=advance,
-            position_probs=position_probs,
         )
+
+    def scoring_context(self) -> dict:
+        """Everything :func:`score_probs` needs, and nothing that cannot cross
+        a process boundary — the cached probabilities and a handful of scalars,
+        no module and no dataset.
+        """
+
+        task, softmax_head = self.head()
+
+        return {
+            "cached": self.compute_track_probs(),
+            "corpora": self.track_corpora(),
+            "fps": self.fps,
+            "tolerance": self.tolerance,
+            "trim": self.trim,
+            "task": task,
+            "softmax_head": softmax_head,
+        }
 
     def score(self, *, advance: str = "index", **overrides) -> list[dict]:
         """Decode and score every selected track. One row per track.
@@ -592,28 +749,11 @@ class BeatEvaluator:
             ``modal_offset``.
         """
 
-        knobs = self.resolve_postprocess(**overrides)
-        cached = self.compute_track_probs()
-        corpora = self.track_corpora()
-
-        rows = []
-        for (beat_times, positions, has_positions, probs), corpus in zip(
-            cached, corpora
-        ):
-            events = self.decode(probs, knobs, advance=advance)
-
-            row = score_events(
-                beat_times,
-                positions,
-                has_positions,
-                events,
-                tolerance=self.tolerance,
-                trim=self.trim,
-                group_size=knobs["group_size"],
-            )
-            rows.append({"corpus": corpus, **row})
-
-        return rows
+        return score_probs(
+            knobs=self.resolve_postprocess(**overrides),
+            advance=advance,
+            **self.scoring_context(),
+        )
 
     def run(self) -> list[dict]:
         """Score the selected split under the configured settings, printing a
@@ -646,6 +786,84 @@ class BeatEvaluator:
             print(summary_block(summarize(rows)))
 
         return rows
+
+
+_GRID_CONTEXT: dict = {}
+
+
+def _load_grid_context(context: dict) -> None:
+    """Hand one worker the cached probabilities, once per worker rather than
+    once per grid point — they are the only large thing a point needs."""
+
+    _GRID_CONTEXT.update(context)
+
+
+def _score_grid_point(knobs: dict) -> dict:
+    """One grid point, in a worker: only its summary comes back, not the rows."""
+
+    return summarize(score_probs(knobs=knobs, **_GRID_CONTEXT))
+
+
+def score_grid(
+    evaluator: BeatEvaluator,
+    grid: list[dict],
+    *,
+    group_size: int,
+    workers: int | None = None,
+) -> list[dict]:
+    """:func:`summarize` for each knob set in *grid*, in the order given.
+
+    The model pass is memoized, so a grid costs no GPU at all — it is decoding
+    and ``mir_eval``, which is where a sweep's wall time actually goes: sixty
+    grid points over fifty full-length tracks is tens of thousands of decodes
+    on one core. They are independent, so they run in *workers* processes
+    (processes, not threads: the work is Python and numpy, and threads measured
+    slower than serial).
+
+    Each worker is handed the cached probabilities once through an
+    initializer, and returns one summary dict — so what crosses a process
+    boundary is a split's worth of probabilities per worker and a handful of
+    floats per point.
+    """
+
+    workers = SWEEP_WORKERS if workers is None else workers
+
+    def score(knobs: dict) -> dict:
+        return summarize(evaluator.score(group_size=group_size, **knobs))
+
+    if workers <= 1 or len(grid) <= 1:
+        return [score(knobs) for knobs in grid]
+
+    # The first point has to be scored either way, so it is scored here and
+    # timed: whether the rest are worth spreading out is a question about what
+    # a point costs — fifty full-length tracks or two short ones — and not one
+    # about how many there are.
+    start = time.perf_counter()
+    first, rest = score(grid[0]), grid[1:]
+
+    if (time.perf_counter() - start) * len(rest) < 2 * POOL_STARTUP_S:
+        return [first, *(score(knobs) for knobs in rest)]
+
+    points = [
+        evaluator.resolve_postprocess(group_size=group_size, **knobs) for knobs in rest
+    ]
+
+    try:
+        with ProcessPoolExecutor(
+            max_workers=min(workers, len(points)),
+            initializer=_load_grid_context,
+            initargs=(evaluator.scoring_context(),),
+        ) as pool:
+            return [first, *pool.map(_score_grid_point, points)]
+    except RuntimeError as error:
+        # Workers are spawned, which re-imports the caller's ``__main__``: a
+        # script without the usual ``if __name__ == "__main__":`` guard cannot
+        # have any, and neither can a pool whose workers died. One core is
+        # slower, not different — and a failure that was really in the scoring
+        # raises again below, in this process, where it reads.
+        print(f"[eval] grid scored on one core ({type(error).__name__}: {error})")
+
+        return [first, *(score(knobs) for knobs in rest)]
 
 
 def summary_block(summary: dict) -> str:

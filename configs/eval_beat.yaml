@@ -11,7 +11,7 @@ binary_only: true  # must match how the split was created
 sample_rate: 22050  # must match the checkpoint's training config
 hop_length: 512  # must match the checkpoint's training config
 tolerance: 0.07  # F-measure matching window, seconds
-device: cpu
+device: auto
 
 # --- Postprocessing, per task -------------------------------------------
 # Selected automatically by musicality.inference.detect_task.

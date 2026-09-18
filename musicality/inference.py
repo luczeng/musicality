@@ -26,6 +26,33 @@ from musicality.trainers.beat_phase_module import BeatPhaseModule
 _MODULE_CLASSES = {"beat_only": BeatModule, "beat_phase": BeatPhaseModule}
 
 
+def resolve_device(device: str | torch.device = "auto") -> str | torch.device:
+    """The device to run on, with ``"auto"`` picking the best one present.
+
+    Evaluation defaulted to the CPU for years of small local runs, which on a
+    rented GPU instance means the accelerator sits idle unless every command
+    remembers ``--device cuda``. ``auto`` is the default instead: it costs
+    nothing where there is no GPU, and it is the difference between minutes
+    and hours where there is one.
+
+    Anything else is returned untouched, so ``--device cpu`` still forces the
+    CPU — which is what a numerical comparison against an old board wants, and
+    so that a caller holding a real ``torch.device`` (a training run scoring
+    itself on whatever device it is already on) can pass it straight through.
+    """
+
+    if device != "auto":
+        return device
+
+    if torch.cuda.is_available():
+        return "cuda"
+
+    if torch.backends.mps.is_available():
+        return "mps"
+
+    return "cpu"
+
+
 def detect_task(hyper_parameters: dict) -> str:
     """Task tag declared explicitly by the checkpoint's training config
     (``configs/beat_train.yaml``'s / ``configs/beat_only_train.yaml``'s

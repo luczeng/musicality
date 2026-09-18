@@ -4,7 +4,7 @@ import pytest
 import torch
 from omegaconf import OmegaConf
 
-from musicality.inference import detect_task, load_module
+from musicality.inference import detect_task, load_module, resolve_device
 from musicality.trainers.beat_module import BeatModule
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
@@ -114,3 +114,31 @@ class TestLoadModule:
 
         with pytest.raises(KeyError):
             load_module(path, device="cpu")
+
+
+class TestResolveDevice:
+    """`auto` is the shipped default, so what it picks decides whether a rented
+    GPU is used at all."""
+
+    def test_auto_takes_cuda_when_there_is_one(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+        assert resolve_device("auto") == "cuda"
+
+    def test_auto_falls_back_to_mps_then_cpu(self, monkeypatch):
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+
+        assert resolve_device("auto") == "mps"
+
+        monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+
+        assert resolve_device("auto") == "cpu"
+
+    def test_an_explicit_device_is_never_overridden(self, monkeypatch):
+        """`--device cpu` is how a board is re-measured comparably against one
+        scored on a CPU, so it has to mean the CPU even next to a GPU."""
+
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+        assert resolve_device("cpu") == "cpu"

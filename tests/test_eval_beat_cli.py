@@ -95,6 +95,15 @@ class _StubEvaluator:
         return self.per_call.pop(0)
 
 
+@pytest.fixture(autouse=True)
+def serial_sweeps(monkeypatch):
+    """Every sweep here is driven by a stub evaluator, which is the serial path
+    by construction — the parallel one hands real cached probabilities to worker
+    processes, and tests/test_evaluation.py covers that the two agree."""
+
+    monkeypatch.setattr("musicality.evaluation.SWEEP_WORKERS", 1)
+
+
 class TestRankKey:
     def test_macro_prefixes_the_metric(self):
         assert rank_key("position_acc", "macro") == "macro_position_acc"

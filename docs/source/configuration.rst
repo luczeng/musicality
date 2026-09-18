@@ -570,6 +570,13 @@ Top level
 match how the split was created; ``tolerance`` is the F-measure matching window
 in seconds.
 
+``device`` defaults to ``auto``, which
+:func:`musicality.inference.resolve_device` resolves to ``cuda``, then ``mps``,
+then ``cpu`` — whichever is present. It used to default to ``cpu``, which on a
+rented GPU instance meant the accelerator sat idle unless every command
+remembered ``--device cuda``. Naming a device explicitly still wins: ``cpu`` is
+what re-measuring a board comparably against CPU-scored rows wants.
+
 ``dataset`` and ``binary_only`` together name the split that gets evaluated —
 :func:`musicality.loaders.beat_dataset.beat_split_name` folds the second into
 the directory name, so ``merge`` + ``binary_only: true`` reads

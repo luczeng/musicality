@@ -10,6 +10,8 @@ Two layers:
   ``score_events`` mocked, so no real checkpoint, audio, or inference happens.
 """
 
+import pickle
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -23,7 +25,11 @@ from musicality.evaluation import (
     DEFAULTS,
     SCORE_KEYS,
     BeatEvaluator,
+    _load_grid_context,
+    _score_grid_point,
+    prefetched_waveforms,
     score_events,
+    score_grid,
     summarize,
     summary_block,
 )
@@ -557,3 +563,151 @@ class TestFromModule:
         )
 
         assert evaluator.track_corpora() == ["ballroom", "jtd", "jtd"]
+
+
+class TestPrefetchedWaveforms:
+    """Decoding runs ahead of the forward pass; nothing else about the pass
+    changes, so order and bounds are what there is to get wrong."""
+
+    def _loader(self, monkeypatch, slow=()):
+        loaded = []
+
+        def _load(path, sample_rate):
+            loaded.append(path)
+            if path in slow:
+                time.sleep(0.05)
+
+            return path
+
+        monkeypatch.setattr("musicality.evaluation.load_track_waveform", _load)
+
+        return loaded
+
+    def test_waveforms_arrive_in_the_order_asked_for(self, monkeypatch):
+        """Everything downstream zips them against their own annotations, so a
+        swap would score every track against the next track's beats."""
+
+        self._loader(monkeypatch, slow=("a.wav",))
+        paths = ["a.wav", "b.wav", "c.wav", "d.wav"]
+
+        assert list(prefetched_waveforms(paths, 22050, workers=4)) == paths
+
+    def test_it_reads_ahead_without_decoding_the_whole_split(self, monkeypatch):
+        """A split of decoded audio is gigabytes — the point is to keep the
+        next few ready, not all of them."""
+
+        loaded = self._loader(monkeypatch)
+        stream = prefetched_waveforms([f"{i}.wav" for i in range(20)], 22050, workers=2)
+
+        next(stream)
+
+        assert len(loaded) <= 3  # the two in flight, plus the one just queued
+        assert len(list(stream)) == 19
+
+    def test_one_worker_still_yields_every_track(self, monkeypatch):
+        self._loader(monkeypatch)
+
+        assert list(prefetched_waveforms(["a.wav", "b.wav"], 22050, workers=1)) == [
+            "a.wav",
+            "b.wav",
+        ]
+
+
+class TestScoreGrid:
+    """A sweep's wall time is this function, so it runs across processes. The
+    numbers it reports must not depend on that."""
+
+    def _evaluator(self, n_tracks=2, n_frames=400):
+        module = MagicMock()
+        module.hparams = {"task": "beat_only"}
+
+        evaluator = BeatEvaluator.from_module(
+            module, _fake_dataset(n_tracks), verbose=False, device="cpu"
+        )
+
+        # Peaks on the reference beats of `_fake_dataset`, so the grid's
+        # thresholds actually separate: one track hits them, one does not.
+        fps = evaluator.fps
+        probs = np.full(n_frames, 0.1)
+        for beat in (6.0, 6.5, 7.0, 7.5):
+            probs[int(beat * fps)] = 0.9
+
+        evaluator._probs = [
+            (np.array([6.0, 6.5, 7.0, 7.5]), None, False, probs * (1 - 0.5 * i))
+            for i in range(n_tracks)
+        ]
+
+        return evaluator
+
+    def _grid(self):
+        return [{"beat_threshold": t} for t in (0.2, 0.6, 0.8)]
+
+    def test_a_worker_reports_what_serial_scoring_would(self):
+        """The worker path is the same `score_probs` with the same context, and
+        this is what says so — element by element, so it covers the order the
+        caller zips the knobs back on by."""
+
+        evaluator = self._evaluator()
+        points = [
+            evaluator.resolve_postprocess(group_size=4, **knobs)
+            for knobs in self._grid()
+        ]
+
+        serial = score_grid(evaluator, self._grid(), group_size=4, workers=1)
+
+        _load_grid_context(evaluator.scoring_context())
+        in_worker = [_score_grid_point(point) for point in points]
+
+        assert [row["f_beat"] for row in in_worker] == pytest.approx(
+            [row["f_beat"] for row in serial], nan_ok=True
+        )
+
+    def test_a_cheap_grid_is_never_worth_a_pool(self, monkeypatch):
+        """Eight workers are eight torch imports competing for the same cores —
+        measured at 25 s, against a grid that scores in 6."""
+
+        def _no_pool(*args, **kwargs):
+            raise AssertionError("a pool was started for a grid that is faster serial")
+
+        monkeypatch.setattr("musicality.evaluation.ProcessPoolExecutor", _no_pool)
+
+        rows = score_grid(self._evaluator(), self._grid(), group_size=4, workers=8)
+
+        assert len(rows) == len(self._grid())
+
+    def test_workers_that_cannot_start_cost_time_not_the_run(self, monkeypatch, capsys):
+        """A script with no `if __name__ == "__main__":` guard cannot spawn any
+        — and losing the model pass over that would be absurd."""
+
+        def _broken(*args, **kwargs):
+            raise RuntimeError("An attempt has been made to start a new process")
+
+        monkeypatch.setattr("musicality.evaluation.POOL_STARTUP_S", 0)
+        monkeypatch.setattr("musicality.evaluation.ProcessPoolExecutor", _broken)
+
+        rows = score_grid(self._evaluator(), self._grid(), group_size=4, workers=8)
+
+        assert len(rows) == len(self._grid())
+        assert "on one core" in capsys.readouterr().out
+
+    def test_the_context_survives_a_process_boundary(self):
+        """It is handed to worker processes, so it must hold cached arrays and
+        scalars — never the module or the dataset, which do not pickle."""
+
+        context = self._evaluator().scoring_context()
+
+        restored = pickle.loads(pickle.dumps(context))
+
+        assert restored["task"] == context["task"]
+        assert len(restored["cached"]) == len(context["cached"])
+        assert restored["corpora"] == context["corpora"]
+
+    def test_one_summary_per_grid_point(self):
+        evaluator = self._evaluator()
+        grid = self._grid()
+
+        rows = score_grid(evaluator, grid, group_size=4, workers=1)
+
+        assert len(rows) == len(grid)
+        # A rising threshold can only drop beats, never add them.
+        assert rows[0]["f_beat"] >= rows[-1]["f_beat"]

@@ -273,6 +273,12 @@ in the config) and the report on val, so the knobs are never chosen on the track
 they are then scored on — unlike `eval_beat.py --sweep`, which tunes and reports
 on the same split and is optimistic as a result.
 
+It uses the hardware it finds: the GPU by default (`device: auto`), audio
+decoded a few tracks ahead on threads, and the sweep's grid spread across
+processes when it is big enough to pay for them. See the docs
+([Where an evaluation spends its time](docs/source/workflows.rst)) for the
+measurements behind that.
+
 Every invocation extends one running board, which lives on W&B — fetched before
 reading and published after writing, so a board built on a rented instance
 survives the instance. You only ever evaluate what's new:

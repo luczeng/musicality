@@ -292,6 +292,69 @@ this was published anywhere, or one whose upload failed — and it is deliberate
 not preceded by a fetch, which would replace the board being published with the
 one already up there.
 
+Where an evaluation spends its time
+-----------------------------------
+
+Scoring a full-length split is three costs, and they are not the ones people
+expect. Measured on a 10-core laptop, per track:
+
+.. list-table::
+   :header-rows: 1
+
+   * - corpus
+     - track
+     - audio load + resample
+     - forward (CPU)
+   * - gtzan
+     - 0.5 min
+     - 14 ms
+     - 24 ms
+   * - ballroom
+     - 0.5 min
+     - 42 ms
+     - 25 ms
+   * - jtd
+     - 2.6 min
+     - 320 ms
+     - 121 ms
+   * - rwc_classical
+     - 8.4 min
+     - 1248 ms
+     - 386 ms
+
+**The model is the cheap part.** On the long corpora, decoding and resampling
+the audio costs three times the forward pass on a CPU — and on a GPU, where the
+same forward is a few milliseconds, it is effectively all of it. So
+:meth:`~musicality.evaluation.BeatEvaluator.compute_track_probs` reads ahead:
+:func:`~musicality.evaluation.prefetched_waveforms` decodes up to
+``AUDIO_WORKERS`` tracks on threads (``torchaudio.load`` and ``T.Resample``
+both release the GIL, so no waveform is ever pickled), bounded rather than
+eager because a split of decoded audio is gigabytes. Measured over 24 jtd
+tracks: 3.10 s serial, 0.84 s prefetched.
+
+**The device is now chosen, not assumed.** ``configs/eval_beat.yaml`` ships
+``device: auto``, resolved by :func:`musicality.inference.resolve_device` to
+``cuda``, then ``mps``, then ``cpu``. It defaulted to ``cpu`` until now, which
+is the difference between minutes and hours on a rented GPU.
+
+**A sweep is decoding, not inference.** The model pass is memoized, so the
+sixty-point beat grid re-runs only the decoder and ``mir_eval`` — tens of
+thousands of decodes for one checkpoint, all of it Python and numpy on one
+core. :func:`~musicality.evaluation.score_grid` spreads those points across
+``SWEEP_WORKERS`` processes. Processes, not threads: threads measured *slower*
+than serial, because the GIL serializes the work anyway and the contention
+costs on top.
+
+Starting those processes is not free — each is a fresh interpreter importing
+this package, which pulls torch, lightning and mirdata behind it (~5 s), and
+eight of them compete for the same cores doing it (~25 s all told). So
+``score_grid`` scores the first point in-process, times it, and spreads the
+rest only when they cost more than the pool does. A sweep of 50 full-length
+tracks clears that easily; a grid over a handful of 30-second clips does not,
+and stays serial. Workers that cannot start at all — a script with no
+``if __name__ == "__main__":`` guard cannot spawn any — cost the run one
+printed line, not the model pass it already paid for.
+
 API reference
 -------------
 

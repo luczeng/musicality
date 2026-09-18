@@ -72,6 +72,7 @@ from musicality.evaluation import (
     _fmt,
     _mean,
     group_by_corpus,
+    score_grid,
     summarize,
 )
 from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
@@ -468,12 +469,15 @@ def sweep_grid(
     group_size: int,
     metric: str,
     rank_by: str,
+    workers: int | None = None,
 ) -> list[dict]:
     """Score one list of knob dicts, best first.
 
     Each entry of *grid* is a set of overrides for
     :meth:`~musicality.evaluation.BeatEvaluator.score`. Because
-    ``compute_track_probs`` is memoized, every entry re-runs only the decoder.
+    ``compute_track_probs`` is memoized, every entry re-runs only the decoder —
+    in parallel, across processes (see
+    :func:`~musicality.evaluation.score_grid`).
 
     :returns: One row per grid entry — the knobs it used, plus every micro and
         macro aggregate :func:`~musicality.evaluation.summarize` produces —
@@ -484,8 +488,10 @@ def sweep_grid(
     higher_is_better = _BETTER[metric] is max
 
     scored = [
-        {**knobs, **summarize(evaluator.score(group_size=group_size, **knobs))}
-        for knobs in grid
+        {**knobs, **summary}
+        for knobs, summary in zip(
+            grid, score_grid(evaluator, grid, group_size=group_size, workers=workers)
+        )
     ]
 
     def _rank(row: dict) -> float:

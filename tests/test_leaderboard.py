@@ -217,7 +217,13 @@ def fake_wandb(monkeypatch):
 
 @pytest.fixture
 def small_grid(monkeypatch):
-    """A two-point grid in place of the shipped one, so a test can count calls."""
+    """A two-point grid in place of the shipped one, so a test can count calls.
+
+    Also pins scoring to one process: these drive the sweep with a stub
+    evaluator, which only the serial path goes through.
+    """
+
+    monkeypatch.setattr("musicality.evaluation.SWEEP_WORKERS", 1)
 
     grid = {
         "split": "train",
