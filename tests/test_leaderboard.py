@@ -17,20 +17,20 @@ from musicality.dataformats.track_io import TrackRef
 from tools.leaderboard import (
     BOARD_COLUMNS,
     DEFAULT_BOARD,
-    PAGE_PATH,
     build_payload,
+    parse_args,
     dvc,
     find_runs,
     load_board,
     merge,
     publish,
-    page_for,
     rank_rows,
     ranked_metric,
-    render_summary,
+    section,
+    render_page,
     run_checkpoints,
     write_board,
-    write_summary,
+    write_page,
     settings_for,
     sweep_evaluator,
     sweep_knobs,
@@ -119,6 +119,48 @@ class _StubEvaluator:
 
 def _rows(**metrics) -> list[dict]:
     return [{"corpus": "ballroom", **metrics}]
+
+
+def _board(n_runs: int = 2, **overrides) -> dict:
+    """A payload shaped like a real board: the best run carries every field a
+    section of the page reads, the rest only what the ranking needs."""
+
+    rows = [
+        {
+            "run": f"run{i}",
+            "n_tracks": 10,
+            "macro_f_beat": 0.9 - i / 100,
+            "f_beat": 0.5,
+            "checkpoint": f"checkpoints/run{i}/epoch{i}.ckpt",
+        }
+        for i in range(n_runs)
+    ]
+    rows[0] |= {
+        "task": "beat_phase",
+        "swept_on": "train",
+        "sweep_n_tracks": 50,
+        "beat_threshold": 0.8,
+        "switch_penalty": None,
+        "measured_utc": "2026-09-18T18:05:45+00:00",
+        "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
+    }
+
+    return {
+        "generated_utc": "2026-09-18T18:08:03+00:00",
+        "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
+        "eval": {"dataset": "merge", "split": "val", "tolerance": 0.07},
+        "ranked_by": "macro_f_beat",
+        "leaderboard": rows,
+        "per_corpus": {
+            "run0": {
+                "ballroom": {"n_tracks": 6, "f_beat": 0.6},
+                "jtd": {"n_tracks": 4, "f_beat": 0.95},
+            },
+            "run1": {"ballroom": {"n_tracks": 6, "f_beat": 0.8}},
+        },
+        "failed": {},
+        **overrides,
+    }
 
 
 @pytest.fixture
@@ -472,53 +514,30 @@ class TestBuildPayload:
         assert payload["failed"] == {"a": "boom"}
 
 
-class TestRenderSummary:
-    """The Markdown page beside the board: what it says, and what it must not
-    quietly get wrong — the numbers on it are the ones people quote."""
+class TestSection:
+    """The one shape every table on the page goes through."""
 
-    def _payload(self, **overrides):
-        rows = [
-            {
-                "run": "deeper",
-                "n_tracks": 10,
-                "task": "beat_phase",
-                "macro_f_beat": 0.9,
-                "macro_confusion": 0.1,
-                "f_beat": 0.5,
-                "swept_on": "train",
-                "sweep_n_tracks": 50,
-                "beat_threshold": 0.8,
-                "switch_penalty": None,
-                "checkpoint": "checkpoints/deeper/beat-phase-epoch3.ckpt",
-                "measured_utc": "2026-09-18T18:05:45+00:00",
-                "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
-            },
-            {"run": "norm", "n_tracks": 10, "macro_f_beat": 0.7, "f_beat": 0.8},
-        ]
+    def test_labels_align_left_and_numbers_right(self):
+        lines = section("Ranking", ["run", "f_beat"], [["`a`", "0.900"]], "a note")
 
-        return {
-            "generated_utc": "2026-09-18T18:08:03+00:00",
-            "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
-            "eval": {"dataset": "merge", "split": "val", "tolerance": 0.07},
-            "ranked_by": "macro_f_beat",
-            "leaderboard": rows,
-            "per_corpus": {
-                "deeper": {
-                    "ballroom": {"n_tracks": 6, "f_beat": 0.6},
-                    "jtd": {"n_tracks": 4, "f_beat": 0.95},
-                },
-                "norm": {"ballroom": {"n_tracks": 6, "f_beat": 0.8}},
-            },
-            "failed": {},
-            **overrides,
-        }
+        assert lines[0] == "## Ranking"
+        assert lines[3] == "| --- | ---: |"
+        assert lines[-1] == "a note"
+
+    def test_a_section_without_a_note_ends_at_its_table(self):
+        assert section("Provenance", ["run"], [["`a`"]])[-1] == "| `a` |"
+
+
+class TestRenderPage:
+    """What the page says, and what it must not quietly get wrong — the
+    numbers on it are the ones people quote."""
 
     def test_the_ranking_table_reports_the_macro_means(self):
         """Micro is what the terminal table prints, macro is what ranked the
         board — printing one under a heading ordered by the other invites
         exactly the wrong read."""
 
-        page = render_summary(self._payload())
+        page = render_page(_board())
         ranking = page.split("## Ranking")[1].split("##")[0]
 
         assert "0.900" in ranking
@@ -527,12 +546,12 @@ class TestRenderSummary:
     def test_rows_keep_the_order_the_board_was_written_in(self):
         """Ranking happens in `rank_rows`; rendering must not re-sort."""
 
-        page = render_summary(self._payload())
+        page = render_page(_board())
 
-        assert page.index("`deeper`") < page.index("`norm`")
+        assert page.index("`run0`") < page.index("`run1`")
 
     def test_the_ranked_column_is_marked(self):
-        page = render_summary(self._payload())
+        page = render_page(_board())
 
         assert "**f_beat ↑**" in page
         assert "confuse ↓" in page
@@ -541,7 +560,7 @@ class TestRenderSummary:
         """The macro mean averages this away, and the winner differs per
         corpus far more often than the headline number suggests."""
 
-        page = render_summary(self._payload())
+        page = render_page(_board())
         ballroom = next(
             line for line in page.splitlines() if line.startswith("| `ballroom`")
         )
@@ -550,7 +569,7 @@ class TestRenderSummary:
         assert "**0.600**" not in ballroom
 
     def test_a_corpus_a_run_never_scored_is_a_gap_not_a_zero(self):
-        page = render_summary(self._payload())
+        page = render_page(_board())
         jtd = next(line for line in page.splitlines() if line.startswith("| `jtd`"))
 
         assert jtd.endswith("| n/a |")
@@ -559,7 +578,7 @@ class TestRenderSummary:
         """`switch_penalty: None` is the exact single-offset decode, not an
         absent setting."""
 
-        decode = render_summary(self._payload()).split("## Decode")[1].split("\n## ")[0]
+        decode = render_page(_board()).split("## Decode")[1].split("\n## ")[0]
         swept, unswept = [
             line for line in decode.splitlines() if line.startswith("| ")
         ][2:]
@@ -570,7 +589,7 @@ class TestRenderSummary:
     def test_an_empty_board_still_renders_a_page(self):
         """The first invocation can fail every checkpoint it was given."""
 
-        page = render_summary({"leaderboard": [], "failed": {"norm": "boom"}})
+        page = render_page({"leaderboard": [], "failed": {"norm": "boom"}})
 
         assert "Nothing scored yet." in page
         assert "boom" in page
@@ -579,7 +598,7 @@ class TestRenderSummary:
         """`ranked_by` moved out of `eval`; a board written before that is
         still the board people pull."""
 
-        payload = self._payload(ranked_by=None)
+        payload = _board(ranked_by=None)
         payload["eval"]["ranked_by"] = "macro_position_acc"
 
         assert ranked_metric(payload) == "position_acc"
@@ -590,34 +609,16 @@ class TestPagePlacement:
     repo rather than written beside the JSON: the data repo is behind a `dvc
     pull` and renders nowhere, so a page written there is one nobody opens."""
 
-    def _payload(self, n_runs=7):
-        return {
-            "generated_utc": "2026-09-18T18:08:03+00:00",
-            "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
-            "eval": {"dataset": "merge", "split": "val", "tolerance": 0.07},
-            "ranked_by": "macro_f_beat",
-            "leaderboard": [
-                {
-                    "run": f"run{i}",
-                    "n_tracks": 10,
-                    "macro_f_beat": 0.9 - i / 100,
-                    "checkpoint": f"checkpoints/run{i}/epoch{i}.ckpt",
-                }
-                for i in range(n_runs)
-            ],
-            "per_corpus": {},
-        }
-
     def test_every_run_is_listed_by_default(self):
         """The page is the leaderboard, not an excerpt of one."""
 
-        page = render_summary(self._payload())
+        page = render_page(_board(7))
 
         assert "`run6`" in page
         assert "of 7 shown" not in page
 
     def test_top_cuts_it_to_the_best_few(self):
-        page = render_summary(self._payload(), top=5)
+        page = render_page(_board(7), top=5)
 
         assert "best 5 of 7 shown" in page
         assert "`run4`" in page
@@ -626,41 +627,52 @@ class TestPagePlacement:
     def test_each_row_names_the_checkpoint_behind_it(self):
         """A good number has to lead straight to the model that made it."""
 
-        page = render_summary(self._payload(), top=2)
+        page = render_page(_board(7), top=2)
 
         assert "`checkpoints/run0/epoch0.ckpt`" in page
         assert "`checkpoints/run2/epoch2.ckpt`" not in page
 
-    def test_only_the_running_board_has_a_page(self, tmp_path):
+    def test_a_throwaway_board_writes_nothing(self, tmp_path, monkeypatch):
         """A `--board` elsewhere is a throwaway comparison: committing its
         numbers would version something nobody can reproduce."""
 
-        assert page_for(DEFAULT_BOARD) == PAGE_PATH
-        assert page_for(tmp_path / "leaderboard.json") is None
+        monkeypatch.setattr("tools.leaderboard.PAGE_PATH", tmp_path / "PAGE.md")
 
-    def test_an_equivalent_path_to_the_running_board_still_has_one(self):
-        """`--board` typed out by hand is the same file, not a throwaway."""
+        write_page(_board(), tmp_path / "leaderboard.json")
 
-        assert page_for(DEFAULT_BOARD.resolve()) == PAGE_PATH
+        assert not (tmp_path / "PAGE.md").exists()
 
-    def test_a_throwaway_board_writes_nothing(self, tmp_path, monkeypatch):
-        page = tmp_path / "LEADERBOARD.md"
-        monkeypatch.setattr("tools.leaderboard.PAGE_PATH", page)
-
-        write_summary(self._payload(), tmp_path / "leaderboard.json")
-
-        assert not page.exists()
-
-    def test_the_page_folder_is_created_if_missing(self, tmp_path, monkeypatch):
-        """It is the page's own folder, and a fresh clone has neither."""
+    def test_the_running_board_writes_it_folder_and_all(self, tmp_path, monkeypatch):
+        """The page's folder is its own, and a fresh clone has neither."""
 
         page = tmp_path / "leaderboard" / "LEADERBOARD.md"
         monkeypatch.setattr("tools.leaderboard.PAGE_PATH", page)
-        monkeypatch.setattr("tools.leaderboard.page_for", lambda board: page)
 
-        write_summary(self._payload(), DEFAULT_BOARD)
+        write_page(_board(), DEFAULT_BOARD.resolve())
 
         assert page.read_text().startswith("# Beat leaderboard")
+
+
+class TestCliSurface:
+    """The one rule argparse cannot state on its own: runs are optional, but
+    only when there is nothing to score."""
+
+    def _parse(self, monkeypatch, *argv):
+        monkeypatch.setattr("sys.argv", ["leaderboard.py", *argv])
+
+        return parse_args()
+
+    def test_a_render_needs_no_runs(self, monkeypatch):
+        args = self._parse(monkeypatch, "--render-only")
+
+        assert args.runs == []
+        assert args.top == 0  # the page lists every run unless asked otherwise
+
+    def test_naming_nothing_at_all_is_an_error(self, monkeypatch):
+        """Otherwise it reads as a no-op run that silently scored nothing."""
+
+        with pytest.raises(SystemExit):
+            self._parse(monkeypatch)
 
 
 def _reject(value):

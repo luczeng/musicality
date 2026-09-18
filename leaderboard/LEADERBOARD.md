@@ -6,7 +6,7 @@
 - Postprocessing swept per checkpoint on `train` (see *Decode*)
 - Measured 2026-09-18 18:08 UTC at commit `f8a702c`
 
-Written by `tools/leaderboard.py` and committed here, so the standings read on GitHub without a `dvc pull`. The board behind it — every metric, per track and per corpus — is `leaderboard.json` under `../musicality_db/leaderboard` in the data repo. Rebuild this page from it alone, scoring nothing, with `uv run python tools/leaderboard.py --render-only` (add `--no-pull --no-push` to touch no remote).
+Written by `tools/leaderboard.py` from `leaderboard.json` in the data repo, which holds every metric, per track and per corpus. Rebuild this page from it, scoring nothing: `uv run python tools/leaderboard.py --render-only`.
 
 ## Ranking
 
@@ -20,7 +20,7 @@ Written by `tools/leaderboard.py` and committed here, so the standings read on G
 | 6 | `checkpoints_deeper/20260917-191728` | 277 | 0.746 | 0.495 | 0.719 | 0.588 | 0.634 | 0.274 |
 | 7 | `checkpoints_norm/20260917-212927` | 277 | 0.673 | 0.515 | 0.655 | 0.612 | 0.676 | 0.278 |
 
-Macro means, each corpus weighted once; ranked by `f_beat`. The per-track (micro) means are in the JSON, under each row's bare metric keys.
+Macro means, each corpus weighted once; ranked by `f_beat`. The per-track (micro) means are in the JSON.
 
 ## `f_beat` per corpus
 
@@ -34,7 +34,7 @@ Macro means, each corpus weighted once; ranked by `f_beat`. The per-track (micro
 | `rwc_classical` | 7 | **0.555** | 0.456 | 0.541 | 0.403 | 0.490 | 0.538 | 0.184 |
 | `rwc_jazz` | 7 | 0.699 | 0.736 | **0.795** | 0.703 | 0.757 | 0.747 | 0.511 |
 
-Columns are the ranking positions above. Best per corpus in bold.
+Columns are the ranking positions above; best per corpus in bold.
 
 ## Decode
 
@@ -48,7 +48,7 @@ Columns are the ranking positions above. Best per corpus in bold.
 | 6 | beat_phase | 0.6 | 4 | 0.15 | global | 0.25 | 0.8 | `train` (50 tracks) |
 | 7 | beat_phase | 0.8 | 1 | 0.3 | global | 2.0 | 0.8 | `train` (50 tracks) |
 
-Knobs tuned on a split the board does not report, so these numbers stay held out. `none` on `switch_pen` is the exact single-offset decode.
+Tuned on a split the board does not report, so these numbers stay held out. `none` on `switch_pen` is the exact single-offset decode.
 
 ## Provenance
 
@@ -61,5 +61,3 @@ Knobs tuned on a split the board does not report, so these numbers stay held out
 | 5 | `checkpoints_norm/20260917-211603/beat-phase-epoch27-valloss1.6707.ckpt` | 2026-09-18 18:01 UTC | `f8a702c` |
 | 6 | `checkpoints_deeper/20260917-191728/beat-phase-epoch115-valloss1.5100.ckpt` | 2026-09-18 17:54 UTC | `f8a702c` |
 | 7 | `checkpoints_norm/20260917-212927/beat-phase-epoch75-valloss1.6898.ckpt` | 2026-09-18 18:03 UTC | `f8a702c` |
-
-The path is where that run's checkpoint was when it was scored, so a row leads straight to the model behind it.
