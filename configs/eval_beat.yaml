@@ -36,6 +36,8 @@ beat_phase:
 # Two-stage: beat knobs first, then the bar-position knob on top of the winner.
 sweep:
   top: 10
+  split: train  # tools/leaderboard.py: which split the knobs are tuned on
+  tracks: 50  # tools/leaderboard.py: stratified subsample of that split
   beat_thresholds: [0.2, 0.4, 0.5, 0.6, 0.8]
   min_distance_frames: [1, 2, 4]
   gate_tolerances: [0.1, 0.15, 0.2, 0.3]

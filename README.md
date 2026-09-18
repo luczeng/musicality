@@ -262,8 +262,8 @@ each one's postprocessing first (the `beat_phase` knobs in
 `configs/eval_beat.yaml` are marked UNVERIFIED, and re-sweeping has been worth
 more than a retrain).
 
-The sweep runs on **train** (`--sweep-split`, 50 corpus-stratified tracks by
-default) and the report on val, so the knobs are never chosen on the tracks
+The sweep runs on train (50 corpus-stratified tracks, `sweep.split`/`sweep.tracks`
+in the config) and the report on val, so the knobs are never chosen on the tracks
 they are then scored on — unlike `eval_beat.py --sweep`, which tunes and reports
 on the same split and is optimistic as a result.
 
@@ -286,8 +286,8 @@ uv run python tools/leaderboard.py checkpoints_new
 Rows for runs not named on the command line are carried over; naming a run
 that's already on the board re-measures it and replaces its row. Rows measured
 under a different split, tolerance or group size are refused rather than merged,
-before any model pass. `--append PATH` keeps a board somewhere else, `--no-append`
-makes a local standalone one, and `--no-pull` / `--no-push` skip the DVC sync.
+before any model pass. `--board PATH` keeps a board somewhere else, and
+`--no-pull` / `--no-push` skip the DVC sync.
 
 `dvc push` uploads the board's content, but the pointer only becomes the shared
 truth once committed — the tool prints the one command to run:
@@ -297,20 +297,13 @@ cd ../musicality_db && git add leaderboard.dvc && git commit -m "Update leaderbo
 ```
 
 ```bash
-# a single checkpoint, at the config's shipped knobs, no W&B, its own board
+# a throwaway comparison, at the config's shipped knobs, off to one side
 uv run python tools/leaderboard.py checkpoints/merge_v5.ckpt \
-    --no-sweep --no-wandb --no-append
+    --no-sweep --board /tmp/scratch/leaderboard.json
 
 # rank the board by bar-position accuracy instead of beat F-measure
 uv run python tools/leaderboard.py checkpoints_deeper --rank-metric position_acc
-
-# tune on val too — no second model pass, but nothing is held out
-uv run python tools/leaderboard.py checkpoints_deeper --sweep-split val
 ```
-
-`--rank-metric` orders the board; the sweep's bar-position stage has its own
-`--sweep-rank-metric` (default `position_acc`), because a decoder relabels beats
-without moving them and every candidate ties on beat F-measure.
 
 The ranked board is printed and written as one JSON file holding everything —
 per-run metrics, the knobs each run was scored at, the per-corpus breakdown, and

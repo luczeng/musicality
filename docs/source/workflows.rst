@@ -179,21 +179,18 @@ Three things it does that a loop over ``eval_beat.py`` would not:
   threshold happens to suit them. ``--no-sweep`` scores at the config's values
   instead.
 
-- **It sweeps on a different split from the one it reports.** ``--sweep-split``
-  defaults to ``train``, against a corpus-stratified subsample sized by
-  ``--sweep-tracks`` (50), so the val numbers on the board stay held out.
+- **It sweeps on a different split from the one it reports.** The knobs are
+  tuned on ``sweep.split`` (``train``), against a corpus-stratified subsample of
+  ``sweep.tracks`` (50) of it, so the val numbers on the board stay held out.
   ``tools/eval_beat.py --sweep`` does not do this — it tunes and reports on the
   same tracks, which makes its numbers optimistic by an amount that is not
   equal across checkpoints: 60-odd grid points against ~50 tracks give more
   room to whichever model's probability curves happen to suit some threshold.
-  Setting ``--sweep-split`` equal to ``--split`` restores that behaviour and
-  skips the second model pass, and the board then says so rather than implying
-  a hold-out.
 
-  The cost is one extra model pass per checkpoint, over ``--sweep-tracks``
-  tracks. The stratification matters because a split file is written corpus by
-  corpus: the first N tracks of a merged train split are N tracks of whichever
-  corpus was written first, so the knobs would be tuned for one genre.
+  The cost is one extra model pass per checkpoint. The stratification matters
+  because a split file is written corpus by corpus: the first N tracks of a
+  merged train split are N tracks of whichever corpus was written first, so the
+  knobs would be tuned for one genre.
 
 - **It keeps one running board, in the data repo rather than this checkout.**
   The board is a single ``leaderboard.json`` under
@@ -223,32 +220,28 @@ merged board is written back — so adding one experiment costs one experiment's
 evaluation, not the whole board's. A run that *is* named is re-measured and
 replaces its old row; identity is the run label rather than the checkpoint
 filename, because more training on the same folder produces a different epoch's
-file for the same experiment. ``--append`` puts the board elsewhere and
-``--no-append`` makes a local standalone one, which is neither pulled nor
-pushed.
+file for the same experiment. ``--board`` puts the board somewhere else, which
+is also how a throwaway comparison is made without disturbing the running one.
 
 Rows that were never measured the same way are refused rather than merged: if
-the dataset, split, tolerance, group size or track limit differs from what the
-existing board recorded, the run stops before any model pass and names the
-difference. Re-measuring every run in the old board lifts the refusal, since
+anything in ``configs/eval_beat.yaml``'s run block, the ``--limit``, or whether
+the knobs were swept differs from what the existing board recorded, the run
+stops before any model pass and names the difference. Re-measuring every run in the old board lifts the refusal, since
 nothing then survives to be incomparable — which is how those settings get
-changed without a flag to override the check. Sweep settings are deliberately
-not part of it: they are recorded per row, alongside the knobs each row was
-scored at. Each row also carries its own ``measured_utc`` and ``git_commit``, and
-a carried row from a different commit is noted on stdout — most commits do not
-touch scoring, but one that did would show up on the board as a model
-improvement.
+changed without a flag to override the check. Each row also carries its own
+``measured_utc``, ``git_commit`` and the knobs it was scored at, so a board says
+where each of its numbers came from.
 
 Three separate rankings are involved, and conflating any two of them is a bug:
-
-- ``--rank-metric`` (default ``f_beat``) orders the **board**.
-- ``f_beat``, always, picks the winner of the sweep's **beat-detection** stage —
-  the only thing those knobs can move.
-- ``--sweep-rank-metric`` (default ``position_acc``) picks the winner of the
-  sweep's **bar-position** stage. It has to be a bar-position metric: a decoder
-  relabels beats without moving them, so every candidate scores an identical
-  ``f_beat`` and ranking that stage by it is a tie the sort breaks by candidate
-  order — pinning ``switch_penalty`` to the first value in the list.
+``--rank-metric`` (default ``f_beat``) orders the **board**; ``f_beat`` always
+picks the winner of the sweep's **beat-detection** stage, the only thing those
+knobs can move; and ``position_acc`` always picks the winner of its
+**bar-position** stage. That last one cannot be ``f_beat``: a decoder relabels
+beats without moving them, so every candidate scores an identical ``f_beat`` and
+ranking that stage by it is a tie the sort breaks by candidate order — pinning
+``switch_penalty`` to the first value in the list. All three rank on the macro
+mean, which weights each corpus equally instead of letting the largest one
+decide for all of them.
 
 Which checkpoint stands for a run: a directory whose checkpoints carry a
 ``valloss`` in their filename is one run's ``save_top_k`` group, represented by
