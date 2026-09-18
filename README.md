@@ -38,6 +38,11 @@ bash tools/setup_remote.sh
 
 This also fetches custom dataset from the remote via DVC (currently on Infomaniak s3). Requirements are to setup env variables `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `WANDB_API_KEY`. The custom datasets might become available on demand.
 
+What it pulls is decided by the split `configs/beat_train.yaml` names, not by
+`configs/download.yaml` — that file lists what *mirdata* can fetch, and some
+corpora (gtzan, rwc_genre) reach the data repo by migration instead. The running
+leaderboard comes down too, once one has been pushed.
+
 
 </details>
 

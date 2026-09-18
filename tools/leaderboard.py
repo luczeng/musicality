@@ -1,29 +1,22 @@
 #!/usr/bin/env python3
 """Score trained runs on full tracks and keep the comparison as one running board.
 
-`tools/eval_beat.py` says how good one checkpoint is. This ranks several against
-each other, which their `training_report.json` files cannot: each was written
-under that run's own split and postprocessing, so comparing reports compares the
-settings as much as the models.
-
-Name whatever is new; every run found is evaluated on the split
-`configs/eval_beat.yaml` names, with its postprocessing swept first, and merged
-into the board beside the runs already measured. The board is one JSON file in
-the DVC-tracked data repo, pulled before reading and pushed after writing, so it
-outlives the instance that produced it.
+`eval_beat.py` says how good one checkpoint is; this ranks several against each
+other, which their `training_report.json` files cannot — each was written under
+its own run's settings. Name whatever is new and it joins the board beside the
+runs already measured.
 
     uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
     uv run python tools/leaderboard.py checkpoints_new
 
-See `docs/source/workflows.rst` ("Comparing runs") for why the sweep runs on a
-different split from the report, which metric decides what, and what makes two
-boards refuse to merge.
+See `docs/source/workflows.rst` ("Comparing runs") for the design.
 """
 
 import argparse
 import itertools
 import json
 import math
+import os
 import re
 import subprocess
 from datetime import datetime, timezone
@@ -44,14 +37,11 @@ from tools.eval_beat import _BETTER, _LABELS, rank_key, resolve_group_size, swee
 
 SCHEMA = 1
 
-# The board lives in the DVC-tracked data repo beside the splits, not in this
-# checkout: one that accumulates over months has to outlive the rented instance
-# that wrote it.
+# In the data repo, not this checkout: a board has to outlive the rented
+# instance that wrote it.
 DEFAULT_BOARD = dataformats.LEADERBOARD_DIR / "leaderboard.json"
 
-# What every row on a board was measured under, straight from the one config
-# that defines it. Also what has to match for an older row to sit beside a new
-# one — a row scored on another split or at another tolerance cannot.
+# What every row was measured under, and what an older row must match to be kept.
 RUN = {
     key: EVAL_DEFAULTS[key]
     for key in (
@@ -66,8 +56,7 @@ RUN = {
 }
 SWEEP = EVAL_DEFAULTS["sweep"]
 
-# The postprocessing knobs carried on every row, so a board says which decode
-# produced its numbers.
+# Carried on every row, so a board says which decode produced its numbers.
 KNOB_KEYS = (
     "beat_threshold",
     "min_distance_frames",
@@ -77,8 +66,7 @@ KNOB_KEYS = (
     "anchor_threshold",
 )
 
-# Columns of the printed board. Narrow on purpose: the file carries every
-# metric, this has to stay readable in a terminal.
+# Narrow on purpose: the file carries every metric, this has to fit a terminal.
 BOARD_COLUMNS = (
     "f_beat",
     "cmlt",
@@ -94,12 +82,9 @@ _VALLOSS = re.compile(r"valloss([0-9]*\.?[0-9]+)")
 def run_checkpoints(run_dir: Path) -> list[tuple[str, Path]]:
     """The ``(label, checkpoint)`` pairs one directory contributes.
 
-    ``save_top_k`` leaves several checkpoints of the *same* run side by side,
-    each named with the ``val/loss`` it scored; there the best-scoring file is
-    the run and the others are history. A directory whose names carry no loss is
-    read the other way — one entry per file — because that is how hand-named
-    checkpoints (`merge_v5.ckpt`) sit in `checkpoints/`, and collapsing those to
-    one would silently drop five models.
+    A ``save_top_k`` group (``val/loss`` in every name) is one run, represented
+    by its best file. Names without a loss are hand-named checkpoints sharing a
+    folder — one run each, since collapsing those would drop five models.
     """
 
     checkpoints = sorted(run_dir.glob("*.ckpt"))
@@ -114,8 +99,7 @@ def run_checkpoints(run_dir: Path) -> list[tuple[str, Path]]:
 def find_runs(paths: list[Path]) -> list[tuple[str, Path]]:
     """Every run to score, as ``(label, checkpoint)``, in a stable order.
 
-    Directories are walked recursively, so a sweep directory (one subdirectory
-    per learning rate) expands without being named run by run.
+    Walked recursively, so naming a sweep directory covers every learning rate.
     """
 
     runs = []
@@ -145,11 +129,9 @@ def evaluator_for(checkpoint: Path, split: str, device: str, **overrides):
 def sweep_evaluator(checkpoint: Path, group_size: int, device: str) -> BeatEvaluator:
     """A second evaluator, over the split the knobs are tuned on.
 
-    Separate from the reporting one on purpose: knobs chosen on the same tracks
-    they are then scored on are chosen partly for the noise in those tracks, and
-    by an amount that differs per row. Subsampled stratified across corpora
-    because the train split is much larger than val, and because a split file is
-    written corpus by corpus — the first N tracks would tune one genre's knobs.
+    Separate from the reporting one so the board's numbers stay held out.
+    Stratified rather than the first N tracks: a split file is written corpus by
+    corpus, so the head of one is a single genre.
     """
 
     evaluator = evaluator_for(checkpoint, SWEEP["split"], device, group_size=group_size)
@@ -162,8 +144,7 @@ def sweep_evaluator(checkpoint: Path, group_size: int, device: str) -> BeatEvalu
         )
     }
 
-    # Narrow the loaded indices rather than the dataset: the evaluator memoizes
-    # both together, and everything downstream walks `indices`.
+    # Indices rather than the dataset: everything downstream walks `indices`.
     evaluator._loaded = (
         module,
         task,
@@ -181,15 +162,12 @@ def sweep_evaluator(checkpoint: Path, group_size: int, device: str) -> BeatEvalu
 def sweep_knobs(evaluator: BeatEvaluator, task: str, group_size: int) -> dict:
     """Best postprocessing knobs for one checkpoint, in two stages.
 
-    Beat detection first, ranked by ``f_beat`` because that is all those knobs
-    can move; then the one bar-position knob the resolved decoder reads, ranked
-    by ``position_acc``. **The two metrics must differ**: a bar-position decoder
-    relabels beats without moving them, so every stage-2 candidate scores an
-    identical ``f_beat`` and ranking by it is a tie the sort breaks by candidate
-    order — silently pinning ``switch_penalty`` to the first value in the list.
+    Beat detection ranked by ``f_beat``, then the resolved decoder's one
+    bar-position knob ranked by ``position_acc``. **The metrics must differ**: a
+    decoder relabels beats without moving them, so every stage-2 candidate ties
+    on ``f_beat`` and the sort would pick by list order.
 
-    Both stages re-use the cached frame probabilities, so a sweep costs one
-    model pass per checkpoint, not one per grid point.
+    Both stages re-use the cached probabilities — one model pass per checkpoint.
     """
 
     beat_grid = [
@@ -212,8 +190,7 @@ def sweep_knobs(evaluator: BeatEvaluator, task: str, group_size: int) -> dict:
     if evaluator.resolve_postprocess()["decoder"] == "greedy":
         knob, values = "anchor_threshold", SWEEP["anchor_thresholds"]
     else:
-        # `None` is a real switch_penalty — the exact single-offset decode, the
-        # penalty -> infinity limit no finite value reaches.
+        # `None` is a real value: the exact single-offset decode.
         knob, values = "switch_penalty", [None, *SWEEP["switch_penalties"]]
 
     ranked = sweep_grid(
@@ -252,8 +229,7 @@ def evaluate_run(label: str, checkpoint: Path, args) -> dict:
         "run": label,
         "checkpoint": str(checkpoint),
         "task": task,
-        # Per row, not just per board: a running board carries rows measured on
-        # different days by different code, and the row has to say which.
+        # Per row: a board carries rows measured on different days by different code.
         "measured_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git_commit": args.commit,
         "swept_on": SWEEP["split"] if knobs else None,
@@ -280,8 +256,7 @@ def evaluate_run(label: str, checkpoint: Path, args) -> dict:
 def dvc(command: list[str], board: Path) -> bool:
     """Run one ``dvc`` command in the data repo holding *board*.
 
-    Never fatal. The remote needs credentials this checkout may not have, and a
-    board that cannot be synced is still a board.
+    Never fatal: a board that cannot be synced is still a board.
     """
 
     repo = board.parent.parent.resolve()
@@ -301,10 +276,9 @@ def dvc(command: list[str], board: Path) -> bool:
 def load_board(board: Path, pull: bool) -> dict:
     """The board already at *board*, pulled from the DVC remote first.
 
-    A missing board is not an error — the first invocation is what creates it,
-    and a doomed `dvc pull` printing an error would read like a failure when
-    nothing is wrong. DVC tracks the *folder* (`leaderboard.dvc`, beside
-    `splits.dvc`), so that is what pull and add name.
+    A missing board is not an error — the first invocation creates it, and
+    pulling before the pointer exists would only print a scary non-failure. DVC
+    tracks the *folder*, so that is what pull names.
     """
 
     if pull and (board.parent.parent / f"{board.parent.name}.dvc").exists():
@@ -323,9 +297,8 @@ def load_board(board: Path, pull: bool) -> dict:
 def publish(board: Path) -> None:
     """Re-hash the board folder and upload it, then say what to commit.
 
-    ``dvc add`` rewrites the pointer and ``dvc push`` uploads the content, but
-    the pointer only becomes the shared truth once committed — and committing in
-    someone else's repo is not this tool's call to make.
+    The pointer only becomes the shared truth once committed, and committing in
+    someone else's repo is not this tool's call.
     """
 
     name = board.parent.name
@@ -340,14 +313,12 @@ def publish(board: Path) -> None:
 def merge(previous: dict, rows: list[dict], settings: dict) -> list[dict]:
     """Rows of *previous* this invocation did not re-measure, ready to be kept.
 
-    Identity is the ``run`` label, not the checkpoint path: re-running a folder
-    after more training picks a different epoch's file, and that is the same
-    experiment with a better number rather than a second entry.
+    Identity is the ``run`` label, not the checkpoint path: more training on a
+    folder is the same experiment with a better number, not a second entry.
 
-    Raises when a surviving row was measured under different settings — a
-    leaderboard is a claim that its rows can be read against each other. Only
-    survivors are at stake, so re-measuring every run in the old board is what
-    lets the split or the tolerance change without a flag to override this.
+    Raises when a *surviving* row was measured under different settings — so
+    re-measuring the whole board is what lets those settings change, no override
+    flag needed.
     """
 
     measured = {row["run"] for row in rows}
@@ -375,9 +346,8 @@ def merge(previous: dict, rows: list[dict], settings: dict) -> list[dict]:
 def rank_rows(rows: list[dict], metric: str) -> list[dict]:
     """Best first, by *metric*'s macro mean, in its own better-is direction.
 
-    Macro weights each corpus equally; micro lets the largest corpus decide for
-    all of them. A row that could not be scored (``None`` once
-    :func:`jsonable` has turned its NaN into one) sorts last rather than winning.
+    Macro so the largest corpus does not decide for all of them. An unscorable
+    row (``None``, once :func:`jsonable` has seen its NaN) sorts last.
     """
 
     key = rank_key(metric, "macro")
@@ -407,9 +377,8 @@ def render_board(rows: list[dict]) -> str:
 def build_payload(rows: list[dict], per_corpus: dict, failed: dict, args) -> dict:
     """The whole board as one JSON-safe dict.
 
-    Machine-readable the way ``training_report.json`` is — NaN written as
-    ``null`` so a strict parser accepts it — with a rendered board in
-    ``readable`` so opening the file still shows something skimmable.
+    NaN as ``null`` so a strict parser accepts it, the way
+    ``training_report.json`` does, plus a rendered table in ``readable``.
     """
 
     return jsonable(
@@ -432,6 +401,23 @@ def settings_for(args) -> dict:
     board's rows must have been measured under to be kept."""
 
     return {**RUN, "limit": args.limit, "swept": args.sweep}
+
+
+def write_board(payload: dict, board: Path) -> None:
+    """Write the board by replacing the path, not by writing into it.
+
+    ``setup_remote.sh`` sets ``cache.type symlink``, so a pulled board is a
+    symlink into DVC's read-only cache: writing to it raises ``PermissionError``,
+    and would corrupt the cache if it did not. Replacing is also atomic.
+    """
+
+    board.parent.mkdir(parents=True, exist_ok=True)
+
+    scratch = board.with_suffix(".json.tmp")
+    scratch.write_text(json.dumps(payload, indent=2))
+    os.replace(scratch, board)
+
+    print(f"\n[leaderboard] written to {board.resolve()}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -510,9 +496,8 @@ def main():
         f"split={RUN['split']}  sweep={'on ' + SWEEP['split'] if args.sweep else 'off'}"
     )
 
-    # Before the model passes, not after: an incompatible board should cost
-    # nothing. Re-checked below against the rows actually measured, since a
-    # checkpoint that fails to load leaves its old row standing.
+    # Before the model passes, so an incompatible board costs nothing. Re-checked
+    # below: a checkpoint that fails to load leaves its old row standing.
     merge(previous, [{"run": label} for label, _ckpt in runs], settings_for(args))
 
     rows, per_corpus, failed = [], {}, {}
@@ -522,8 +507,7 @@ def main():
         try:
             result = evaluate_run(label, checkpoint, args)
         except Exception as error:
-            # One unloadable checkpoint must not cost the others their
-            # evaluation — the model pass is the expensive part here.
+            # One bad checkpoint must not cost the others their model pass.
             print(f"    !! skipped: {type(error).__name__}: {error}")
             failed[label] = f"{type(error).__name__}: {error}"
             continue
@@ -549,11 +533,7 @@ def main():
     )
     print(render_board(rows) if rows else "nothing scored")
 
-    args.board.parent.mkdir(parents=True, exist_ok=True)
-    args.board.write_text(
-        json.dumps(build_payload(rows, per_corpus, failed, args), indent=2)
-    )
-    print(f"\n[leaderboard] written to {args.board.resolve()}")
+    write_board(build_payload(rows, per_corpus, failed, args), args.board)
 
     if args.push:
         publish(args.board)

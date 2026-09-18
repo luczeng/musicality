@@ -1,10 +1,9 @@
 """What `tools/leaderboard.py` does around the evaluator: which checkpoint
 represents a run, which grid points get swept, how the board is ordered, and
-what makes an existing board refuse to take new rows.
+what makes a board refuse new rows.
 
-Scoring itself is not exercised here (tests/test_evaluation.py and
-tests/test_metrics.py cover it) — the evaluator is a stub returning canned rows,
-the same way tests/test_eval_beat_cli.py stubs it.
+Scoring itself is covered by tests/test_evaluation.py; the evaluator here is a
+stub returning canned rows.
 """
 
 import json
@@ -25,6 +24,7 @@ from tools.leaderboard import (
     publish,
     rank_rows,
     run_checkpoints,
+    write_board,
     settings_for,
     sweep_evaluator,
     sweep_knobs,
@@ -46,9 +46,8 @@ def _touch(directory: Path, *names: str) -> Path:
 
 
 class TestRunCheckpoints:
-    """`save_top_k` leaves three files of one run side by side; a hand-named
-    folder holds several different models. Reading one as the other either
-    triples the board or drops five models from it."""
+    """Reading a `save_top_k` group as separate models triples the board;
+    reading a hand-named folder as one group drops five."""
 
     def test_a_save_top_k_group_is_one_run_at_its_best_loss(self, tmp_path):
         run = _touch(
@@ -84,8 +83,7 @@ class TestFindRuns:
         assert [c.name for _label, c in found] == ["merge_v5.ckpt"]
 
     def test_a_directory_expands_to_one_entry_per_nested_run(self, tmp_path):
-        """A sweep directory holds one run per learning rate, two levels down —
-        so the board can be asked for the whole sweep by naming it once."""
+        """One run per learning rate, two levels down."""
 
         sweep = tmp_path / "lr_sweep-20260918-141530"
         _touch(sweep / "lr_0.0008", "beat-phase-epoch91-valloss1.4794.ckpt")
@@ -137,8 +135,7 @@ def small_grid(monkeypatch):
 
 class TestSweepKnobs:
     def test_beat_only_stops_after_the_beat_stage(self, small_grid):
-        """A beat-only checkpoint has no bar-position heads, so sweeping a
-        bar-position knob would tune something nothing reads."""
+        """No bar-position heads, so stage 2 would tune what nothing reads."""
 
         evaluator = _StubEvaluator([_rows(f_beat=0.5), _rows(f_beat=0.9)])
 
@@ -152,11 +149,8 @@ class TestSweepKnobs:
         }
 
     def test_the_position_stage_ignores_f_beat(self, small_grid):
-        """A bar-position decoder relabels beats without moving them, so every
-        stage-2 candidate scores the same f_beat. Ranking stage 2 by it is a tie
-        the sort breaks by candidate order, pinning switch_penalty to the first
-        value — measurably worse: 0.73 against 0.88 position_acc on six ballroom
-        tracks."""
+        """Every stage-2 candidate ties on f_beat, so ranking by it picks by
+        list order — 0.73 against 0.88 position_acc on six ballroom tracks."""
 
         evaluator = _StubEvaluator(
             [_rows(f_beat=0.5, position_acc=0.1), _rows(f_beat=0.9, position_acc=0.2)]
@@ -167,8 +161,7 @@ class TestSweepKnobs:
         assert sweep_knobs(evaluator, "beat_phase", 4)["switch_penalty"] == 2.0
 
     def test_the_global_decoder_always_considers_the_no_resync_decode(self, small_grid):
-        """`switch_penalty=None` forbids mid-track resyncs — the penalty ->
-        infinity limit that no finite candidate in the grid reaches."""
+        """The penalty -> infinity limit, which no finite candidate reaches."""
 
         evaluator = _StubEvaluator(
             [_rows(f_beat=0.5, position_acc=0.1), _rows(f_beat=0.9, position_acc=0.2)]
@@ -240,8 +233,7 @@ class TestSweepEvaluator:
         assert sweep_evaluator(Path("a.ckpt"), 4, "cpu").kwargs["split"] == "train"
 
     def test_the_subsample_spreads_across_corpora(self, monkeypatch, small_grid):
-        """A split file is written corpus by corpus, so taking the first N would
-        tune every knob on whichever corpus was written first."""
+        """A split file is written corpus by corpus: the first N is one genre."""
 
         dataset = self._dataset({"ballroom": 6, "rwc_classical": 2})
         self._patched(monkeypatch, dataset)
@@ -254,8 +246,7 @@ class TestSweepEvaluator:
     def test_the_narrowed_indices_still_point_into_the_same_dataset(
         self, monkeypatch, small_grid
     ):
-        """Indices are narrowed, not the dataset — everything downstream walks
-        `indices` against the dataset the evaluator loaded."""
+        """Everything downstream walks `indices` against the loaded dataset."""
 
         dataset = self._dataset({"ballroom": 9})
         self._patched(monkeypatch, dataset)
@@ -275,8 +266,7 @@ class TestSweepEvaluator:
 
 
 class TestMerge:
-    """One board grows across invocations. What merging must get right: which
-    rows survive, and refusing rows that were never measured the same way."""
+    """Which rows survive, and refusing rows measured a different way."""
 
     def _previous(self, *runs, **eval_overrides):
         return {
@@ -291,9 +281,7 @@ class TestMerge:
         assert [row["run"] for row in carried] == ["a"]
 
     def test_a_re_measured_run_is_replaced_not_duplicated(self):
-        """Identity is the run label: re-running a folder after more training
-        picks a different epoch's file, and that is the same experiment with a
-        better number rather than a second entry."""
+        """More training on a folder is the same experiment, not a second one."""
 
         assert merge(self._previous("a"), [{"run": "a"}], settings_for(_args())) == []
 
@@ -304,7 +292,7 @@ class TestMerge:
             merge(previous, [], settings_for(_args()))
 
     def test_an_unswept_row_cannot_join_a_swept_board(self):
-        """Different knobs, so the numbers are not on the same scale."""
+        """Different knobs, so not the same scale."""
 
         previous = self._previous("a", swept=False)
 
@@ -312,9 +300,8 @@ class TestMerge:
             merge(previous, [], settings_for(_args()))
 
     def test_re_measuring_everything_lifts_the_refusal(self):
-        """Nothing survives from the old board, so its settings are no longer a
-        claim about anything — which is what lets the split be changed without
-        needing a flag to override the check."""
+        """Nothing survives, so the old settings claim nothing — this is how
+        they get changed without an override flag."""
 
         previous = self._previous("a", tolerance=0.05)
 
@@ -338,8 +325,7 @@ class TestBoardFile:
         assert len(load_board(path, False)["leaderboard"]) == 2
 
     def test_the_first_run_does_not_pull(self, tmp_path, monkeypatch):
-        """With no pointer yet there is nothing to fetch, and a doomed `dvc
-        pull` prints an error that reads like a failure when nothing is wrong."""
+        """Nothing to fetch yet, and the error would read like a failure."""
 
         def _boom(*args, **kwargs):
             raise AssertionError("dvc pull should not have run")
@@ -366,8 +352,7 @@ class TestBoardFile:
 
 
 class TestDvcSync:
-    """Syncing must never take a run down with it: a board that cannot be
-    pushed is still a board."""
+    """Syncing must never take a run down with it."""
 
     def _board(self, tmp_path):
         (tmp_path / "leaderboard").mkdir()
@@ -379,8 +364,7 @@ class TestDvcSync:
         assert "not a DVC repo" in capsys.readouterr().out
 
     def test_a_failed_add_does_not_push(self, tmp_path, monkeypatch, capsys):
-        """Pushing content whose pointer was never rewritten would upload the
-        previous board under the new commit."""
+        """That would upload the previous board under the new commit."""
 
         monkeypatch.setattr("tools.leaderboard.dvc", lambda command, board: False)
 
@@ -389,14 +373,39 @@ class TestDvcSync:
         assert "git commit" not in capsys.readouterr().out
 
     def test_a_successful_push_says_what_to_commit(self, tmp_path, monkeypatch, capsys):
-        """The pointer only becomes the shared truth once committed, and
-        committing in someone else's repo is not this tool's call."""
+        """The pointer is only shared truth once committed, by a human."""
 
         monkeypatch.setattr("tools.leaderboard.dvc", lambda command, board: True)
 
         publish(self._board(tmp_path))
 
         assert "git add leaderboard.dvc" in capsys.readouterr().out
+
+
+class TestWriteBoard:
+    def test_a_symlinked_board_is_replaced_not_written_through(self, tmp_path):
+        """A pulled board is a symlink into DVC's read-only cache."""
+
+        cache = tmp_path / "cache-object"
+        cache.write_text('{"cached": true}')
+        cache.chmod(0o444)
+
+        board = tmp_path / "leaderboard" / "leaderboard.json"
+        board.parent.mkdir()
+        board.symlink_to(cache)
+
+        write_board({"leaderboard": []}, board)
+
+        assert not board.is_symlink()
+        assert json.loads(cache.read_text()) == {"cached": True}
+        assert json.loads(board.read_text()) == {"leaderboard": []}
+
+    def test_it_leaves_no_scratch_file_behind(self, tmp_path):
+        board = tmp_path / "leaderboard" / "leaderboard.json"
+
+        write_board({"leaderboard": []}, board)
+
+        assert [p.name for p in board.parent.iterdir()] == ["leaderboard.json"]
 
 
 class TestRankRows:
@@ -420,8 +429,7 @@ class TestRankRows:
         ]
 
     def test_an_unscorable_run_ranks_last_rather_than_first(self):
-        """`jsonable` has already turned NaN into None by this point, and
-        `None` must not be read as a winning score."""
+        """`None` (a NaN through `jsonable`) must not read as a winning score."""
 
         rows = [{"run": "a", "macro_f_beat": None}, {"run": "b", "macro_f_beat": 0.1}]
 
@@ -438,8 +446,7 @@ class TestBuildPayload:
         }
 
     def test_the_file_parses_under_a_strict_reader(self):
-        """`json.dumps` emits bare `NaN` for an unmeasurable metric, which is
-        not valid JSON — the point of routing the payload through `jsonable`."""
+        """`json.dumps` emits bare `NaN`, which is not valid JSON."""
 
         payload = build_payload([self._row(f_beat=math.nan)], {}, {}, _args())
 
