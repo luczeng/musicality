@@ -9,6 +9,15 @@ runs already measured.
     uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
     uv run python tools/leaderboard.py checkpoints_new
 
+The board is written twice, to the two places it is read from.
+`leaderboard.json` is the record, DVC-tracked in the data repo beside the
+splits. `leaderboard/LEADERBOARD.md` is the page, git-tracked in *this*
+checkout, so the standings render on GitHub and show up in a diff — no
+`dvc pull` to read them. The page is derived from the board and can be rebuilt
+from it alone, scoring nothing:
+
+    uv run python tools/leaderboard.py --render-only
+
 See `docs/source/workflows.rst` ("Comparing runs") for the design.
 """
 
@@ -33,7 +42,14 @@ from musicality.evaluation import (
     summarize,
 )
 from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
-from tools.eval_beat import _BETTER, _LABELS, rank_key, resolve_group_size, sweep_grid
+from tools.eval_beat import (
+    _BETTER,
+    _KNOB_LABELS,
+    _LABELS,
+    rank_key,
+    resolve_group_size,
+    sweep_grid,
+)
 
 SCHEMA = 1
 
@@ -420,6 +436,286 @@ def write_board(payload: dict, board: Path) -> None:
     print(f"\n[leaderboard] written to {board.resolve()}")
 
 
+# The human-readable twin of the board, in *this* checkout rather than beside
+# the JSON: the data repo is behind a `dvc pull` and renders nowhere, so the
+# standings live in git, where GitHub renders them and a diff shows what moved.
+# What the page holds, and why, is docs/source/workflows.rst ("Comparing runs").
+PAGE_PATH = dataformats.ROOT / "leaderboard" / "LEADERBOARD.md"
+
+
+def ranked_metric(payload: dict) -> str:
+    """The metric a board is ordered by, without its macro/micro prefix.
+
+    Read off the payload, not off ``args``: a board written by an older
+    invocation names it under ``eval``, and must still re-render.
+    """
+
+    key = payload.get("ranked_by") or payload.get("eval", {}).get("ranked_by", "")
+
+    return key.removeprefix("macro_").removeprefix("micro_") or "f_beat"
+
+
+def _when(stamp: str | None) -> str:
+    """An ISO timestamp as minutes UTC — the precision a reader uses."""
+
+    return f"{(stamp or '?')[:16].replace('T', ' ')} UTC"
+
+
+def _cell(value: float | None) -> str:
+    """One metric as a table cell: :func:`_fmt` without its terminal padding."""
+
+    return _fmt(value).strip()
+
+
+def _knob(row: dict, key: str) -> str:
+    """One decode knob. ``None`` is a value — on ``switch_penalty`` it is the
+    exact single-offset decode — so only a key the row never carried is a gap."""
+
+    if key not in row:
+        return "—"
+
+    return "none" if row[key] is None else str(row[key])
+
+
+def section(
+    title: str,
+    header: list[str],
+    body: list[list[str]],
+    note: str = "",
+    labels: int = 1,
+) -> list[str]:
+    """One section of the page: a heading, a table, an optional note under it.
+
+    The first *labels* columns are left-aligned and the rest right-aligned, the
+    way numbers read.
+    """
+
+    align = ["---"] * labels + ["---:"] * (len(header) - labels)
+
+    return [
+        f"## {title}",
+        "",
+        *["| " + " | ".join(row) + " |" for row in (header, align, *body)],
+        *(["", note] if note else []),
+    ]
+
+
+def page_header(payload: dict, rows: list[dict], metric: str, total: int) -> list[str]:
+    """Title, who leads, the conditions every row shares, and how to rebuild
+    the page — the question it is most often opened with."""
+
+    settings = payload.get("eval", {})
+    swept = [row for row in rows if row.get("swept_on")]
+    shown = f", best {len(rows)} of {total} shown" if total > len(rows) else ""
+
+    return [
+        "# Beat leaderboard",
+        "",
+        f"**{rows[0]['run']}** leads {total} run(s) on macro `{metric}` "
+        f"({_cell(rows[0].get(f'macro_{metric}'))}){shown}.",
+        "",
+        f"- Scored on `{settings.get('dataset', '?')}` / `{settings.get('split', '?')}`"
+        f"{', binary-only' if settings.get('binary_only') else ''}, full tracks, "
+        f"tolerance {settings.get('tolerance', '?')}s",
+        "- Postprocessing "
+        + (
+            f"swept per checkpoint on `{swept[0]['swept_on']}` (see *Decode*)"
+            if swept
+            else "as shipped in `configs/eval_beat.yaml`, not swept"
+        ),
+        f"- Measured {_when(payload.get('generated_utc'))} at commit "
+        f"`{(payload.get('git_commit') or '?')[:7]}`",
+        "",
+        "Written by `tools/leaderboard.py` from `leaderboard.json` in the data "
+        "repo, which holds every metric, per track and per corpus. Rebuild this "
+        "page from it, scoring nothing: `uv run python tools/leaderboard.py "
+        "--render-only`.",
+    ]
+
+
+def page_ranking(rows: list[dict], metric: str) -> list[str]:
+    """The board itself, as macro means — the numbers the ranking is made of.
+
+    Macro rather than the per-track means the terminal prints: every corpus
+    counts once, so the largest one does not decide the order.
+    """
+
+    def label(column: str) -> str:
+        text = f"{_LABELS[column]} {'↑' if _BETTER[column] is max else '↓'}"
+
+        return f"**{text}**" if column == metric else text
+
+    body = [
+        [str(i), f"`{row['run']}`", str(row.get("n_tracks", 0))]
+        + [_cell(row.get(f"macro_{c}")) for c in BOARD_COLUMNS]
+        for i, row in enumerate(rows, start=1)
+    ]
+
+    return section(
+        "Ranking",
+        ["#", "run", "n", *map(label, BOARD_COLUMNS)],
+        body,
+        f"Macro means, each corpus weighted once; ranked by `{metric}`. The "
+        "per-track (micro) means are in the JSON.",
+    )
+
+
+def page_per_corpus(rows: list[dict], per_corpus: dict, metric: str) -> list[str]:
+    """The ranking metric per corpus, one column per run, best in bold.
+
+    What the macro mean averaged away: the weakest corpus is what gates "works
+    everywhere", and it is rarely the same corpus for every run.
+    """
+
+    if not per_corpus:
+        return []
+
+    counts: dict[str, int] = {}
+    for row in rows:
+        for corpus, stats in per_corpus.get(row["run"], {}).items():
+            counts.setdefault(corpus, stats.get("n_tracks") or 0)
+
+    body = []
+    for corpus, n_tracks in sorted(counts.items(), key=lambda kv: -kv[1]):
+        values = [
+            per_corpus.get(row["run"], {}).get(corpus, {}).get(metric) for row in rows
+        ]
+        scored = [v for v in values if v is not None and not math.isnan(v)]
+        best = _BETTER[metric](scored) if scored else None
+
+        body.append(
+            [f"`{corpus or '<unknown>'}`", str(n_tracks)]
+            + [
+                f"**{_cell(v)}**" if v is not None and v == best else _cell(v)
+                for v in values
+            ]
+        )
+
+    return section(
+        f"`{metric}` per corpus",
+        ["corpus", "n", *[f"#{i}" for i in range(1, len(rows) + 1)]],
+        body,
+        "Columns are the ranking positions above; best per corpus in bold.",
+    )
+
+
+def page_decode(rows: list[dict]) -> list[str]:
+    """What each row was decoded with, and where those knobs came from.
+
+    A swept board ranks models *at their own best decode*, so the decode is
+    part of the result rather than a footnote to it.
+    """
+
+    body = []
+    for i, row in enumerate(rows, start=1):
+        swept_on = row.get("swept_on")
+        tuned = (
+            f"`{swept_on}` ({row.get('sweep_n_tracks', 0)} tracks)"
+            if swept_on
+            else "config"
+        )
+
+        body.append(
+            [str(i), row.get("task", "?"), *[_knob(row, k) for k in KNOB_KEYS], tuned]
+        )
+
+    return section(
+        "Decode",
+        ["#", "task", *[_KNOB_LABELS.get(k, k) for k in KNOB_KEYS], "tuned on"],
+        body,
+        "Tuned on a split the board does not report, so these numbers stay held "
+        "out. `none` on `switch_pen` is the exact single-offset decode.",
+        labels=2,
+    )
+
+
+def page_provenance(rows: list[dict]) -> list[str]:
+    """Each row's checkpoint, when it was measured, and at what commit.
+
+    A running board carries rows measured on different days by different code,
+    so "which of these is stale" has to be answerable from the page — and the
+    path leads straight to the model behind a number.
+    """
+
+    body = [
+        [
+            str(i),
+            f"`{row.get('checkpoint', '?')}`",
+            _when(row.get("measured_utc")),
+            f"`{(row.get('git_commit') or '?')[:7]}`",
+        ]
+        for i, row in enumerate(rows, start=1)
+    ]
+
+    return section(
+        "Provenance", ["#", "checkpoint", "measured", "commit"], body, labels=4
+    )
+
+
+def page_failed(failed: dict) -> list[str]:
+    """Runs that were named but produced no row — the page is the only place
+    their absence is explained."""
+
+    if not failed:
+        return []
+
+    return section(
+        "Not scored",
+        ["run", "error"],
+        [[f"`{run}`", error] for run, error in sorted(failed.items())],
+        labels=2,
+    )
+
+
+def render_page(payload: dict, top: int = 0) -> str:
+    """The whole board as one Markdown page, or its best *top* rows.
+
+    The JSON is the record; this is the thing a person opens. *top* of 0 is
+    every run, and it cuts the whole page rather than one table, so the
+    per-corpus columns and the decode beside a row stay that row's own.
+    """
+
+    all_rows = payload.get("leaderboard", [])
+    rows = all_rows[:top] if top else all_rows
+    metric = ranked_metric(payload)
+
+    if rows:
+        blocks = [
+            page_header(payload, rows, metric, len(all_rows)),
+            page_ranking(rows, metric),
+            page_per_corpus(rows, payload.get("per_corpus", {}), metric),
+            page_decode(rows),
+            page_provenance(rows),
+        ]
+    else:
+        blocks = [["# Beat leaderboard", "", "Nothing scored yet."]]
+
+    blocks.append(page_failed(payload.get("failed", {})))
+
+    return "\n\n".join("\n".join(block) for block in blocks if block) + "\n"
+
+
+def write_page(payload: dict, board: Path, top: int = 0) -> None:
+    """Write :data:`PAGE_PATH`, if *board* is the running one.
+
+    Only the running board earns the committed page: a ``--board`` elsewhere is
+    a throwaway comparison by definition, and overwriting the repo's page with
+    one would put numbers nobody can reproduce under version control. The
+    folder is created here — the page is the only thing in it, so a fresh clone
+    that has never scored anything has neither. Written in place rather than
+    through a scratch file the way :func:`write_board` is: this one is in git,
+    never a symlink into DVC's read-only cache.
+    """
+
+    if board.resolve() != DEFAULT_BOARD.resolve():
+        return
+
+    PAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    PAGE_PATH.write_text(render_page(payload, top))
+
+    print(f"[leaderboard] page written to {PAGE_PATH} — commit it to share it")
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -429,7 +725,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "runs",
-        nargs="+",
+        nargs="*",
         type=Path,
         help="Checkpoint directories (walked recursively) and/or .ckpt files",
     )
@@ -477,12 +773,51 @@ def parse_args() -> argparse.Namespace:
         action="store_false",
         help="Write locally without `dvc add` + `dvc push`",
     )
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=0,
+        help=(
+            "List only the best N runs on the page "
+            f"({PAGE_PATH.parent.name}/{PAGE_PATH.name}); default 0, every "
+            "run. Only the default --board has a page."
+        ),
+    )
+    parser.add_argument(
+        "--render-only",
+        action="store_true",
+        help=(
+            f"Re-write {PAGE_PATH.name} from the board already on disk, and "
+            "stop. Scores nothing, so it costs no model pass — for reading a "
+            "pulled board, or re-rendering one after the page changed. Add "
+            "--no-pull --no-push to touch no remote."
+        ),
+    )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    if not args.runs and not args.render_only:
+        parser.error("name at least one checkpoint directory, or --render-only")
+
+    return args
 
 
 def main():
     args = parse_args()
+
+    if args.render_only:
+        payload = load_board(args.board, args.pull)
+
+        if not payload:
+            raise SystemExit(f"[leaderboard] no board at {args.board} to render")
+
+        write_page(payload, args.board, args.top)
+
+        if args.push:
+            publish(args.board)
+
+        return
+
     args.commit = git_commit()  # once per invocation, stamped onto every row
 
     runs = find_runs(args.runs)
@@ -533,7 +868,10 @@ def main():
     )
     print(render_board(rows) if rows else "nothing scored")
 
-    write_board(build_payload(rows, per_corpus, failed, args), args.board)
+    payload = build_payload(rows, per_corpus, failed, args)
+
+    write_board(payload, args.board)
+    write_page(payload, args.board, args.top)
 
     if args.push:
         publish(args.board)

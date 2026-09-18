@@ -16,15 +16,21 @@ import pytest
 from musicality.dataformats.track_io import TrackRef
 from tools.leaderboard import (
     BOARD_COLUMNS,
+    DEFAULT_BOARD,
     build_payload,
+    parse_args,
     dvc,
     find_runs,
     load_board,
     merge,
     publish,
     rank_rows,
+    ranked_metric,
+    section,
+    render_page,
     run_checkpoints,
     write_board,
+    write_page,
     settings_for,
     sweep_evaluator,
     sweep_knobs,
@@ -113,6 +119,48 @@ class _StubEvaluator:
 
 def _rows(**metrics) -> list[dict]:
     return [{"corpus": "ballroom", **metrics}]
+
+
+def _board(n_runs: int = 2, **overrides) -> dict:
+    """A payload shaped like a real board: the best run carries every field a
+    section of the page reads, the rest only what the ranking needs."""
+
+    rows = [
+        {
+            "run": f"run{i}",
+            "n_tracks": 10,
+            "macro_f_beat": 0.9 - i / 100,
+            "f_beat": 0.5,
+            "checkpoint": f"checkpoints/run{i}/epoch{i}.ckpt",
+        }
+        for i in range(n_runs)
+    ]
+    rows[0] |= {
+        "task": "beat_phase",
+        "swept_on": "train",
+        "sweep_n_tracks": 50,
+        "beat_threshold": 0.8,
+        "switch_penalty": None,
+        "measured_utc": "2026-09-18T18:05:45+00:00",
+        "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
+    }
+
+    return {
+        "generated_utc": "2026-09-18T18:08:03+00:00",
+        "git_commit": "f8a702c3d472518e44829e9f647e0da3c5135d8a",
+        "eval": {"dataset": "merge", "split": "val", "tolerance": 0.07},
+        "ranked_by": "macro_f_beat",
+        "leaderboard": rows,
+        "per_corpus": {
+            "run0": {
+                "ballroom": {"n_tracks": 6, "f_beat": 0.6},
+                "jtd": {"n_tracks": 4, "f_beat": 0.95},
+            },
+            "run1": {"ballroom": {"n_tracks": 6, "f_beat": 0.8}},
+        },
+        "failed": {},
+        **overrides,
+    }
 
 
 @pytest.fixture
@@ -464,6 +512,167 @@ class TestBuildPayload:
 
         assert payload["leaderboard"] == []
         assert payload["failed"] == {"a": "boom"}
+
+
+class TestSection:
+    """The one shape every table on the page goes through."""
+
+    def test_labels_align_left_and_numbers_right(self):
+        lines = section("Ranking", ["run", "f_beat"], [["`a`", "0.900"]], "a note")
+
+        assert lines[0] == "## Ranking"
+        assert lines[3] == "| --- | ---: |"
+        assert lines[-1] == "a note"
+
+    def test_a_section_without_a_note_ends_at_its_table(self):
+        assert section("Provenance", ["run"], [["`a`"]])[-1] == "| `a` |"
+
+
+class TestRenderPage:
+    """What the page says, and what it must not quietly get wrong — the
+    numbers on it are the ones people quote."""
+
+    def test_the_ranking_table_reports_the_macro_means(self):
+        """Micro is what the terminal table prints, macro is what ranked the
+        board — printing one under a heading ordered by the other invites
+        exactly the wrong read."""
+
+        page = render_page(_board())
+        ranking = page.split("## Ranking")[1].split("##")[0]
+
+        assert "0.900" in ranking
+        assert "0.500" not in ranking
+
+    def test_rows_keep_the_order_the_board_was_written_in(self):
+        """Ranking happens in `rank_rows`; rendering must not re-sort."""
+
+        page = render_page(_board())
+
+        assert page.index("`run0`") < page.index("`run1`")
+
+    def test_the_ranked_column_is_marked(self):
+        page = render_page(_board())
+
+        assert "**f_beat ↑**" in page
+        assert "confuse ↓" in page
+
+    def test_the_best_run_per_corpus_is_marked(self):
+        """The macro mean averages this away, and the winner differs per
+        corpus far more often than the headline number suggests."""
+
+        page = render_page(_board())
+        ballroom = next(
+            line for line in page.splitlines() if line.startswith("| `ballroom`")
+        )
+
+        assert "**0.800**" in ballroom
+        assert "**0.600**" not in ballroom
+
+    def test_a_corpus_a_run_never_scored_is_a_gap_not_a_zero(self):
+        page = render_page(_board())
+        jtd = next(line for line in page.splitlines() if line.startswith("| `jtd`"))
+
+        assert jtd.endswith("| n/a |")
+
+    def test_a_none_knob_is_a_value_and_a_missing_one_is_not(self):
+        """`switch_penalty: None` is the exact single-offset decode, not an
+        absent setting."""
+
+        decode = render_page(_board()).split("## Decode")[1].split("\n## ")[0]
+        swept, unswept = [
+            line for line in decode.splitlines() if line.startswith("| ")
+        ][2:]
+
+        assert "| none |" in swept and "| `train` (50 tracks) |" in swept
+        assert "| — |" in unswept and "| config |" in unswept
+
+    def test_an_empty_board_still_renders_a_page(self):
+        """The first invocation can fail every checkpoint it was given."""
+
+        page = render_page({"leaderboard": [], "failed": {"norm": "boom"}})
+
+        assert "Nothing scored yet." in page
+        assert "boom" in page
+
+    def test_an_older_board_names_its_ranking_metric_elsewhere(self):
+        """`ranked_by` moved out of `eval`; a board written before that is
+        still the board people pull."""
+
+        payload = _board(ranked_by=None)
+        payload["eval"]["ranked_by"] = "macro_position_acc"
+
+        assert ranked_metric(payload) == "position_acc"
+
+
+class TestPagePlacement:
+    """Where the page goes, and which boards get one. It is committed to this
+    repo rather than written beside the JSON: the data repo is behind a `dvc
+    pull` and renders nowhere, so a page written there is one nobody opens."""
+
+    def test_every_run_is_listed_by_default(self):
+        """The page is the leaderboard, not an excerpt of one."""
+
+        page = render_page(_board(7))
+
+        assert "`run6`" in page
+        assert "of 7 shown" not in page
+
+    def test_top_cuts_it_to_the_best_few(self):
+        page = render_page(_board(7), top=5)
+
+        assert "best 5 of 7 shown" in page
+        assert "`run4`" in page
+        assert "`run5`" not in page
+
+    def test_each_row_names_the_checkpoint_behind_it(self):
+        """A good number has to lead straight to the model that made it."""
+
+        page = render_page(_board(7), top=2)
+
+        assert "`checkpoints/run0/epoch0.ckpt`" in page
+        assert "`checkpoints/run2/epoch2.ckpt`" not in page
+
+    def test_a_throwaway_board_writes_nothing(self, tmp_path, monkeypatch):
+        """A `--board` elsewhere is a throwaway comparison: committing its
+        numbers would version something nobody can reproduce."""
+
+        monkeypatch.setattr("tools.leaderboard.PAGE_PATH", tmp_path / "PAGE.md")
+
+        write_page(_board(), tmp_path / "leaderboard.json")
+
+        assert not (tmp_path / "PAGE.md").exists()
+
+    def test_the_running_board_writes_it_folder_and_all(self, tmp_path, monkeypatch):
+        """The page's folder is its own, and a fresh clone has neither."""
+
+        page = tmp_path / "leaderboard" / "LEADERBOARD.md"
+        monkeypatch.setattr("tools.leaderboard.PAGE_PATH", page)
+
+        write_page(_board(), DEFAULT_BOARD.resolve())
+
+        assert page.read_text().startswith("# Beat leaderboard")
+
+
+class TestCliSurface:
+    """The one rule argparse cannot state on its own: runs are optional, but
+    only when there is nothing to score."""
+
+    def _parse(self, monkeypatch, *argv):
+        monkeypatch.setattr("sys.argv", ["leaderboard.py", *argv])
+
+        return parse_args()
+
+    def test_a_render_needs_no_runs(self, monkeypatch):
+        args = self._parse(monkeypatch, "--render-only")
+
+        assert args.runs == []
+        assert args.top == 0  # the page lists every run unless asked otherwise
+
+    def test_naming_nothing_at_all_is_an_error(self, monkeypatch):
+        """Otherwise it reads as a no-op run that silently scored nothing."""
+
+        with pytest.raises(SystemExit):
+            self._parse(monkeypatch)
 
 
 def _reject(value):
