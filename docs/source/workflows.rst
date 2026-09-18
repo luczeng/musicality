@@ -161,8 +161,12 @@ report are the same number.
 
 .. code-block:: bash
 
-    uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \
-        --dataset merge --split val
+    uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
+
+The split it lands on is ``configs/eval_beat.yaml``'s ``dataset`` +
+``binary_only`` + ``split`` — defaulting to what ``beat_train.yaml`` trains on,
+so no flags are needed to evaluate against the split a checkpoint was held out
+against.
 
 Three things it does that a loop over ``eval_beat.py`` would not:
 
@@ -212,7 +216,7 @@ only what is new:
 
 .. code-block:: bash
 
-    uv run python tools/leaderboard.py checkpoints_new --dataset merge
+    uv run python tools/leaderboard.py checkpoints_new
 
 Every row for a run not named on the command line is carried over, and the
 merged board is written back — so adding one experiment costs one experiment's

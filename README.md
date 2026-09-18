@@ -272,13 +272,15 @@ repo (`../musicality_db/leaderboard/`) beside the splits — pulled before readi
 and pushed after writing, so a board built on a rented instance survives the
 instance. You only ever evaluate what's new:
 
+The split comes from `configs/eval_beat.yaml` (`merge`, binary meter only, val
+— what `beat_train.yaml` trains on), so a board needs no flags:
+
 ```bash
 # first time — the file doesn't exist yet, so this starts the board
-uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \
-    --dataset merge --split val
+uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
 
 # every time after — same command, just the new experiment
-uv run python tools/leaderboard.py checkpoints_new --dataset merge --split val
+uv run python tools/leaderboard.py checkpoints_new
 ```
 
 Rows for runs not named on the command line are carried over; naming a run

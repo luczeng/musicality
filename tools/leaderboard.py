@@ -23,12 +23,12 @@ and what makes its numbers optimistic.
 
 Usage
 -----
-    # first time: two experiment folders, swept, on the merged val split
-    uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \\
-        --dataset merge --split val
+    # first time: two experiment folders, swept, on the split
+    # configs/eval_beat.yaml names (merge, binary meter only, val)
+    uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
 
     # every time after: name only what is new
-    uv run python tools/leaderboard.py checkpoints_new --dataset merge
+    uv run python tools/leaderboard.py checkpoints_new
 
     # a single checkpoint, no sweep (score at the config's shipped knobs)
     uv run python tools/leaderboard.py checkpoints/merge_v5.ckpt --no-sweep
@@ -664,7 +664,11 @@ def parse_args() -> argparse.Namespace:
     )
 
     data = parser.add_argument_group("evaluation split")
-    data.add_argument("--dataset", default=EVAL_DEFAULTS["dataset"])
+    data.add_argument(
+        "--dataset",
+        default=EVAL_DEFAULTS["dataset"],
+        help="Split to evaluate on, default from configs/eval_beat.yaml",
+    )
     data.add_argument(
         "--data-home", default=None, help=f"Defaults to {DATA_DIR}/<dataset>"
     )
@@ -677,7 +681,8 @@ def parse_args() -> argparse.Namespace:
     data.add_argument("--group-size", type=int, default=None)
     data.add_argument(
         "--binary-only",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=EVAL_DEFAULTS["binary_only"],
         help="Must match how the split was created",
     )
     data.add_argument("--tolerance", type=float, default=EVAL_DEFAULTS["tolerance"])
