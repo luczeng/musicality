@@ -218,8 +218,23 @@ and prints a comparison table of best validation metrics.
 ```bash
 uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3
 
-# save the comparison table instead of only printing it (.csv or plain text)
-uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output sweep_results.csv
+# name the sweep instead of taking the timestamp
+uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 --sweep-id deeper-trunk
+
+# put the comparison table somewhere other than the sweep directory
+uv run python tools/sweep_lr.py --lrs 1e-4 5e-4 1e-3 --output ~/sweeps/lr.csv
+```
+
+Each sweep gets a directory of its own, stamped with the moment it started, so
+two sweeps on the same day don't overwrite each other's checkpoints. Every run
+inside it keeps its own `training_report.json`, and the comparison table is
+written beside them:
+
+```
+checkpoints_beat/lr_sweep-20260918-141530/
+    lr_0.0008/   <checkpoints> + training_report.json
+    lr_0.002/    <checkpoints> + training_report.json
+    sweep_results.csv
 ```
 
 </details>
