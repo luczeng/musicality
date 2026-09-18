@@ -8,14 +8,27 @@ rows, the same way tests/test_eval_beat_cli.py stubs it.
 
 import json
 import math
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 from musicality.dataformats.track_io import TrackRef
 from tools.leaderboard import (
     BOARD_COLUMNS,
+    DEFAULT_BOARD,
+    board_settings,
     build_payload,
+    carried_rows,
+    check_comparable,
+    board_name,
+    dvc,
     find_runs,
+    load_board,
+    parse_args,
+    publish,
+    pull_board,
     rank_rows,
     run_checkpoints,
     sweep_evaluator,
@@ -122,8 +135,31 @@ class TestFindRuns:
 
 
 class TestSweepKnobs:
-    def _args(self):
-        return SimpleNamespace(rank_by="micro", rank_metric="position_acc")
+    def _args(self, **overrides):
+        return SimpleNamespace(
+            rank_by="micro",
+            rank_metric="f_beat",
+            **{"sweep_rank_metric": "position_acc", **overrides},
+        )
+
+    def test_the_position_stage_ignores_f_beat(self, monkeypatch):
+        """A bar-position decoder relabels beats without moving them, so every
+        stage-2 candidate scores the same f_beat. Ranking stage 2 by the
+        board's own --rank-metric (f_beat by default) is therefore a tie that
+        the sort breaks by candidate order, pinning switch_penalty to the first
+        value in the list — measurably worse: 0.73 against 0.88 position_acc on
+        six ballroom tracks."""
+
+        _grid(monkeypatch)
+        evaluator = _StubEvaluator(
+            [_rows(f_beat=0.5, position_acc=0.1), _rows(f_beat=0.9, position_acc=0.2)]
+            # Stage 2: identical f_beat, as it always is in reality.
+            + [_rows(f_beat=0.9, position_acc=p) for p in (0.3, 0.9)]
+        )
+
+        knobs = sweep_knobs(evaluator, "beat_phase", 4, self._args())
+
+        assert knobs["switch_penalty"] == 2.0
 
     def test_beat_only_stops_after_the_beat_stage(self, monkeypatch):
         """A beat-only checkpoint has no bar-position heads, so sweeping a
@@ -280,6 +316,193 @@ class TestSweepEvaluator:
         assert len(evaluator.load()[3]) == 3
 
 
+class TestRunningBoard:
+    """`--append` keeps one board growing across invocations. What it must get
+    right: which rows survive, and refusing to mix rows that were never
+    measured the same way."""
+
+    def _args(self, **overrides):
+        return SimpleNamespace(
+            dataset="ballroom",
+            split="val",
+            val_split=0.2,
+            sample_rate=22050,
+            hop_length=512,
+            tolerance=0.07,
+            binary_only=False,
+            group_size=None,
+            limit=None,
+            sweep=True,
+            sweep_split="train",
+            sweep_tracks=50,
+            rank_metric="f_beat",
+            sweep_rank_metric="position_acc",
+            rank_by="macro",
+            commit="abc1234",
+            **overrides,
+        )
+
+    def _previous(self, *runs, **eval_overrides):
+        return {
+            "leaderboard": [{"run": run, "f_beat": 0.5} for run in runs],
+            "per_corpus": {run: {"ballroom": {}} for run in runs},
+            "eval": {**board_settings(self._args()), **eval_overrides},
+        }
+
+    def test_appending_is_the_default(self, monkeypatch):
+        """A board is only useful once it has more than one row on it, so
+        extending one is the behaviour you get without asking."""
+
+        monkeypatch.setattr(sys, "argv", ["leaderboard.py", "checkpoints_deeper"])
+
+        assert parse_args().append == DEFAULT_BOARD
+
+    def test_no_append_opts_out(self, monkeypatch):
+        monkeypatch.setattr(
+            sys, "argv", ["leaderboard.py", "checkpoints_deeper", "--no-append"]
+        )
+
+        assert parse_args().append is None
+
+    def test_an_explicit_path_wins(self, monkeypatch):
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            ["leaderboard.py", "checkpoints_deeper", "--append", "boards/x.json"],
+        )
+
+        assert parse_args().append == Path("boards/x.json")
+
+    def test_a_missing_file_starts_an_empty_board(self, tmp_path):
+        """So the first invocation of a running board is the same command as
+        every later one."""
+
+        board = load_board(tmp_path / "nothing-here.json")
+
+        assert board["leaderboard"] == []
+
+    def test_an_existing_board_is_read_back(self, tmp_path):
+        path = tmp_path / "board.json"
+        path.write_text(json.dumps(self._previous("a", "b")))
+
+        assert len(load_board(path)["leaderboard"]) == 2
+
+    def test_rows_not_re_measured_are_carried(self):
+        carried = carried_rows(self._previous("a", "b"), [{"run": "b"}])
+
+        assert [row["run"] for row in carried] == ["a"]
+
+    def test_a_re_measured_run_is_replaced_not_duplicated(self):
+        """Identity is the run label: re-running a folder after more training
+        picks a different epoch's file, and that is the same experiment with a
+        better number rather than a second entry."""
+
+        carried = carried_rows(self._previous("a"), [{"run": "a"}])
+
+        assert carried == []
+
+    def test_incomparable_settings_are_refused(self):
+        previous = self._previous("a", tolerance=0.05)
+
+        with pytest.raises(SystemExit, match="tolerance"):
+            check_comparable(
+                previous["eval"], board_settings(self._args()), previous["leaderboard"]
+            )
+
+    def test_re_measuring_everything_lifts_the_refusal(self):
+        """Nothing survives from the old board, so its settings are no longer a
+        claim about anything — which is what lets the split be changed without
+        needing a flag to override the check."""
+
+        previous = self._previous("a", tolerance=0.05)
+
+        check_comparable(previous["eval"], board_settings(self._args()), [])
+
+    def test_sweep_settings_alone_do_not_block_an_append(self):
+        """They are recorded per row (`swept_on` and the knobs themselves), so
+        a swept and an unswept row are told apart by reading them."""
+
+        previous = self._previous("a", sweep_split="val", swept=False)
+
+        check_comparable(
+            previous["eval"], board_settings(self._args()), previous["leaderboard"]
+        )
+
+
+class TestDvcSync:
+    """The board lives in the DVC-tracked data repo so it outlives the machine
+    that wrote it. Syncing must never take a run down with it: a board that
+    cannot be pushed is still a board."""
+
+    def _board(self, tmp_path, dvc_repo=True, pointer=False):
+        repo = tmp_path / "musicality_db"
+        (repo / "leaderboard").mkdir(parents=True)
+
+        if dvc_repo:
+            (repo / ".dvc").mkdir()
+        if pointer:
+            (repo / "leaderboard.dvc").write_text("")
+
+        return repo / "leaderboard" / "leaderboard.json"
+
+    def test_the_dvc_target_is_the_folder_not_the_file(self, tmp_path):
+        """`leaderboard.dvc` tracks the directory, the way `splits.dvc` does."""
+
+        assert board_name(self._board(tmp_path)) == "leaderboard"
+
+    def test_a_non_dvc_directory_is_skipped_not_fatal(self, tmp_path, capsys):
+        path = self._board(tmp_path, dvc_repo=False)
+
+        assert dvc(["push", "leaderboard"], path) is False
+        assert "not a DVC repo" in capsys.readouterr().out
+
+    def test_the_first_run_does_not_pull(self, tmp_path, monkeypatch, capsys):
+        """With no pointer yet there is nothing to fetch, and a doomed `dvc
+        pull` prints an error that reads like a failure when nothing is wrong."""
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("dvc pull should not have run")
+
+        monkeypatch.setattr("tools.leaderboard.subprocess.run", _boom)
+
+        pull_board(self._board(tmp_path, pointer=False))
+
+        assert "starting a new board" in capsys.readouterr().out
+
+    def test_an_existing_pointer_is_pulled(self, tmp_path, monkeypatch):
+        calls = []
+        monkeypatch.setattr(
+            "tools.leaderboard.subprocess.run",
+            lambda cmd, **kwargs: (
+                calls.append(cmd) or SimpleNamespace(returncode=0, stderr="")
+            ),
+        )
+
+        pull_board(self._board(tmp_path, pointer=True))
+
+        assert calls == [["dvc", "pull", "leaderboard"]]
+
+    def test_a_failed_add_does_not_push(self, tmp_path, monkeypatch, capsys):
+        """Pushing content whose pointer was never rewritten would upload the
+        previous board under the new commit."""
+
+        monkeypatch.setattr("tools.leaderboard.dvc", lambda command, path: False)
+
+        publish(self._board(tmp_path))
+
+        assert "git commit" not in capsys.readouterr().out
+
+    def test_a_successful_push_says_what_to_commit(self, tmp_path, monkeypatch, capsys):
+        """The pointer only becomes the shared truth once committed, and
+        committing in someone else's repo is not this tool's call."""
+
+        monkeypatch.setattr("tools.leaderboard.dvc", lambda command, path: True)
+
+        publish(self._board(tmp_path))
+
+        assert "git add leaderboard.dvc" in capsys.readouterr().out
+
+
 class TestRankRows:
     def _rows(self):
         return [
@@ -333,7 +556,9 @@ class TestBuildPayload:
             sweep_split="train",
             sweep_tracks=50,
             rank_metric="f_beat",
+            sweep_rank_metric="position_acc",
             rank_by="macro",
+            commit="abc1234",
         )
 
     def _row(self, **overrides):

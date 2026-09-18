@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""Score a set of trained runs on full tracks and publish the comparison as a
-W&B leaderboard plus one shareable file.
+"""Score trained runs on full tracks and keep the comparison as one running board.
 
 Training already reports on itself — every run writes a `training_report.json`
 beside its checkpoints. What it cannot do is compare runs: each report scores
@@ -8,14 +7,14 @@ its own run, on whatever split and postprocessing that run was configured with,
 at whatever epoch it happened to stop. Ranking four architectures against each
 other means re-scoring all of them the same way, afterwards.
 
-That is this tool. Point it at the checkpoint directories, and for every run it
-finds it re-runs the full-track evaluation on one common split, sweeps the
-postprocessing knobs per checkpoint (the shipped `beat_phase` knobs are marked
-UNVERIFIED in `configs/eval_beat.yaml`, and a sweep has been worth more than a
-retrain), and writes the ranked board to its own W&B project — separate from the
-training project, so a leaderboard is not buried among training runs. The same
-board goes to a single JSON file, uploaded to that W&B run's Files tab: one
-download, holding every number, to hand to someone else.
+That is this tool. Point it at the checkpoint directories of whatever is new;
+every run it finds is evaluated on one common split, with its postprocessing
+knobs swept first (the shipped `beat_phase` knobs are marked UNVERIFIED in
+`configs/eval_beat.yaml`, and a sweep has been worth more than a retrain), and
+added to the board beside the runs already measured. The board is one JSON file
+holding every number — per-run metrics, the knobs each was scored at, the
+per-corpus breakdown, and a rendered table under `readable` — so a whole
+comparison travels as a single attachment.
 
 The sweep runs on the **train** split by default and the report on val, so the
 knobs are not chosen on the tracks they are then scored on. `--sweep-split val`
@@ -24,20 +23,41 @@ and what makes its numbers optimistic.
 
 Usage
 -----
-    # every run in two experiment folders, swept, on the merged val split
+    # first time: two experiment folders, swept, on the merged val split
     uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \\
         --dataset merge --split val
+
+    # every time after: name only what is new
+    uv run python tools/leaderboard.py checkpoints_new --dataset merge
 
     # a single checkpoint, no sweep (score at the config's shipped knobs)
     uv run python tools/leaderboard.py checkpoints/merge_v5.ckpt --no-sweep
 
-    # rank by bar-position accuracy instead of beat F-measure, no W&B
-    uv run python tools/leaderboard.py checkpoints_deeper \\
-        --rank-metric position_acc --no-wandb
-
     # tune the knobs on val too — faster (no second model pass), but the
     # reported numbers are then no longer held out
     uv run python tools/leaderboard.py checkpoints_deeper --sweep-split val
+
+    # a one-off board of exactly these runs, extending and pushing nothing
+    uv run python tools/leaderboard.py checkpoints_deeper --no-append
+
+The running board
+-----------------
+The board lives in the DVC-tracked data repo (`musicality_db/leaderboard/`),
+beside the splits. It is pulled before reading and pushed after writing, so a
+run on a rented instance sees every experiment measured so far and hands its own
+result back — the board outlives the machine, which is the whole point of it
+being a running one. Only the `.dvc` pointer needs committing, and that is left
+to whoever is at the keyboard.
+
+Rows for runs not named on the command line are carried over; a run that *is*
+named is re-measured and replaces its old row. Identity is the run label, not
+the checkpoint filename, since more training on the same folder is the same
+experiment with a better number.
+
+Rows measured under different conditions are refused rather than merged (see
+`COMPARABLE_KEYS`), before any model pass. Re-measuring every run in the old
+board lifts that, which is how the split or the tolerance gets changed: name all
+the folders once.
 
 Which checkpoint per run
 ------------------------
@@ -52,11 +72,11 @@ import itertools
 import json
 import math
 import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-import wandb
-
+import musicality.dataformats as dataformats
 from musicality.callbacks.event_metrics import stratified_sample
 from musicality.callbacks.training_report import git_commit, jsonable
 from musicality.evaluation import (
@@ -68,10 +88,32 @@ from musicality.evaluation import (
     summarize,
 )
 from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
-from tools.eval_beat import _BETTER, _LABELS, rank_key, resolve_group_size, sweep_grid
+from tools.eval_beat import (
+    _BETTER,
+    _LABELS,
+    _RANK_CHOICES,
+    rank_key,
+    resolve_group_size,
+    sweep_grid,
+)
 
 SCHEMA = 1
 FILENAME = "leaderboard.json"
+
+# The running board, kept between invocations unless --append names another or
+# --no-append asks for a standalone one. A default rather than a flag to
+# remember: a board is only useful once it has more than one row on it.
+#
+# It lives in the DVC-tracked data repo, beside the splits, rather than in this
+# checkout. A board that accumulates over months has to outlive the machine
+# that wrote it, and training runs on rented instances that are torn down; a
+# path under `musicality_db` is pulled onto a fresh instance and pushed back
+# the same way the splits and datasets already are.
+DEFAULT_BOARD = dataformats.LEADERBOARD_DIR / FILENAME
+
+# Where a --no-append one-off lands. Local and gitignored: a standalone board is
+# a scratch comparison, not something to publish.
+SCRATCH_DIR = Path("leaderboards")
 
 SWEEP_DEFAULTS = EVAL_DEFAULTS["sweep"]
 
@@ -85,6 +127,23 @@ KNOB_KEYS = (
     "decoder",
     "switch_penalty",
     "anchor_threshold",
+)
+
+# What has to match for a row measured by an earlier invocation to sit beside
+# one measured now: the tracks it was scored on, and how a match was counted.
+# Deliberately not the sweep settings — those are recorded per row (`swept_on`,
+# plus the knobs themselves), so a swept and an unswept row are told apart by
+# reading them rather than by forbidding the combination.
+COMPARABLE_KEYS = (
+    "dataset",
+    "split",
+    "val_split",
+    "sample_rate",
+    "hop_length",
+    "tolerance",
+    "binary_only",
+    "group_size",
+    "limit",
 )
 
 # Columns of the printed board. Narrow on purpose: the file and the W&B table
@@ -211,6 +270,14 @@ def sweep_knobs(evaluator: BeatEvaluator, task: str, group_size: int, args) -> d
     bar-position knob the resolved decoder actually reads, on top of the
     winner. Both stages re-use the cached frame probabilities, so a sweep costs
     one model pass per checkpoint, not one per grid point.
+
+    **The two stages rank by different metrics, and must.** A bar-position
+    decoder relabels beats; it cannot move them. Every stage-2 candidate
+    therefore scores the *same* ``f_beat`` to the last decimal, so ranking
+    stage 2 by it is a tie that the sort resolves by candidate order — which
+    silently pins ``switch_penalty`` to the first value in the list. Stage 2
+    ranks by ``--sweep-rank-metric`` (a bar-position metric) instead; only the
+    board's own ordering reads ``--rank-metric``.
     """
 
     beat_grid = [
@@ -247,7 +314,7 @@ def sweep_knobs(evaluator: BeatEvaluator, task: str, group_size: int, args) -> d
         evaluator,
         [{**best, knob: value} for value in values],
         group_size=group_size,
-        metric=args.rank_metric,
+        metric=args.sweep_rank_metric,
         rank_by=args.rank_by,
     )
 
@@ -306,6 +373,10 @@ def evaluate_run(label: str, checkpoint: Path, args) -> dict:
         "run": label,
         "checkpoint": str(checkpoint),
         "task": task,
+        # Per row, not just per board: a running board carries rows measured on
+        # different days by different code, and the row has to say which.
+        "measured_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "git_commit": args.commit,
         "swept_on": swept_on,
         "sweep_n_tracks": n_sweep,
         "n_tracks": summary["n_tracks"],
@@ -322,6 +393,161 @@ def evaluate_run(label: str, checkpoint: Path, args) -> dict:
     }
 
     return {"row": row, "per_corpus": per_corpus}
+
+
+def board_name(path: Path) -> str:
+    """The DVC target for a board at *path* — the folder holding it.
+
+    DVC tracks the directory (``leaderboard.dvc``, beside ``splits.dvc``), not
+    the file, so both pull and add name the folder.
+    """
+
+    return path.parent.name
+
+
+def dvc(command: list[str], path: Path) -> bool:
+    """Run one ``dvc`` command in the data repo holding *path*.
+
+    Never fatal. The remote needs credentials this checkout may not have, and a
+    board that cannot be synced is still a board — the run reports what failed
+    and carries on with what is on disk.
+    """
+
+    cwd = path.parent.parent.resolve()
+    if not (cwd / ".dvc").is_dir():
+        print(f"[leaderboard] {cwd} is not a DVC repo — skipping dvc {command[0]}")
+        return False
+
+    print(f"[leaderboard] dvc {' '.join(command)} (in {cwd})")
+    result = subprocess.run(["dvc", *command], cwd=cwd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        print(f"[leaderboard] dvc {command[0]} failed: {result.stderr.strip()}")
+        return False
+
+    return True
+
+
+def pull_board(path: Path) -> None:
+    """Fetch the board from the DVC remote before reading it.
+
+    Skipped when the pointer does not exist yet — the first invocation is what
+    creates the board, and running a doomed ``dvc pull`` only to print its error
+    reads like a failure when nothing is wrong.
+    """
+
+    name = board_name(path)
+
+    if not (path.parent.parent / f"{name}.dvc").exists():
+        print(f"[leaderboard] no {name}.dvc yet — starting a new board")
+        return
+
+    dvc(["pull", name], path)
+
+
+def publish(path: Path) -> None:
+    """Re-hash the board folder and upload it, then say what to commit.
+
+    ``dvc add`` rewrites the ``.dvc`` pointer in the data repo and ``dvc push``
+    uploads the content, but the pointer only becomes the shared truth once it
+    is committed — and committing in someone else's repo is not this tool's
+    call to make.
+    """
+
+    name = board_name(path)
+    repo = path.parent.parent.resolve()
+
+    if not dvc(["add", name], path):
+        return
+    if not dvc(["push", name], path):
+        return
+
+    print(
+        f"\n[leaderboard] pushed. To share it:\n"
+        f"    cd {repo} && git add {name}.dvc && git commit -m 'Update leaderboard'"
+    )
+
+
+def load_board(path: Path) -> dict:
+    """The board already at *path*, or an empty one when there is none yet.
+
+    A missing file is not an error: it makes the first invocation of a running
+    board the same command as every later one.
+    """
+
+    if path is None or not path.exists():
+        return {"leaderboard": [], "per_corpus": {}, "eval": {}}
+
+    previous = json.loads(path.read_text())
+    print(
+        f"[leaderboard] {len(previous.get('leaderboard', []))} row(s) loaded "
+        f"from {path}"
+    )
+
+    return previous
+
+
+def carried_rows(previous: dict, rows: list[dict]) -> list[dict]:
+    """Rows of *previous* that this invocation did not re-measure.
+
+    Identity is the ``run`` label, not the checkpoint path: re-running a folder
+    after more training picks a different epoch's file, and that is the same
+    experiment with a better number, not a second entry on the board.
+    """
+
+    measured = {row["run"] for row in rows}
+
+    return [
+        row for row in previous.get("leaderboard", []) if row["run"] not in measured
+    ]
+
+
+def check_comparable(previous: dict, current: dict, carried: list[dict]) -> None:
+    """Refuse to put rows measured under different conditions on one board.
+
+    A leaderboard is a claim that its rows can be read against each other, and
+    a row scored on a different split or at a different tolerance cannot. Only
+    *carried* rows are at stake — re-measuring every run in the old board makes
+    the old settings irrelevant, which is what lets the split be changed without
+    a flag to override this.
+    """
+
+    if not carried or not previous:
+        return
+
+    differing = {
+        key: (previous.get(key), current.get(key))
+        for key in COMPARABLE_KEYS
+        if previous.get(key) != current.get(key)
+    }
+    if not differing:
+        return
+
+    changes = "\n".join(
+        f"    {key}: {was!r} -> {now!r}" for key, (was, now) in differing.items()
+    )
+    raise SystemExit(
+        f"[leaderboard] cannot append: {len(carried)} row(s) in the existing "
+        f"board were measured under different settings:\n{changes}\n"
+        "    Re-measure those runs too (name their folders as well), or append "
+        "to a different file."
+    )
+
+
+def warn_on_code_drift(carried: list[dict], commit: str | None) -> None:
+    """Note carried rows produced by a different commit.
+
+    Not fatal — most commits do not touch scoring — but a metric that moved
+    between them would show up on the board as a model improvement.
+    """
+
+    stale = {row.get("git_commit") for row in carried} - {commit, None}
+    if stale:
+        print(
+            f"[leaderboard] note: {len(carried)} carried row(s) were measured at "
+            f"{', '.join(sorted(c[:8] for c in stale))}, this invocation is at "
+            f"{(commit or 'unknown')[:8]}"
+        )
 
 
 def rank_rows(rows: list[dict], metric: str, rank_by: str) -> list[dict]:
@@ -356,11 +582,41 @@ def render_board(rows: list[dict]) -> str:
     lines = [header]
     for row in rows:
         lines.append(
-            f"{row['run']:<{width}}  {row['n_tracks']:>4}"
-            + "".join(f" {_fmt(row[c]):>9}" for c in BOARD_COLUMNS)
+            f"{row['run']:<{width}}  {row.get('n_tracks', 0):>4}"
+            + "".join(f" {_fmt(row.get(c)):>9}" for c in BOARD_COLUMNS)
         )
 
     return "\n".join(lines)
+
+
+def board_settings(args) -> dict:
+    """The conditions every row on this board was measured under.
+
+    One function because two callers must agree on it: it is stored in the file
+    as ``eval``, and :func:`check_comparable` reads that back to decide whether
+    an older board's rows may sit beside today's.
+    """
+
+    return {
+        "dataset": args.dataset,
+        "split": args.split,
+        "val_split": args.val_split,
+        "sample_rate": args.sample_rate,
+        "hop_length": args.hop_length,
+        "tolerance": args.tolerance,
+        "binary_only": args.binary_only,
+        "group_size": args.group_size,
+        "limit": args.limit,
+        "swept": args.sweep,
+        "sweep_split": args.sweep_split if args.sweep else None,
+        "sweep_tracks": args.sweep_tracks
+        if args.sweep and args.sweep_split != args.split
+        else None,
+        "ranked_by": rank_key(args.rank_metric, args.rank_by),
+        "sweep_ranked_by": rank_key(args.sweep_rank_metric, args.rank_by)
+        if args.sweep
+        else None,
+    }
 
 
 def build_payload(rows: list[dict], per_corpus: dict, failed: dict, args) -> dict:
@@ -375,24 +631,8 @@ def build_payload(rows: list[dict], per_corpus: dict, failed: dict, args) -> dic
         {
             "schema": SCHEMA,
             "generated_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "git_commit": git_commit(),
-            "eval": {
-                "dataset": args.dataset,
-                "split": args.split,
-                "val_split": args.val_split,
-                "sample_rate": args.sample_rate,
-                "hop_length": args.hop_length,
-                "tolerance": args.tolerance,
-                "binary_only": args.binary_only,
-                "group_size": args.group_size,
-                "limit": args.limit,
-                "swept": args.sweep,
-                "sweep_split": args.sweep_split if args.sweep else None,
-                "sweep_tracks": args.sweep_tracks
-                if args.sweep and args.sweep_split != args.split
-                else None,
-                "ranked_by": rank_key(args.rank_metric, args.rank_by),
-            },
+            "git_commit": args.commit,
+            "eval": board_settings(args),
             "readable": render_board(rows) if rows else "nothing scored",
             "leaderboard": rows,
             "per_corpus": per_corpus,
@@ -401,56 +641,12 @@ def build_payload(rows: list[dict], per_corpus: dict, failed: dict, args) -> dic
     )
 
 
-def start_wandb(args, config: dict):
-    """Open the W&B run this board is published to.
-
-    One run per invocation, in a project of its own: a leaderboard is a
-    different kind of object from a training run, and mixing them makes both
-    harder to find. Opened *before* the file is written so the file can carry
-    the run's own URL — which is what makes an attachment stand alone.
-    """
-
-    return wandb.init(
-        project=args.project,
-        name=args.name,
-        job_type="leaderboard",
-        tags=args.tags,
-        config=config,
-    )
-
-
-def log_board(run, rows: list[dict], path: Path) -> None:
-    """Log the board as a sortable table, rank it in the run summary, and
-    upload *path* to the run's Files tab.
-
-    The attachment is the point: a W&B link needs an account and a download
-    does not, so the whole board also leaves as one file.
-    """
-
-    columns = list(rows[0])
-    table = wandb.Table(
-        columns=columns, data=[[row[c] for c in columns] for row in rows]
-    )
-
-    run.log({"leaderboard": table})
-
-    run.summary.update(
-        {
-            "n_runs": len(rows),
-            "best/run": rows[0]["run"],
-            **{f"best/{key}": rows[0][key] for key in SCORE_KEYS},
-        }
-    )
-
-    run.save(str(path), base_path=str(path.parent), policy="now")
-
-
 def write_payload(payload: dict, path: Path) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2))
 
-    print(f"\n[leaderboard] written to {path}")
+    print(f"\n[leaderboard] written to {path.resolve()}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -529,7 +725,19 @@ def parse_args() -> argparse.Namespace:
         "--rank-metric",
         choices=SCORE_KEYS,
         default="f_beat",
-        help="Which metric orders the board, and picks each sweep's winner",
+        help="Which metric orders the board",
+    )
+    ranking.add_argument(
+        "--sweep-rank-metric",
+        choices=_RANK_CHOICES,
+        default="position_acc",
+        help=(
+            "Which metric picks the winner of the sweep's bar-position stage. "
+            "Must be a bar-position metric: a decoder relabels beats without "
+            "moving them, so every candidate ties on f_beat and ranking by it "
+            "would pick whichever came first in the list. Beat detection "
+            "(stage 1) always ranks by f_beat, the only thing its knobs move."
+        ),
     )
     ranking.add_argument(
         "--rank-by",
@@ -543,23 +751,53 @@ def parse_args() -> argparse.Namespace:
 
     output = parser.add_argument_group("output")
     output.add_argument(
+        "--append",
+        type=Path,
+        default=DEFAULT_BOARD,
+        help=(
+            f"The running board to extend, default {DEFAULT_BOARD.name} in the "
+            "DVC-tracked leaderboard folder. Rows for runs not named on this "
+            "command line are carried over from it, and the merged board is "
+            "written back there. A path that does not exist yet starts a new "
+            "board, so the first invocation is the same command as every later "
+            "one."
+        ),
+    )
+    output.add_argument(
+        "--no-append",
+        dest="append",
+        action="store_const",
+        const=None,
+        help=(
+            "Score into a standalone board instead of extending the running "
+            "one — a one-off comparison of exactly the runs named here, written "
+            f"under {SCRATCH_DIR}/ and never pushed."
+        ),
+    )
+    output.add_argument(
         "--output",
         type=Path,
         default=None,
-        help=f"Defaults to leaderboards/<name>/{FILENAME}",
+        help="Write elsewhere than the board being extended",
     )
-    output.add_argument("--project", default="musicality-leaderboard")
     output.add_argument(
-        "--name",
-        default=None,
-        help="W&B run name and output subdirectory (default: a timestamp)",
-    )
-    output.add_argument("--tags", nargs="*", default=[], help="W&B tags")
-    output.add_argument(
-        "--no-wandb",
-        dest="wandb",
+        "--no-pull",
+        dest="pull",
         action="store_false",
-        help="Write the file only — no W&B run, no upload",
+        help=(
+            "Skip the `dvc pull` of the leaderboard folder. Without it a fresh "
+            "machine starts an empty board and silently drops every run already "
+            "measured."
+        ),
+    )
+    output.add_argument(
+        "--no-push",
+        dest="push",
+        action="store_false",
+        help=(
+            "Write the board locally without `dvc add` + `dvc push`. The board "
+            "then exists only on this machine until pushed by hand."
+        ),
     )
 
     return parser.parse_args()
@@ -567,7 +805,13 @@ def parse_args() -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    args.name = args.name or datetime.now().strftime("%Y%m%d-%H%M%S")
+    args.stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    args.commit = git_commit()  # once per invocation, stamped onto every row
+
+    if args.pull and args.append is not None:
+        pull_board(args.append)
+
+    previous = load_board(args.append)
 
     runs = find_runs(args.runs)
     if not runs:
@@ -587,6 +831,15 @@ def main():
         f"split={args.split}  sweep={sweeping}"
     )
 
+    # Before the model passes, not after: an incomparable append should cost
+    # nothing. Checked again below against the rows actually measured, since a
+    # checkpoint that fails to load leaves its old row standing.
+    check_comparable(
+        previous.get("eval") or {},
+        board_settings(args),
+        carried_rows(previous, [{"run": label} for label, _ckpt in runs]),
+    )
+
     rows, per_corpus, failed = [], {}, {}
     for i, (label, checkpoint) in enumerate(runs, start=1):
         print(f"\n[{i}/{len(runs)}] {label}\n    {checkpoint.name}")
@@ -603,34 +856,36 @@ def main():
         rows.append(result["row"])
         per_corpus[label] = result["per_corpus"]
 
-    rows = rank_rows(jsonable(rows), args.rank_metric, args.rank_by)
+    rows = jsonable(rows)
+
+    carried = carried_rows(previous, rows)
+    check_comparable(previous.get("eval") or {}, board_settings(args), carried)
+    warn_on_code_drift(carried, args.commit)
+
+    if carried:
+        print(f"\n[leaderboard] {len(carried)} row(s) carried over unchanged")
+        per_corpus = {
+            **{
+                k: v
+                for k, v in (previous.get("per_corpus") or {}).items()
+                if k in {r["run"] for r in carried}
+            },
+            **per_corpus,
+        }
+
+    rows = rank_rows(rows + carried, args.rank_metric, args.rank_by)
     ranked_by = rank_key(args.rank_metric, args.rank_by)
 
     print(f"\n{'=' * 78}\nLEADERBOARD  (ranked by {ranked_by})\n{'=' * 78}")
     print(render_board(rows) if rows else "nothing scored")
 
     payload = build_payload(rows, per_corpus, failed, args)
-    path = args.output or Path("leaderboards") / args.name / FILENAME
-
-    run = start_wandb(args, payload["eval"]) if args.wandb and rows else None
-    if run is not None:
-        payload["wandb"] = {
-            "project": args.project,
-            "name": run.name,
-            "id": run.id,
-            "url": run.url,
-        }
+    path = args.output or args.append or SCRATCH_DIR / f"leaderboard-{args.stamp}.json"
 
     write_payload(payload, path)
 
-    if run is not None:
-        log_board(run, rows, path)
-        wandb.finish()
-        # No URL offline: the run is sitting unsynced in ./wandb/, which is
-        # worth saying rather than printing `None`.
-        print(
-            f"[leaderboard] {payload['wandb']['url'] or 'offline — `wandb sync` to upload'}"
-        )
+    if args.push and args.append is not None:
+        publish(path)
 
 
 if __name__ == "__main__":

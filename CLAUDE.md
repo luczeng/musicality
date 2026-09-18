@@ -99,7 +99,7 @@ separate reasons — see `docs/frame_vs_event_metrics.md` before quoting either.
 
 ### Data Formats (`musicality/dataformats/`)
 
-Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits dir) as a typed `DataFormat` object.
+Loads `dataformat.yaml` and exposes hardcoded directory names (data root, splits dir, leaderboard dir) as a typed `DataFormat` object.
 
 ### Splits (`musicality/splits/splitter.py`)
 
@@ -116,7 +116,7 @@ of silently shrinking its dataset (see `docs/source/data.rst`).
 - `plot_tempo_histograms.py` — Plots BPM distributions across datasets.
 - `summarize_datasets.py` — Prints summary statistics for all datasets.
 - `train.py` — Hydra entry point for training.
-- `leaderboard.py` — Compares *several* runs, where `eval_beat.py` scores one. Walks checkpoint folders, re-evaluates every run it finds on one common split (through `BeatEvaluator`, so the numbers match `eval_beat.py`), sweeps each checkpoint's own postprocessing first — on the **train** split (`--sweep-split`, stratified subsample) so the reported val numbers stay held out, unlike `eval_beat.py --sweep` which tunes and reports on the same tracks — and publishes the ranked board to its own W&B project plus one `leaderboard.json` uploaded to that run's Files tab — a whole comparison as a single shareable attachment.
+- `leaderboard.py` — Compares *several* runs, where `eval_beat.py` scores one. Walks checkpoint folders, re-evaluates every run it finds on one common split (through `BeatEvaluator`, so the numbers match `eval_beat.py`), sweeps each checkpoint's own postprocessing first — on the **train** split (`--sweep-split`, stratified subsample) so the reported val numbers stay held out, unlike `eval_beat.py --sweep` which tunes and reports on the same tracks — and merges the result into one **running** board. The board is a single `leaderboard.json` in the DVC-tracked data repo (`musicality_db/leaderboard/`, `--append` for another path, `--no-append` for a local standalone one), pulled before reading and `dvc push`ed after writing so it outlives the instance that produced it — only the `.dvc` pointer is left to commit. Only the runs named on the command line are evaluated, the rest are carried over, and rows measured under different settings are refused rather than merged. No W&B involvement.
 - `eval_beat.py` — The one evaluation tool for beat-only/beat-phase checkpoints (task auto-detected), on full-length tracks. Default is the canonical metric report; `--per-genre` (automatic on a merged split) breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and calls model-vs-decoder, `--sweep` grid-searches the postprocessing knobs that `configs/eval_beat.yaml` holds, `--output` writes per-track rows to CSV. Every mode runs the model once per track and re-uses the cached probabilities.
 
 ## Configuration

@@ -164,7 +164,7 @@ report are the same number.
     uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \
         --dataset merge --split val
 
-Two things it does that a loop over ``eval_beat.py`` would not:
+Three things it does that a loop over ``eval_beat.py`` would not:
 
 - **It sweeps each checkpoint's own postprocessing** before scoring it (stage 1
   beat detection, stage 2 the resolved decoder's bar-position knob — the two
@@ -190,20 +190,72 @@ Two things it does that a loop over ``eval_beat.py`` would not:
   tracks. The stratification matters because a split file is written corpus by
   corpus: the first N tracks of a merged train split are N tracks of whichever
   corpus was written first, so the knobs would be tuned for one genre.
-- **It publishes the board**: one W&B run per invocation, in its own project
-  (``--project``, default ``musicality-leaderboard``), holding a sortable table
-  of every run, the winner in the run summary, and a single ``leaderboard.json``
-  in the run's Files tab. That file is the whole board — per-run metrics, the
-  knobs each was scored at, the per-corpus breakdown, a rendered table in
-  ``readable`` — written the way ``training_report.json`` is, ``NaN`` as
-  ``null`` so a strict parser accepts it. It exists to be downloaded and handed
-  to someone, since a W&B link needs an account and a file does not.
+
+- **It keeps one running board, in the data repo rather than this checkout.**
+  The board is a single ``leaderboard.json`` under
+  :data:`musicality.dataformats.LEADERBOARD_DIR` (``musicality_db/leaderboard/``),
+  DVC-tracked beside the splits. It holds the whole comparison — per-run
+  metrics, the knobs each row was scored at, the per-corpus breakdown, a
+  rendered table in ``readable`` — written the way ``training_report.json`` is,
+  ``NaN`` as ``null`` so a strict parser accepts it.
+
+The board being in the data repo is what makes it a *running* board rather than
+a per-machine one. Training happens on rented instances that are torn down, so
+the tool pulls the board before reading and ``dvc add``/``dvc push``es it after
+writing (``--no-pull`` / ``--no-push`` to skip). Only the ``.dvc`` pointer is
+left to commit, and the run prints the command; committing in the data repo is
+not this tool's call to make. The first invocation finds no pointer, says so,
+and starts the board.
+
+Every invocation extends that board, so the second and every later command names
+only what is new:
+
+.. code-block:: bash
+
+    uv run python tools/leaderboard.py checkpoints_new --dataset merge
+
+Every row for a run not named on the command line is carried over, and the
+merged board is written back — so adding one experiment costs one experiment's
+evaluation, not the whole board's. A run that *is* named is re-measured and
+replaces its old row; identity is the run label rather than the checkpoint
+filename, because more training on the same folder produces a different epoch's
+file for the same experiment. ``--append`` puts the board elsewhere and
+``--no-append`` makes a local standalone one, which is neither pulled nor
+pushed.
+
+Rows that were never measured the same way are refused rather than merged: if
+the dataset, split, tolerance, group size or track limit differs from what the
+existing board recorded, the run stops before any model pass and names the
+difference. Re-measuring every run in the old board lifts the refusal, since
+nothing then survives to be incomparable — which is how those settings get
+changed without a flag to override the check. Sweep settings are deliberately
+not part of it: they are recorded per row, alongside the knobs each row was
+scored at. Each row also carries its own ``measured_utc`` and ``git_commit``, and
+a carried row from a different commit is noted on stdout — most commits do not
+touch scoring, but one that did would show up on the board as a model
+improvement.
+
+Three separate rankings are involved, and conflating any two of them is a bug:
+
+- ``--rank-metric`` (default ``f_beat``) orders the **board**.
+- ``f_beat``, always, picks the winner of the sweep's **beat-detection** stage —
+  the only thing those knobs can move.
+- ``--sweep-rank-metric`` (default ``position_acc``) picks the winner of the
+  sweep's **bar-position** stage. It has to be a bar-position metric: a decoder
+  relabels beats without moving them, so every candidate scores an identical
+  ``f_beat`` and ranking that stage by it is a tie the sort breaks by candidate
+  order — pinning ``switch_penalty`` to the first value in the list.
 
 Which checkpoint stands for a run: a directory whose checkpoints carry a
 ``valloss`` in their filename is one run's ``save_top_k`` group, represented by
 its best-scoring file; a directory of hand-named checkpoints is one entry per
 file. A checkpoint that fails to load is reported under ``failed`` and the rest
 of the board still runs — the model pass is the expensive part here.
+
+Picking by ``val/loss`` is weaker than it looks for beat-phase: it tracks the
+position head's confidence rather than decoded accuracy, so the lowest-loss
+epoch is not reliably the best-decoding one. Scoring all three of a
+``save_top_k`` group would cost three model passes per run.
 
 API reference
 -------------

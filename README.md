@@ -109,6 +109,10 @@ On another machine, `tools/setup_remote.sh` (or a manual `dvc pull` in
 evaluation line up across machines instead of each generating its own split
 locally.
 
+The running leaderboard is versioned there the same way, under `leaderboard/` —
+but `tools/leaderboard.py` runs its own `dvc pull`/`dvc add`/`dvc push`, so the
+only manual step is committing the pointer it names on the way out.
+
 </details>
 
 <details id="annotation-apps">
@@ -263,27 +267,53 @@ default) and the report on val, so the knobs are never chosen on the tracks
 they are then scored on — unlike `eval_beat.py --sweep`, which tunes and reports
 on the same split and is optimistic as a result.
 
+Every invocation extends one running board, which lives in the DVC-tracked data
+repo (`../musicality_db/leaderboard/`) beside the splits — pulled before reading
+and pushed after writing, so a board built on a rented instance survives the
+instance. You only ever evaluate what's new:
+
 ```bash
-# every run in two experiment folders, on the merged val split
+# first time — the file doesn't exist yet, so this starts the board
 uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \
     --dataset merge --split val
 
-# a single checkpoint, at the config's shipped knobs, no W&B
-uv run python tools/leaderboard.py checkpoints/merge_v5.ckpt --no-sweep --no-wandb
+# every time after — same command, just the new experiment
+uv run python tools/leaderboard.py checkpoints_new --dataset merge --split val
+```
 
-# rank by bar-position accuracy instead of beat F-measure
+Rows for runs not named on the command line are carried over; naming a run
+that's already on the board re-measures it and replaces its row. Rows measured
+under a different split, tolerance or group size are refused rather than merged,
+before any model pass. `--append PATH` keeps a board somewhere else, `--no-append`
+makes a local standalone one, and `--no-pull` / `--no-push` skip the DVC sync.
+
+`dvc push` uploads the board's content, but the pointer only becomes the shared
+truth once committed — the tool prints the one command to run:
+
+```bash
+cd ../musicality_db && git add leaderboard.dvc && git commit -m "Update leaderboard"
+```
+
+```bash
+# a single checkpoint, at the config's shipped knobs, no W&B, its own board
+uv run python tools/leaderboard.py checkpoints/merge_v5.ckpt \
+    --no-sweep --no-wandb --no-append
+
+# rank the board by bar-position accuracy instead of beat F-measure
 uv run python tools/leaderboard.py checkpoints_deeper --rank-metric position_acc
 
 # tune on val too — no second model pass, but nothing is held out
 uv run python tools/leaderboard.py checkpoints_deeper --sweep-split val
 ```
 
-The ranked board is printed, logged to its own W&B project
-(`--project`, default `musicality-leaderboard`) as a sortable table, and written
-to `leaderboards/<name>/leaderboard.json` — which is also uploaded to that W&B
-run's Files tab. That one file holds the whole board (per-run metrics, the knobs
-each run was scored at, the per-corpus breakdown, and a rendered table under
-`readable`), so it can be downloaded and shared without a W&B account.
+`--rank-metric` orders the board; the sweep's bar-position stage has its own
+`--sweep-rank-metric` (default `position_acc`), because a decoder relabels beats
+without moving them and every candidate ties on beat F-measure.
+
+The ranked board is printed and written as one JSON file holding everything —
+per-run metrics, the knobs each run was scored at, the per-corpus breakdown, and
+a rendered table under `readable` — so a whole comparison travels as a single
+attachment.
 
 </details>
 
@@ -297,7 +327,7 @@ each run was scored at, the per-corpus breakdown, and a rendered table under
 | `tools/create_splits.py` | Create the train/val splits under `../musicality_db/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
 | `tools/eval_beat.py` | The single evaluation entry point for a beat-only or beat-phase checkpoint (task auto-detected), on full-length tracks rather than the fixed-duration training clips. Default: the canonical metric report (`f_beat`, `cmlt`/`amlt`, `position_acc` and its offset-invariant twin). `--per-genre` breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and says whether the error is the model's or the decoder's, `--sweep` grid-searches the postprocessing knobs, `--output` writes per-track rows to CSV |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
-| `tools/leaderboard.py` | Re-score every run in one or more checkpoint folders on a common split, sweeping each checkpoint's postprocessing, and publish the ranked board to its own W&B project plus a single downloadable `leaderboard.json` |
+| `tools/leaderboard.py` | Re-score every run in one or more checkpoint folders on a common split, sweeping each checkpoint's postprocessing, into one running `leaderboard.json` kept in the DVC-tracked data repo |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
 | `tools/migrate_mirdata_dataset.py` | Migrate a mirdata dataset's beat annotations into this project's own `tracks/`/`annotations/` layout (see [Data format](#data-format)), so tools that only understand that layout can read it like a homemade dataset |
