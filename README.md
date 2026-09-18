@@ -310,7 +310,9 @@ gitignored) and published to the `musicality-leaderboard` W&B project as two
 things: a sortable table, which is the board to look at, and that same JSON as a
 versioned artifact — per-run metrics, the knobs each run was scored at, the
 per-corpus breakdown and a rendered table under `readable`, so a whole
-comparison travels as one download. `:latest` is what the next invocation
+comparison travels as one download. Each row also carries the W&B run that
+trained it (`wandb_url`, read from the `training_report.json` beside its
+checkpoints), so a leading number links back to the experiment behind it. `:latest` is what the next invocation
 fetches, on whatever machine it runs.
 
 </details>

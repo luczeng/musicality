@@ -231,6 +231,33 @@ def sweep_knobs(evaluator: BeatEvaluator, task: str, group_size: int) -> dict:
     return {**best, knob: ranked[0][knob]}
 
 
+def training_run(checkpoint: Path) -> dict:
+    """The W&B run that trained *checkpoint*, out of its training report.
+
+    A row names a folder on a machine that has since been destroyed, which is
+    no way back to an experiment. ``TrainingReportLogger`` writes one
+    ``training_report.json`` beside every run's checkpoints, holding the W&B
+    run that produced them and the commit it trained at — carried onto the row
+    here, so the leader on the board links back to the run that made it.
+
+    Empty when there is no report: it is written at ``on_fit_end``, so a run
+    that was interrupted or predates the callback has none.
+    """
+
+    report = checkpoint.parent / "training_report.json"
+
+    if not report.exists():
+        return {}
+
+    run = json.loads(report.read_text()).get("run", {})
+
+    return {
+        "wandb_name": run.get("wandb_name"),
+        "wandb_url": run.get("wandb_url"),
+        "train_commit": run.get("git_commit"),
+    }
+
+
 def evaluate_run(label: str, checkpoint: Path, args) -> dict:
     """Score one checkpoint, returning its board row and per-corpus breakdown."""
 
@@ -256,6 +283,7 @@ def evaluate_run(label: str, checkpoint: Path, args) -> dict:
         "run": label,
         "checkpoint": str(checkpoint),
         "task": task,
+        **training_run(checkpoint),
         # Per row: a board carries rows measured on different days by different code.
         "measured_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "git_commit": args.commit,
@@ -342,7 +370,11 @@ def publish(payload: dict, board: Path, project: str) -> None:
     """
 
     rows = payload["leaderboard"]
-    columns = list(rows[0])
+
+    # The union, in first-seen order: a board holds rows written by different
+    # versions of this tool, and taking the first row's keys would drop a
+    # column that only the newer rows have.
+    columns = list({key: None for row in rows for key in row})
 
     run = wandb.init(project=project, job_type="leaderboard", config=payload["eval"])
 

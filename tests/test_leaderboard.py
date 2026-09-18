@@ -26,6 +26,7 @@ from tools.leaderboard import (
     merge,
     parse_args,
     publish,
+    training_run,
     rank_rows,
     run_checkpoints,
     settings_for,
@@ -520,6 +521,44 @@ class TestBuildPayload:
         assert payload["failed"] == {"a": "boom"}
 
 
+class TestTrainingRun:
+    """Without this, a leading row names a folder on a destroyed instance."""
+
+    def _report(self, directory: Path, **run) -> Path:
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "training_report.json").write_text(json.dumps({"run": run}))
+
+        return directory / "beat-phase-epoch91-valloss1.47.ckpt"
+
+    def test_the_row_links_back_to_the_wandb_run(self, tmp_path):
+        checkpoint = self._report(
+            tmp_path / "run",
+            wandb_name="eternal-feather-106",
+            wandb_url="https://wandb.ai/acme/musicality-beat-phase/runs/ae65nj3v",
+            git_commit="6e1d3e8",
+        )
+
+        assert training_run(checkpoint) == {
+            "wandb_name": "eternal-feather-106",
+            "wandb_url": "https://wandb.ai/acme/musicality-beat-phase/runs/ae65nj3v",
+            "train_commit": "6e1d3e8",
+        }
+
+    def test_the_training_commit_is_not_the_evaluating_one(self, tmp_path):
+        """They differ whenever a run is scored by later code, which is the
+        normal case — the row carries both."""
+
+        checkpoint = self._report(tmp_path / "run", git_commit="6e1d3e8")
+
+        assert training_run(checkpoint)["train_commit"] == "6e1d3e8"
+
+    def test_a_run_without_a_report_still_makes_a_row(self, tmp_path):
+        """The report is written at `on_fit_end`: an interrupted run has none,
+        and that must cost it a link, not its place on the board."""
+
+        assert training_run(tmp_path / "nothing-here.ckpt") == {}
+
+
 class TestPublish:
     """The two halves of a published board: the table to look at, the file to
     keep. Both come from the same payload, so neither can drift."""
@@ -542,6 +581,17 @@ class TestPublish:
 
         assert table.columns == list(payload["leaderboard"][0])
         assert [row[0] for row in table.data] == ["run0", "run1", "run2"]
+
+    def test_the_columns_are_the_union_over_rows(self, tmp_path, fake_wandb):
+        """A board holds rows written by different versions of this tool; the
+        first row's keys would drop whatever only the newer ones carry."""
+
+        payload = _board(2)
+        payload["leaderboard"][1]["wandb_url"] = "https://wandb.ai/acme/p/runs/xyz"
+
+        self._publish(tmp_path, payload)
+
+        assert "wandb_url" in fake_wandb.run.logged["leaderboard"].columns
 
     def test_the_artifact_is_the_board_file_itself(self, tmp_path, fake_wandb):
         """It is what the next invocation fetches, so it has to be the file

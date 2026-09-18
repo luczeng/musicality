@@ -229,6 +229,16 @@ changed without a flag to override the check. Each row also carries its own
 ``measured_utc``, ``git_commit`` and the knobs it was scored at, so a board says
 where each of its numbers came from.
 
+It carries where the *model* came from too. A checkpoint path names a folder on
+an instance that has since been torn down, which is no way back to an
+experiment, so each row also takes ``wandb_name``, ``wandb_url`` and
+``train_commit`` from the ``training_report.json`` that
+:class:`~musicality.callbacks.training_report.TrainingReportLogger` wrote beside
+those checkpoints — the leading row on the board links to the training run that
+produced it. That report is written at ``on_fit_end``, so a run that was
+interrupted has none and its row goes up without a link rather than without a
+place.
+
 Three separate rankings are involved, and conflating any two of them is a bug:
 ``--rank-metric`` (default ``f_beat``) orders the **board**; ``f_beat`` always
 picks the winner of the sweep's **beat-detection** stage, the only thing those
