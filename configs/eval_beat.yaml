@@ -4,7 +4,7 @@
 # there, not here. Every key is overridable via the matching --flag.
 
 # --- Run ----------------------------------------------------------------
-dataset: ballroom
+dataset: merge
 split: val  # train | val | all
 val_split: 0.2  # must match how the split was created
 sample_rate: 22050  # must match the checkpoint's training config

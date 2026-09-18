@@ -248,6 +248,42 @@ checkpoints_beat/lr_sweep-20260918-141530/
 | ballroom (binary meter) | Beat detection (beat-only) | TCN | val, 104 tracks | 0.896 | — | — |
 | ballroom (binary meter) | Beat detection (phase) | TCN | val, 104 tracks | 0.916 | 0.697 | 0.692 |
 
+### Producing one
+
+`tools/leaderboard.py` re-scores a set of trained runs against each other. Each
+run's own `training_report.json` was written under that run's split and
+postprocessing, so comparing reports compares the settings as much as the
+models; this evaluates every checkpoint on one common split instead, sweeping
+each one's postprocessing first (the `beat_phase` knobs in
+`configs/eval_beat.yaml` are marked UNVERIFIED, and re-sweeping has been worth
+more than a retrain).
+
+The sweep runs on **train** (`--sweep-split`, 50 corpus-stratified tracks by
+default) and the report on val, so the knobs are never chosen on the tracks
+they are then scored on — unlike `eval_beat.py --sweep`, which tunes and reports
+on the same split and is optimistic as a result.
+
+```bash
+# every run in two experiment folders, on the merged val split
+uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \
+    --dataset merge --split val
+
+# a single checkpoint, at the config's shipped knobs, no W&B
+uv run python tools/leaderboard.py checkpoints/merge_v5.ckpt --no-sweep --no-wandb
+
+# rank by bar-position accuracy instead of beat F-measure
+uv run python tools/leaderboard.py checkpoints_deeper --rank-metric position_acc
+
+# tune on val too — no second model pass, but nothing is held out
+uv run python tools/leaderboard.py checkpoints_deeper --sweep-split val
+```
+
+The ranked board is printed, logged to its own W&B project
+(`--project`, default `musicality-leaderboard`) as a sortable table, and written
+to `leaderboards/<name>/leaderboard.json` — which is also uploaded to that W&B
+run's Files tab. That one file holds the whole board (per-run metrics, the knobs
+each run was scored at, the per-corpus breakdown, and a rendered table under
+`readable`), so it can be downloaded and shared without a W&B account.
 
 </details>
 
@@ -261,6 +297,7 @@ checkpoints_beat/lr_sweep-20260918-141530/
 | `tools/create_splits.py` | Create the train/val splits under `../musicality_db/splits/` that `Splitter.run()` requires (see [Splits](#splits)) |
 | `tools/eval_beat.py` | The single evaluation entry point for a beat-only or beat-phase checkpoint (task auto-detected), on full-length tracks rather than the fixed-duration training clips. Default: the canonical metric report (`f_beat`, `cmlt`/`amlt`, `position_acc` and its offset-invariant twin). `--per-genre` breaks it down per corpus, `--profile` prints the phase-offset profile, `--decoders` scores every bar-position decoder against one cached model pass and says whether the error is the model's or the decoder's, `--sweep` grid-searches the postprocessing knobs, `--output` writes per-track rows to CSV |
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
+| `tools/leaderboard.py` | Re-score every run in one or more checkpoint folders on a common split, sweeping each checkpoint's postprocessing, and publish the ranked board to its own W&B project plus a single downloadable `leaderboard.json` |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
 | `tools/migrate_mirdata_dataset.py` | Migrate a mirdata dataset's beat annotations into this project's own `tracks/`/`annotations/` layout (see [Data format](#data-format)), so tools that only understand that layout can read it like a homemade dataset |

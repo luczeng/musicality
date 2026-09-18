@@ -31,6 +31,7 @@ checkpoints/
 logs/
 outputs/
 wandb/
+leaderboards/
 
 # macOS
 .DS_Store

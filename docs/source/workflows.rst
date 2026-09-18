@@ -144,6 +144,67 @@ documented in full at :doc:`postprocess`:
   whether a wrong phase is a stable whole-track offset (the model cannot hear
   downbeats) or a mid-track flip (the decoder is losing information).
 
+Comparing runs
+--------------
+
+``tools/eval_beat.py`` answers "how good is this checkpoint". Ranking several
+against each other is a different question, and the numbers already lying
+around cannot answer it: each run's ``training_report.json`` scores that run,
+on whatever split and postprocessing it was configured with, at whatever epoch
+it stopped. Comparing them compares those settings as much as the models.
+
+``tools/leaderboard.py`` re-scores instead. Point it at checkpoint directories
+and every run it finds is evaluated on one common split, through
+:class:`musicality.evaluation.BeatEvaluator` — the same path
+``tools/eval_beat.py`` takes, so a leaderboard row and a later single-checkpoint
+report are the same number.
+
+.. code-block:: bash
+
+    uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm \
+        --dataset merge --split val
+
+Two things it does that a loop over ``eval_beat.py`` would not:
+
+- **It sweeps each checkpoint's own postprocessing** before scoring it (stage 1
+  beat detection, stage 2 the resolved decoder's bar-position knob — the two
+  stages ``--sweep`` runs, against the same cached probabilities). The shipped
+  ``beat_phase`` knobs are marked UNVERIFIED in ``configs/eval_beat.yaml``, and
+  re-sweeping them has been worth more than a retrain, so scoring every
+  checkpoint at one stale threshold would rank the models by how well that
+  threshold happens to suit them. ``--no-sweep`` scores at the config's values
+  instead.
+
+- **It sweeps on a different split from the one it reports.** ``--sweep-split``
+  defaults to ``train``, against a corpus-stratified subsample sized by
+  ``--sweep-tracks`` (50), so the val numbers on the board stay held out.
+  ``tools/eval_beat.py --sweep`` does not do this — it tunes and reports on the
+  same tracks, which makes its numbers optimistic by an amount that is not
+  equal across checkpoints: 60-odd grid points against ~50 tracks give more
+  room to whichever model's probability curves happen to suit some threshold.
+  Setting ``--sweep-split`` equal to ``--split`` restores that behaviour and
+  skips the second model pass, and the board then says so rather than implying
+  a hold-out.
+
+  The cost is one extra model pass per checkpoint, over ``--sweep-tracks``
+  tracks. The stratification matters because a split file is written corpus by
+  corpus: the first N tracks of a merged train split are N tracks of whichever
+  corpus was written first, so the knobs would be tuned for one genre.
+- **It publishes the board**: one W&B run per invocation, in its own project
+  (``--project``, default ``musicality-leaderboard``), holding a sortable table
+  of every run, the winner in the run summary, and a single ``leaderboard.json``
+  in the run's Files tab. That file is the whole board — per-run metrics, the
+  knobs each was scored at, the per-corpus breakdown, a rendered table in
+  ``readable`` — written the way ``training_report.json`` is, ``NaN`` as
+  ``null`` so a strict parser accepts it. It exists to be downloaded and handed
+  to someone, since a W&B link needs an account and a file does not.
+
+Which checkpoint stands for a run: a directory whose checkpoints carry a
+``valloss`` in their filename is one run's ``save_top_k`` group, represented by
+its best-scoring file; a directory of hand-named checkpoints is one entry per
+file. A checkpoint that fails to load is reported under ``failed`` and the rest
+of the board still runs — the model pass is the expensive part here.
+
 API reference
 -------------
 
