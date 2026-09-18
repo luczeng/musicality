@@ -24,7 +24,9 @@ uv pip install -e .
 
 repo_root="$PWD"
 db_dir="$(uv run python -c 'import yaml; from pathlib import Path; print(Path(yaml.safe_load(open("configs/download.yaml"))["data_home"]).resolve())')"
-datasets="$(uv run python -c 'import yaml; print(" ".join(yaml.safe_load(open("configs/download.yaml"))["datasets"]))')"
+split_name="$(uv run python -c 'import yaml; from musicality.loaders.beat_dataset import beat_split_name; c = yaml.safe_load(open("configs/beat_train.yaml")); print(beat_split_name(c["data"]["input"], c.get("binary_only", False)))')"
+# Named by dataformat.yaml so a rename there doesn't leave this pulling a dead path.
+read -r splits_name board_name <<<"$(uv run python -c 'import musicality.dataformats as d; from pathlib import Path; print(Path(d.FORMAT.splits_dir).name, Path(d.FORMAT.leaderboard_dir).name)')"
 
 echo "Pulling data from musicality_db..."
 if [ -d "$db_dir/.git" ]; then
@@ -36,10 +38,19 @@ fi
 # objects into the checkout avoids DVC's default copy, which otherwise doubles
 # disk usage (full copy in .dvc/cache plus full copy in the checked-out dirs).
 (cd "$db_dir" && uv run --project "$repo_root" dvc config --local cache.type symlink)
-# Scoped to configs/download.yaml's dataset list (plus splits, needed
-# regardless of which datasets are trained on) rather than a bare `dvc pull`
-# — a fresh remote instance shouldn't have to pull every dataset in the repo.
-(cd "$db_dir" && uv run --project "$repo_root" dvc pull splits $datasets)
+# Splits first: they list `<corpus>/<track_id>`, so they say what else to pull.
+# Not configs/download.yaml's list — that one is what *mirdata* can fetch, and
+# gtzan/rwc_genre reach the data repo by migration, so it is short by those two.
+(cd "$db_dir" && uv run --project "$repo_root" dvc pull "$splits_name")
+
+split_dir="$db_dir/$splits_name/$split_name"
+corpora="$(cut -d/ -f1 "$split_dir/train.txt" "$split_dir/val.txt" | sort -u | tr '\n' ' ')"
+echo "Split $split_name needs: $corpora"
+(cd "$db_dir" && uv run --project "$repo_root" dvc pull $corpora)
+# Optional: there is no board until a first one has been pushed.
+if [ -f "$db_dir/$board_name.dvc" ]; then
+    (cd "$db_dir" && uv run --project "$repo_root" dvc pull "$board_name")
+fi
 
 echo "Logging in to Weights & Biases..."
 uv run wandb login "$WANDB_API_KEY"

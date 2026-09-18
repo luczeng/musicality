@@ -144,6 +144,116 @@ documented in full at :doc:`postprocess`:
   whether a wrong phase is a stable whole-track offset (the model cannot hear
   downbeats) or a mid-track flip (the decoder is losing information).
 
+Comparing runs
+--------------
+
+``tools/eval_beat.py`` answers "how good is this checkpoint". Ranking several
+against each other is a different question, and the numbers already lying
+around cannot answer it: each run's ``training_report.json`` scores that run,
+on whatever split and postprocessing it was configured with, at whatever epoch
+it stopped. Comparing them compares those settings as much as the models.
+
+``tools/leaderboard.py`` re-scores instead. Point it at checkpoint directories
+and every run it finds is evaluated on one common split, through
+:class:`musicality.evaluation.BeatEvaluator` — the same path
+``tools/eval_beat.py`` takes, so a leaderboard row and a later single-checkpoint
+report are the same number.
+
+.. code-block:: bash
+
+    uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
+
+The split it lands on is ``configs/eval_beat.yaml``'s ``dataset`` +
+``binary_only`` + ``split`` — defaulting to what ``beat_train.yaml`` trains on,
+so no flags are needed to evaluate against the split a checkpoint was held out
+against.
+
+Three things it does that a loop over ``eval_beat.py`` would not:
+
+- **It sweeps each checkpoint's own postprocessing** before scoring it (stage 1
+  beat detection, stage 2 the resolved decoder's bar-position knob — the two
+  stages ``--sweep`` runs, against the same cached probabilities). The shipped
+  ``beat_phase`` knobs are marked UNVERIFIED in ``configs/eval_beat.yaml``, and
+  re-sweeping them has been worth more than a retrain, so scoring every
+  checkpoint at one stale threshold would rank the models by how well that
+  threshold happens to suit them. ``--no-sweep`` scores at the config's values
+  instead.
+
+- **It sweeps on a different split from the one it reports.** The knobs are
+  tuned on ``sweep.split`` (``train``), against a corpus-stratified subsample of
+  ``sweep.tracks`` (50) of it, so the val numbers on the board stay held out.
+  ``tools/eval_beat.py --sweep`` does not do this — it tunes and reports on the
+  same tracks, which makes its numbers optimistic by an amount that is not
+  equal across checkpoints: 60-odd grid points against ~50 tracks give more
+  room to whichever model's probability curves happen to suit some threshold.
+
+  The cost is one extra model pass per checkpoint. The stratification matters
+  because a split file is written corpus by corpus: the first N tracks of a
+  merged train split are N tracks of whichever corpus was written first, so the
+  knobs would be tuned for one genre.
+
+- **It keeps one running board, in the data repo rather than this checkout.**
+  The board is a single ``leaderboard.json`` under
+  :data:`musicality.dataformats.LEADERBOARD_DIR` (``musicality_db/leaderboard/``),
+  DVC-tracked beside the splits. It holds the whole comparison — per-run
+  metrics, the knobs each row was scored at, the per-corpus breakdown, a
+  rendered table in ``readable`` — written the way ``training_report.json`` is,
+  ``NaN`` as ``null`` so a strict parser accepts it.
+
+The board being in the data repo is what makes it a *running* board rather than
+a per-machine one. Training happens on rented instances that are torn down, so
+the tool pulls the board before reading and ``dvc add``/``dvc push``es it after
+writing (``--no-pull`` / ``--no-push`` to skip). Only the ``.dvc`` pointer is
+left to commit, and the run prints the command; committing in the data repo is
+not this tool's call to make. The first invocation finds no pointer, says so,
+and starts the board.
+
+Every invocation extends that board, so the second and every later command names
+only what is new:
+
+.. code-block:: bash
+
+    uv run python tools/leaderboard.py checkpoints_new
+
+Every row for a run not named on the command line is carried over, and the
+merged board is written back — so adding one experiment costs one experiment's
+evaluation, not the whole board's. A run that *is* named is re-measured and
+replaces its old row; identity is the run label rather than the checkpoint
+filename, because more training on the same folder produces a different epoch's
+file for the same experiment. ``--board`` puts the board somewhere else, which
+is also how a throwaway comparison is made without disturbing the running one.
+
+Rows that were never measured the same way are refused rather than merged: if
+anything in ``configs/eval_beat.yaml``'s run block, the ``--limit``, or whether
+the knobs were swept differs from what the existing board recorded, the run
+stops before any model pass and names the difference. Re-measuring every run in the old board lifts the refusal, since
+nothing then survives to be incomparable — which is how those settings get
+changed without a flag to override the check. Each row also carries its own
+``measured_utc``, ``git_commit`` and the knobs it was scored at, so a board says
+where each of its numbers came from.
+
+Three separate rankings are involved, and conflating any two of them is a bug:
+``--rank-metric`` (default ``f_beat``) orders the **board**; ``f_beat`` always
+picks the winner of the sweep's **beat-detection** stage, the only thing those
+knobs can move; and ``position_acc`` always picks the winner of its
+**bar-position** stage. That last one cannot be ``f_beat``: a decoder relabels
+beats without moving them, so every candidate scores an identical ``f_beat`` and
+ranking that stage by it is a tie the sort breaks by candidate order — pinning
+``switch_penalty`` to the first value in the list. All three rank on the macro
+mean, which weights each corpus equally instead of letting the largest one
+decide for all of them.
+
+Which checkpoint stands for a run: a directory whose checkpoints carry a
+``valloss`` in their filename is one run's ``save_top_k`` group, represented by
+its best-scoring file; a directory of hand-named checkpoints is one entry per
+file. A checkpoint that fails to load is reported under ``failed`` and the rest
+of the board still runs — the model pass is the expensive part here.
+
+Picking by ``val/loss`` is weaker than it looks for beat-phase: it tracks the
+position head's confidence rather than decoded accuracy, so the lowest-loss
+epoch is not reliably the best-decoding one. Scoring all three of a
+``save_top_k`` group would cost three model passes per run.
+
 API reference
 -------------
 

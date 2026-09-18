@@ -564,10 +564,21 @@ project-wide postprocessing defaults.
 Top level
 ~~~~~~~~~
 
-``dataset``, ``split`` (``train | val | all``), ``val_split``, ``sample_rate``,
-``hop_length``, ``tolerance``, ``device``. ``sample_rate`` and ``hop_length``
-must match the checkpoint's training config; ``val_split`` must match how the
-split was created; ``tolerance`` is the F-measure matching window in seconds.
+``dataset``, ``split`` (``train | val | all``), ``val_split``, ``binary_only``,
+``sample_rate``, ``hop_length``, ``tolerance``, ``device``. ``sample_rate`` and
+``hop_length`` must match the checkpoint's training config; ``val_split`` must
+match how the split was created; ``tolerance`` is the F-measure matching window
+in seconds.
+
+``dataset`` and ``binary_only`` together name the split that gets evaluated —
+:func:`musicality.loaders.beat_dataset.beat_split_name` folds the second into
+the directory name, so ``merge`` + ``binary_only: true`` reads
+``beat_phase-merge-binary``. They default to what ``configs/beat_train.yaml``
+trains on, so evaluating a checkpoint needs no flags to land on the split it was
+held out against. ``--no-binary-only`` (or ``binary_only: false``) evaluates the
+meter-mixed split instead, which only makes sense for a checkpoint trained on
+it: the beat-phase ``one``/``last`` targets assume a binary meter, so a waltz
+scored against them is being asked the wrong question.
 
 ``beat_only:``
 ~~~~~~~~~~~~~~

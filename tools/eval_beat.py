@@ -708,7 +708,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--binary-only",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=EVAL_DEFAULTS["binary_only"],
         help=(
             "Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. "
             "ballroom's waltz tracks). Must match how the split was created."
