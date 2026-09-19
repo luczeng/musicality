@@ -9,7 +9,7 @@ from torch.utils.data import Dataset
 
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import TrackMetadata, TrackRef, save_metadata
-from musicality.splits.splitter import MissingTrackDataError, Splitter
+from musicality.splits.splitter import MissingTrackDataError, Splitter, split_name
 
 
 class _FakeDataset(Dataset):
@@ -72,6 +72,26 @@ def _flag(dataset_name, track_id, *, warning=False, needs_review=False):
 # ---------------------------------------------------------------------------
 # save_refs / load_refs
 # ---------------------------------------------------------------------------
+
+
+class TestSplitName:
+    """One split per dataset serves every task; only ``binary_only`` changes
+    which tracks a split holds, so only it is folded into the name."""
+
+    def test_plain_name_is_the_dataset_name(self):
+        assert split_name("merge") == "merge"
+
+    def test_binary_only_gets_its_own_split(self):
+        assert split_name("merge", binary_only=True) == "merge-binary"
+
+    def test_the_task_is_not_part_of_the_name(self):
+        """A tempo run, a beat-only run and a beat-phase run over one dataset
+        must hold out the same tracks, or their numbers aren't comparable."""
+
+        assert split_name("ballroom", binary_only=False) == "ballroom"
+
+    def test_composes_with_a_contains_subset_name(self):
+        assert split_name("gtzan-blues", binary_only=True) == "gtzan-blues-binary"
 
 
 class TestSaveLoadRefs:

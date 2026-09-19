@@ -6,6 +6,31 @@ import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import TrackRef, load_metadata, resolve_track_audio
 
 
+def split_name(name: str, binary_only: bool = False) -> str:
+    """Split directory name for *name*: ``<name>``, or ``<name>-binary``.
+
+    One split per dataset serves every task. A track's tempo label is derived
+    from its beat annotation (:class:`~musicality.loaders.tempo_dataset.TempoDataset`
+    reads ``bpm_median``, which the migration tools compute from the beats
+    file), so a track is usable for tempo exactly when it is usable for beats.
+    The two pools cannot diverge, and a task-specific split would only be the
+    same tracks drawn into a different train/val partition.
+
+    ``binary_only`` is the one flag that does change membership — it drops
+    tracks whose annotated cycle isn't a multiple of two (see
+    :class:`~musicality.loaders.beat_dataset.BeatDataset`) — so it gets its own
+    split rather than silently reusing the other variant's held-out tracks.
+
+    Nothing else is namespaced: not the task, not ``group_size`` (an
+    unrepresentable meter keeps the track and switches its position
+    supervision off rather than dropping it). So a beat-phase run, a beat-only
+    run and a tempo run over one dataset all hold out the exact same tracks,
+    which is what keeps their numbers comparable.
+    """
+
+    return f"{name}-binary" if binary_only else name
+
+
 class MissingTrackDataError(FileNotFoundError):
     """A split lists tracks whose files are not on this machine.
 

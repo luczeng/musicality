@@ -124,10 +124,10 @@ class TestResolveBeatSplitRefs:
 
         return splits_dir
 
-    def test_applies_the_beat_split_naming_convention(self, monkeypatch, tmp_path):
+    def test_reads_the_split_named_by_data_input(self, monkeypatch, tmp_path):
         splits_dir = self._setup(monkeypatch, tmp_path)
         val_refs = _refs(("ballroom", "b"))
-        Splitter.save_refs(splits_dir, "beat_phase-ballroom", [], val_refs)
+        Splitter.save_refs(splits_dir, "ballroom", [], val_refs)
 
         cfg = OmegaConf.create({"data": {"input": "ballroom"}, "binary_only": False})
 
@@ -139,9 +139,9 @@ class TestResolveBeatSplitRefs:
         reuse the other split's held-out tracks."""
 
         splits_dir = self._setup(monkeypatch, tmp_path)
-        Splitter.save_refs(splits_dir, "beat_phase-ballroom", [], _refs(("b", "all")))
+        Splitter.save_refs(splits_dir, "ballroom", [], _refs(("b", "all")))
         binary = _refs(("ballroom", "binary"))
-        Splitter.save_refs(splits_dir, "beat_phase-ballroom-binary", [], binary)
+        Splitter.save_refs(splits_dir, "ballroom-binary", [], binary)
 
         cfg = OmegaConf.create({"data": {"input": "ballroom"}, "binary_only": True})
 

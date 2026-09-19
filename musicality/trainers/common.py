@@ -15,12 +15,12 @@ from torch.utils.data import DataLoader, Subset
 import musicality.dataformats as dataformats
 from musicality.augmentations import AugmentedBeatDataset, build_beat_phase_augmenter
 from musicality.dataformats.track_io import TrackRef
-from musicality.loaders.beat_dataset import BeatDataset, beat_split_name
-from musicality.splits.splitter import Splitter
+from musicality.loaders.beat_dataset import BeatDataset
+from musicality.splits.splitter import Splitter, split_name
 
 
 def resolve_split_refs(
-    cfg: DictConfig, splits_dir: Path, split_name: str
+    cfg: DictConfig, splits_dir: Path, name: str
 ) -> tuple[list[TrackRef], list[TrackRef]]:
     """Return ``(train_refs, val_refs)`` for a training config's ``data`` section.
 
@@ -28,9 +28,10 @@ def resolve_split_refs(
     whether it contains a ``/``:
 
     - A bare name (e.g. ``"ballroom"``, ``"ballroom_brid"``) — looked up
-      under the canonical ``splits_dir`` via *split_name* (which may already
-      have a trainer-specific naming convention applied, e.g.
-      ``beat_split_name``): ``Splitter.load_refs(splits_dir, split_name)``.
+      under the canonical ``splits_dir`` via *name* (which may already have
+      the ``-binary`` variant suffix applied, see
+      :func:`~musicality.splits.splitter.split_name`):
+      ``Splitter.load_refs(splits_dir, name)``.
     - A path (e.g. ``"../musicality_db/splits/ballroom"``, or anywhere else
       on disk) — used directly as the split folder via
       :meth:`~musicality.splits.splitter.Splitter.load_refs_from_dir`,
@@ -43,7 +44,7 @@ def resolve_split_refs(
     if "/" in input_:
         return Splitter.load_refs_from_dir(Path(input_))
 
-    return Splitter.load_refs(splits_dir, split_name)
+    return Splitter.load_refs(splits_dir, name)
 
 
 def resolve_beat_split_refs(
@@ -51,10 +52,10 @@ def resolve_beat_split_refs(
 ) -> tuple[list[TrackRef], list[TrackRef]]:
     """``(train_refs, val_refs)`` for a beat / beat-phase training config.
 
-    :func:`resolve_split_refs` with this project's beat-split naming
-    convention applied — :func:`~musicality.loaders.beat_dataset.beat_split_name`
-    folds ``binary_only`` into the split name, so a config that flips that flag
-    reads a different split file.
+    :func:`resolve_split_refs` with this project's split-naming convention
+    applied — :func:`~musicality.splits.splitter.split_name` folds
+    ``binary_only`` into the split name, so a config that flips that flag reads
+    a different split file.
 
     Its own function because more than one thing has to agree on which tracks
     are "val": the validation dataloader, and
@@ -65,9 +66,8 @@ def resolve_beat_split_refs(
 
     binary_only = cfg.get("binary_only", False)
     splits_dir = dataformats.ROOT / dataformats.load().splits_dir
-    split_name = beat_split_name(cfg.data.input, binary_only)
 
-    return resolve_split_refs(cfg, splits_dir, split_name)
+    return resolve_split_refs(cfg, splits_dir, split_name(cfg.data.input, binary_only))
 
 
 def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
