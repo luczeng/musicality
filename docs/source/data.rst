@@ -109,9 +109,12 @@ and saves it under ``splits_dir/<name>/{train,val}.txt`` — one
 ``<dataset_name>/<track_id>`` line per track, not a positional index, so a
 split's contents can be read back, concatenated, or merged with another
 dataset's split independently of any one dataset instance's ordering (see
-``musicality.splits.splitter.Splitter``). It creates both a tempo split
-(``<name>``) and a beat-phase split (``beat_phase-<name>``, or
-``beat_phase-<name>-binary`` with ``--binary-only``) per dataset.
+``musicality.splits.splitter.Splitter``). One split per dataset serves
+every task — ``<name>``, or ``<name>-binary`` with ``--binary-only``. Tempo
+and beat runs read the same file: a track's tempo label is derived from its
+beat annotation, so the two tasks can never disagree about which tracks are
+usable, and ``binary_only`` is the only flag that changes membership (see
+``musicality.splits.splitter.split_name``).
 ``Splitter.load_refs``/``.save_refs`` read and write this format directly;
 ``TempoDataset``/``BeatDataset`` accept it straight via their ``refs=``
 argument, or ``Splitter(...).run()`` for the ``Subset``-returning form used
@@ -128,8 +131,9 @@ of those groups alone, pass a substring::
 
 That keeps only the tracks whose id contains ``blues`` (matched
 case-insensitively) and writes them to their own split name,
-``splits_dir/gtzan-blues/`` — plus ``beat_phase-gtzan-blues`` for the beat
-kind. The dataset's full split, if it has one, is left untouched.
+``splits_dir/gtzan-blues/`` — or ``gtzan-blues-binary`` under
+``--binary-only``. The dataset's full split, if it has one, is left
+untouched.
 
 The filter applies at creation time only, and deliberately so: what it
 produces is an ordinary split file, indistinguishable downstream from any

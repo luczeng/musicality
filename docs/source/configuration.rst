@@ -238,8 +238,8 @@ Data
 
     - A bare name (``ballroom``, ``merge``) is looked up under the canonical
       splits directory from :mod:`musicality.dataformats`, after
-      :func:`~musicality.loaders.beat_dataset.beat_split_name` applies the
-      naming convention ``beat_phase-<name>[-binary]``.
+      :func:`~musicality.splits.splitter.split_name` applies the naming
+      convention ``<name>[-binary]``.
     - A path (``../musicality_db/splits/ballroom``, or anywhere else on disk)
       is used directly as the split folder, bypassing the splits directory and
       the naming convention entirely — so a split can be trained on without
@@ -571,9 +571,8 @@ match how the split was created; ``tolerance`` is the F-measure matching window
 in seconds.
 
 ``dataset`` and ``binary_only`` together name the split that gets evaluated —
-:func:`musicality.loaders.beat_dataset.beat_split_name` folds the second into
-the directory name, so ``merge`` + ``binary_only: true`` reads
-``beat_phase-merge-binary``. They default to what ``configs/beat_train.yaml``
+:func:`musicality.splits.splitter.split_name` folds the second into the
+directory name, so ``merge`` + ``binary_only: true`` reads ``merge-binary``. They default to what ``configs/beat_train.yaml``
 trains on, so evaluating a checkpoint needs no flags to land on the split it was
 held out against. ``--no-binary-only`` (or ``binary_only: false``) evaluates the
 meter-mixed split instead, which only makes sense for a checkpoint trained on

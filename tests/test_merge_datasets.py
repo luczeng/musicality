@@ -69,7 +69,6 @@ class TestMerge:
         merge(
             ["ballroom", "brid"],
             "ballroom_brid",
-            ["tempo"],
             binary_only=False,
             force=False,
         )
@@ -93,7 +92,6 @@ class TestMerge:
             merge(
                 ["ballroom", "brid"],
                 "ballroom_brid",
-                ["tempo"],
                 binary_only=False,
                 force=False,
             )
@@ -109,7 +107,6 @@ class TestMerge:
             merge(
                 ["ballroom", "brid"],
                 "ballroom_brid",
-                ["tempo"],
                 binary_only=False,
                 force=False,
             )
@@ -122,7 +119,6 @@ class TestMerge:
         merge(
             ["ballroom", "brid"],
             "ballroom_brid",
-            ["tempo"],
             binary_only=False,
             force=True,
         )
@@ -133,21 +129,17 @@ class TestMerge:
             ("brid", "b"),
         }
 
-    def test_beat_kind_uses_beat_phase_split_names(self, _splits_dir):
-        Splitter.save_refs(
-            _splits_dir, "beat_phase-ballroom", _refs(("ballroom", "a")), []
-        )
-        Splitter.save_refs(_splits_dir, "beat_phase-brid", _refs(("brid", "b")), [])
+    def test_binary_only_reads_and_writes_the_binary_variant(self, _splits_dir):
+        """`binary_only` selects a different split on both ends: the sources
+        it reads and the merged split it writes. Mixing the two variants would
+        put meter-mixed tracks into a split a binary-only run holds out."""
 
-        merge(
-            ["ballroom", "brid"],
-            "ballroom_brid",
-            ["beat"],
-            binary_only=False,
-            force=False,
-        )
+        Splitter.save_refs(_splits_dir, "ballroom-binary", _refs(("ballroom", "a")), [])
+        Splitter.save_refs(_splits_dir, "brid-binary", _refs(("brid", "b")), [])
 
-        train_refs, _ = Splitter.load_refs(_splits_dir, "beat_phase-ballroom_brid")
+        merge(["ballroom", "brid"], "ballroom_brid", binary_only=True, force=False)
+
+        train_refs, _ = Splitter.load_refs(_splits_dir, "ballroom_brid-binary")
         assert {(r.dataset_name, r.track_id) for r in train_refs} == {
             ("ballroom", "a"),
             ("brid", "b"),
@@ -161,7 +153,6 @@ class TestMerge:
         merge(
             ["ballroom", "brid"],
             "ballroom_brid",
-            ["tempo"],
             binary_only=False,
             force=False,
         )

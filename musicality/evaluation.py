@@ -33,17 +33,13 @@ import yaml
 
 import musicality.dataformats as dataformats
 from musicality.inference import detect_task, load_module, load_track_waveform
-from musicality.loaders.beat_dataset import (
-    BeatDataset,
-    beat_split_name,
-    indices_for_split,
-)
+from musicality.loaders.beat_dataset import BeatDataset, indices_for_split
 from musicality.metrics.confusion import confusion_half_cycle_rate
 from musicality.metrics.continuity import beat_continuity
 from musicality.metrics.f_measure import beat_f_measure, downbeat_f_measures
 from musicality.metrics.position_accuracy import position_accuracy
 from musicality.postprocess import readout, readout_beat_only
-from musicality.splits.splitter import Splitter
+from musicality.splits.splitter import Splitter, split_name
 
 DATA_DIR = dataformats.ROOT / dataformats.load().data_dir
 
@@ -398,8 +394,9 @@ class BeatEvaluator:
 
             if self.split != "all" and not self.data_home.is_dir():
                 splits_dir = dataformats.ROOT / dataformats.load().splits_dir
-                split_name = beat_split_name(self.dataset_name, self.binary_only)
-                train_refs, val_refs = Splitter.load_refs(splits_dir, split_name)
+                train_refs, val_refs = Splitter.load_refs(
+                    splits_dir, split_name(self.dataset_name, self.binary_only)
+                )
 
                 dataset = BeatDataset(
                     refs=train_refs if self.split == "train" else val_refs,

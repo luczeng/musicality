@@ -16,7 +16,7 @@ from musicality.dataformats.track_io import (
     resolve_track_audio,
 )
 from musicality.loaders.audio_io import load_crop
-from musicality.splits.splitter import Splitter
+from musicality.splits.splitter import Splitter, split_name
 
 
 DATA_DIR = dataformats.DATA_DIR
@@ -362,19 +362,6 @@ class BeatDataset(Dataset):
         return wav, target  # (1, T), (4 | 2 + group_size, n_frames)
 
 
-def beat_split_name(name: str, binary_only: bool = False) -> str:
-    """Split directory name for a BeatDataset build: ``beat_phase-<name>[-binary]``.
-
-    Namespaced by dataset name and ``binary_only`` only — not by which heads a
-    trainer/eval script actually uses, since ``BeatDataset``'s filtering (and
-    therefore its length) only depends on those two things. So beat-phase and
-    beat-only runs over the same dataset share the exact same held-out split,
-    keeping their eval numbers directly comparable.
-    """
-
-    return f"beat_phase-{name}" + ("-binary" if binary_only else "")
-
-
 def indices_for_split(
     dataset: "BeatDataset",
     name: str,
@@ -393,7 +380,7 @@ def indices_for_split(
     :param val_split: Fraction of the dataset held out for validation. Must
         match how the split was created.
     :param binary_only: Must match how the split was created — see
-        :func:`beat_split_name`.
+        :func:`~musicality.splits.splitter.split_name`.
     """
 
     if split == "all":
@@ -403,7 +390,7 @@ def indices_for_split(
     splits_dir = dataformats.ROOT / _fmt.splits_dir
 
     train_ds, val_ds = Splitter(
-        dataset, splits_dir, beat_split_name(name, binary_only), val_split
+        dataset, splits_dir, split_name(name, binary_only), val_split
     ).run()
 
     return list((val_ds if split == "val" else train_ds).indices)
