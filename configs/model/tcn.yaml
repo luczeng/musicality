@@ -7,7 +7,6 @@ channels: 256
 hop_length: ${hop_length}
 n_layers: 8
 dropout: 0.2
-
 # 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
 # Off by default: it changes the first operation of the network, so turning it
 # on is an experiment, not a tweak.

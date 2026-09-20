@@ -6,19 +6,15 @@ n_mels: ${n_mels}
 sample_rate: 22050
 hop_length: ${hop_length}
 dropout: 0.2
-
 # Trunk size — plans/08 section 3.1, tracking tcn_frames.yaml so the two tasks
 # stay comparable. The width evidence there is the position head's; see the docs.
 channels: 32
 n_layers: 9
-
 # Forced to true/1 by BeatModule; listed for documentation only.
 frame_level: true
 n_outputs: 1
-
 # Frozen per-band log-mel stats — plans/08 section 2.1 item 4.
 fixed_norm: true
-
 # 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
 conv2d_stem: true
 stem_channels: 16

@@ -6,16 +6,13 @@ defaults:
   - _self_
 
 task: beat_only
-
 # --- Head ---------------------------------------------------------------
 n_mels: 128
 hop_length: 512
 sigma_frames: 1.5
-
 # --- Loss ---------------------------------------------------------------
 pos_weight: 6.0  # ~6:1 negative:positive on ballroom
 balanced: true  # unused by this task; kept because it is stored in every checkpoint
-
 # --- Optimisation -------------------------------------------------------
 lr: 5e-4
 weight_decay: 1e-4
@@ -26,7 +23,6 @@ trainer:
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
-
 # --- Data ---------------------------------------------------------------
 # binary_only is folded into the split name, so it must match the split it is
 # read with (`--binary-only` on tools/create_splits.py).
@@ -51,7 +47,6 @@ augmentations:
   noise:
     enabled: false
     std: 0.005
-
 # --- Logging and outputs ------------------------------------------------
 checkpoint_dir: checkpoints_beat_only/  # one subdirectory per run below this
 wandb:
