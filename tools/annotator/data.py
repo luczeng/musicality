@@ -448,14 +448,23 @@ def track_needs_review(dataset_name: str, track_id: str) -> bool:
 
 
 def load_dataset_tracks(dataset_name: str) -> list[str]:
-    """Return all track IDs for *dataset_name*."""
+    """Return all track IDs for *dataset_name*, sorted case-insensitively.
+
+    Sorting on the raw name puts every capitalised id ahead of every
+    lowercase one (ASCII order), which scatters related tracks in the
+    sidebar — ``Media-104012`` and ``media-104013`` belong next to each
+    other. The lowercased id is the primary key; the id itself breaks ties,
+    so two ids differing only in case keep a stable order.
+    """
+
     tracks_dir = dataformats.DATA_DIR / dataset_name / dataformats.FORMAT.tracks_dirname
     _require_tracks_dir(dataset_name, tracks_dir)
-    return [
-        f.stem
-        for f in sorted(tracks_dir.iterdir())
-        if f.suffix.lower() in _AUDIO_EXTENSIONS
+
+    stems = [
+        f.stem for f in tracks_dir.iterdir() if f.suffix.lower() in _AUDIO_EXTENSIONS
     ]
+
+    return sorted(stems, key=lambda stem: (stem.lower(), stem))
 
 
 def load_track(
