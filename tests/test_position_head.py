@@ -183,6 +183,38 @@ class TestBeatPositionLoss:
 
         assert torch.isfinite(loss)
 
+    @pytest.mark.parametrize("position_norm", ["global", "per_item"])
+    def test_return_terms_sums_to_the_loss(self, position_norm):
+        """The split is a decomposition of the same number, not a second
+        objective — whatever is logged has to add back up to what is
+        optimized."""
+
+        logits, target = self._batch()
+        kwargs = dict(position_norm=position_norm)
+
+        beat_term, position_term = beat_position_loss(
+            logits, target, return_terms=True, **kwargs
+        )
+
+        assert torch.isclose(
+            beat_term + position_term,
+            beat_position_loss(logits, target, **kwargs),
+            atol=1e-6,
+        )
+
+    def test_the_beat_term_is_the_beat_head_alone(self):
+        """Which half is which: the first term must be plain BCE on channel 0,
+        untouched by the position logits."""
+
+        logits, target = self._batch()
+        beat_term, _ = beat_position_loss(logits, target, return_terms=True)
+
+        expected = torch.nn.functional.binary_cross_entropy_with_logits(
+            logits[:, 0], target[:, 0], pos_weight=torch.as_tensor(5.0)
+        )
+
+        assert torch.isclose(beat_term, expected, atol=1e-6)
+
 
 class TestModuleWithPositionHead:
     MODEL_CFG = OmegaConf.create(
@@ -220,6 +252,28 @@ class TestModuleWithPositionHead:
         assert logits.shape[1] == 1 + G
         assert torch.isfinite(loss)
         assert torch.allclose(probs.sum(dim=1), torch.ones_like(probs[:, 0]), atol=1e-5)
+
+    def test_step_logs_both_loss_terms(self):
+        """`val/loss` rising says nothing about *which* head got worse, so the
+        two terms are logged beside it — see plans/07 §1.3."""
+
+        module = BeatPhaseModule(model=self.MODEL_CFG, group_size=G)
+        wav = torch.randn(2, 1, 4096)
+        logits = module(wav)
+
+        target = torch.zeros(2, 2 + G, logits.shape[-1])
+        target[:, 0, ::8] = 1.0
+        target[:, 1:-1] = 1.0 / G
+        target[:, -1] = 1.0
+
+        logged = {}
+        module.log = lambda key, value, **kwargs: logged.__setitem__(key, value)
+
+        loss, _ = module._step((wav, target), "val")
+
+        terms = logged["val/loss_beat"] + logged["val/loss_position"]
+
+        assert terms.item() == pytest.approx(loss.item(), abs=1e-6)
 
     def test_rejects_group_size_below_two(self):
         with pytest.raises(ValueError, match="group_size"):
