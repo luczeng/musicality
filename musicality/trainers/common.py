@@ -19,6 +19,60 @@ from musicality.loaders.beat_dataset import BeatDataset
 from musicality.splits.splitter import Splitter, split_name
 
 
+def drop_excluded_corpora(
+    train_refs: list[TrackRef],
+    val_refs: list[TrackRef],
+    exclude: list[str] | None,
+) -> tuple[list[TrackRef], list[TrackRef]]:
+    """Return the split without the corpora named in *exclude*.
+
+    One run's answer to "train on the merge, but without jtd" — a subtraction
+    from an existing split rather than a new split file, so the tracks that
+    remain keep the train/val sides they were drawn into, and the run stays
+    comparable with a run over the whole split.
+
+    Dropped on both sides: a corpus left out of training has no business in
+    the validation metrics either, where it would move ``val/loss`` and every
+    event metric for a corpus the model was never shown.
+
+    :param exclude: Corpus names (``TrackRef.dataset_name``, the part of a
+        split line before the ``/``). ``None`` or empty returns the split
+        untouched.
+    :raises ValueError: If a name is not one of the split's corpora — a typo
+        must not quietly train on everything — or if excluding leaves no
+        training tracks at all.
+    """
+
+    if not exclude:
+        return train_refs, val_refs
+
+    excluded = {str(name) for name in exclude}
+    present = {ref.dataset_name for ref in train_refs + val_refs}
+
+    unknown = sorted(excluded - present)
+    if unknown:
+        raise ValueError(
+            f"data.exclude names corpora this split does not hold: "
+            f"{', '.join(unknown)}. It holds: {', '.join(sorted(present))}."
+        )
+
+    kept_train = [ref for ref in train_refs if ref.dataset_name not in excluded]
+    kept_val = [ref for ref in val_refs if ref.dataset_name not in excluded]
+
+    if not kept_train:
+        raise ValueError(
+            f"data.exclude ({', '.join(sorted(excluded))}) leaves no training "
+            f"tracks — the split holds nothing else."
+        )
+
+    print(
+        f"[data.exclude] dropped {len(train_refs) - len(kept_train)} train / "
+        f"{len(val_refs) - len(kept_val)} val track(s): {', '.join(sorted(excluded))}"
+    )
+
+    return kept_train, kept_val
+
+
 def resolve_split_refs(
     cfg: DictConfig, splits_dir: Path, name: str
 ) -> tuple[list[TrackRef], list[TrackRef]]:
@@ -38,13 +92,19 @@ def resolve_split_refs(
       bypassing ``splits_dir`` and any naming convention entirely. Lets a
       split be trained on without being "registered" under the canonical
       ``splits_dir`` first.
+
+    ``cfg.data.exclude`` then subtracts whole corpora from whichever split was
+    read (see :func:`drop_excluded_corpora`) — ``data.exclude=[jtd]`` trains
+    on the merge minus jtd without a second split file existing anywhere.
     """
 
     input_ = cfg.data.input
     if "/" in input_:
-        return Splitter.load_refs_from_dir(Path(input_))
+        train_refs, val_refs = Splitter.load_refs_from_dir(Path(input_))
+    else:
+        train_refs, val_refs = Splitter.load_refs(splits_dir, name)
 
-    return Splitter.load_refs(splits_dir, name)
+    return drop_excluded_corpora(train_refs, val_refs, cfg.data.get("exclude", None))
 
 
 def resolve_beat_split_refs(

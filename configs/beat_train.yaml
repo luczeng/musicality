@@ -37,6 +37,7 @@ binary_only: true
 train_subsample: null  # fraction of the training split, for smoke runs
 data:
   input: merge  # split name, or a path containing "/" to a train.txt/val.txt folder
+  exclude: []  # corpora to drop from that split, e.g. [jtd]
   sample_rate: 22050
   duration: 16.0  # seconds
   num_workers: 4
