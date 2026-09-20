@@ -250,6 +250,31 @@ Data
     line count is not the dataset size — see
     :func:`musicality.splits.splitter.is_flagged`.
 
+``data.exclude`` — ``[]``
+    Corpora to subtract from whichever split ``data.input`` names, by the
+    name a split line carries before its ``/`` — ``data.exclude=[jtd]`` on the
+    command line, or ``exclude: [jtd, gtzan]`` in the file. Empty means train
+    on the whole split.
+
+    This is a *subtraction from* a split, not a new split: every remaining
+    track keeps the train/val side it was already drawn into, so a run
+    excluding a corpus stays comparable with a run over the whole split, and
+    no second split file has to exist. Use it to ask what one corpus is
+    contributing (``data.exclude=[jtd]`` against an unmodified baseline)
+    rather than editing ``splits/``.
+
+    Both halves are dropped, not just training: a corpus the model was never
+    shown has no business moving ``val/loss`` or the event metrics. The
+    exclusion is applied in
+    :func:`~musicality.trainers.common.resolve_split_refs`, which the
+    validation dataloader and
+    :class:`~musicality.callbacks.event_metrics.EventMetricsLogger` both read
+    their tracks through, so the two cannot disagree about what "val" means.
+
+    A name the split doesn't hold raises, listing the corpora it does hold —
+    a typo must not silently train on everything. So does an exclusion that
+    would leave no training tracks.
+
 ``binary_only`` — ``true``
     Drop tracks whose beats-per-bar isn't a multiple of 2 — e.g. ballroom's
     waltz and Viennese waltz, which are in triple meter (1, 2, 3) rather than

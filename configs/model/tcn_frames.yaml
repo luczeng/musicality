@@ -6,24 +6,19 @@ n_mels: ${n_mels}
 sample_rate: 22050
 hop_length: ${hop_length}
 dropout: 0.2
-
 # Trunk size — plans/08 section 3.1. 32x9 replaces the 256x8 every checkpoint up
 # to v6 was trained at; see the docs before widening it back.
 channels: 32
 n_layers: 9
-
 # Forced to true/3 by BeatPhaseModule; listed for documentation only.
 frame_level: true
 n_outputs: 3
-
 # Off on purpose, not merely unexercised — see the docs before enabling.
 use_self_attention: false
 n_attn_layers: 1
 n_attn_heads: 4
-
 # Frozen per-band log-mel stats — plans/08 section 2.1 item 4.
 fixed_norm: true
-
 # 2D convolutional stem — plans/08 section 2.1, docs/source/configuration.rst.
 conv2d_stem: true
 stem_channels: 16

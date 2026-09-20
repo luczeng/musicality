@@ -4,7 +4,6 @@
 defaults:
   - model: tcn
   - _self_
-
 # --- Loss ---------------------------------------------------------------
 loss: classification  # absolute | relative | classification
 classification:  # read by `loss: classification` only
@@ -12,7 +11,6 @@ classification:  # read by `loss: classification` only
   bpm_max: 286
   n_bins: 256
   sigma: 1.5
-
 # --- Optimisation -------------------------------------------------------
 lr: 5e-4
 weight_decay: 0.0
@@ -25,11 +23,11 @@ trainer:
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
-
 # --- Data ---------------------------------------------------------------
 train_subsample: null  # fraction of the training split, for smoke runs
 data:
   input: ballroom  # split name, or a path containing "/" to a train.txt/val.txt folder
+  exclude: []  # corpora to drop from that split, e.g. [jtd]
   sample_rate: 22050
   duration: 15.0  # seconds
   num_workers: 4
@@ -46,7 +44,6 @@ augmentations:
   noise:
     enabled: false
     std: 0.005
-
 # --- Logging and outputs ------------------------------------------------
 checkpoint_dir: checkpoints/  # one subdirectory per run below this
 wandb:

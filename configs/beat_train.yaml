@@ -6,7 +6,6 @@ defaults:
   - _self_
 
 task: beat_phase
-
 # --- Head ---------------------------------------------------------------
 phase_conditioning: beat  # mask | beat
 target_layout: positions  # one_last | positions
@@ -14,7 +13,6 @@ group_size: 4  # 4 = bar position, 8 = phrase position
 n_mels: 128
 hop_length: 512
 sigma_frames: 1.5
-
 # --- Loss ---------------------------------------------------------------
 # pos_weight is coupled to target_layout: `positions` takes a scalar or `auto`,
 # `one_last` takes [5, 4, 4]. Mixing them fails obscurely — see the docs.
@@ -22,7 +20,6 @@ pos_weight: auto
 pos_weight_alpha: 1.11
 position_norm: per_item  # global | per_item
 balanced: true
-
 # --- Optimisation -------------------------------------------------------
 lr: 5e-4
 weight_decay: 1e-4
@@ -33,7 +30,6 @@ trainer:
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
-
 # --- Data ---------------------------------------------------------------
 # binary_only is folded into the split name, so it must match the split it is
 # read with (`--binary-only` on tools/create_splits.py).
@@ -41,6 +37,7 @@ binary_only: true
 train_subsample: null  # fraction of the training split, for smoke runs
 data:
   input: merge  # split name, or a path containing "/" to a train.txt/val.txt folder
+  exclude: []  # corpora to drop from that split, e.g. [jtd]
   sample_rate: 22050
   duration: 16.0  # seconds
   num_workers: 4
@@ -58,7 +55,6 @@ augmentations:
   noise:
     enabled: false
     std: 0.005
-
 # --- Logging and outputs ------------------------------------------------
 checkpoint_dir: checkpoints_beat/  # one subdirectory per run below this
 event_metrics:  # val_event/*, decoded on full tracks; postprocessing comes from eval_beat.yaml

@@ -10,6 +10,7 @@ from musicality.dataformats.track_io import TrackRef
 from musicality.splits.splitter import Splitter
 from musicality.trainers.common import (
     build_checkpoint_callback,
+    drop_excluded_corpora,
     resolve_beat_split_refs,
     resolve_split_refs,
 )
@@ -223,3 +224,65 @@ class TestBuildCheckpointCallback:
         cfg = OmegaConf.create({"checkpoint_dir": "ckpts/", "trainer": {}})
 
         assert build_checkpoint_callback(cfg, "tempo").save_top_k == 3
+
+
+class TestDropExcludedCorpora:
+    """``data.exclude`` subtracts whole corpora from the split a run reads,
+    so "the merge without jtd" needs no second split file."""
+
+    def _split(self):
+        train = _refs(("ballroom", "a"), ("jtd", "b"), ("jtd", "c"), on_disk=False)
+        val = _refs(("ballroom", "d"), ("jtd", "e"), on_disk=False)
+
+        return train, val
+
+    def test_named_corpus_is_dropped_from_both_sides(self):
+        train, val = self._split()
+
+        kept_train, kept_val = drop_excluded_corpora(train, val, ["jtd"])
+
+        assert [r.track_id for r in kept_train] == ["a"]
+        assert [r.track_id for r in kept_val] == ["d"]
+
+    def test_empty_exclude_returns_the_split_untouched(self):
+        train, val = self._split()
+
+        for exclude in (None, []):
+            assert drop_excluded_corpora(train, val, exclude) == (train, val)
+
+    def test_unknown_corpus_raises_rather_than_dropping_nothing(self):
+        """A typo must not quietly train on everything."""
+
+        train, val = self._split()
+
+        with pytest.raises(ValueError, match="does not hold"):
+            drop_excluded_corpora(train, val, ["JTD"])
+
+    def test_excluding_everything_raises(self):
+        train, val = self._split()
+
+        with pytest.raises(ValueError, match="no training tracks"):
+            drop_excluded_corpora(train, val, ["ballroom", "jtd"])
+
+
+class TestResolveSplitRefsExclusion:
+    def test_exclude_applies_to_a_resolved_split(self, monkeypatch, tmp_path):
+        """The exclusion belongs in resolve_split_refs, not in one dataloader:
+        the val loader and EventMetricsLogger both read their tracks through
+        it, so they cannot disagree about what "val" means."""
+
+        monkeypatch.setattr(dataformats, "DATA_DIR", tmp_path / "data")
+        splits_dir = tmp_path / "splits"
+
+        Splitter.save_refs(
+            splits_dir,
+            "merge",
+            _refs(("ballroom", "a"), ("jtd", "b")),
+            _refs(("ballroom", "c"), ("jtd", "d")),
+        )
+
+        cfg = OmegaConf.create({"data": {"input": "merge", "exclude": ["jtd"]}})
+        train_refs, val_refs = resolve_split_refs(cfg, splits_dir, "merge")
+
+        assert [(r.dataset_name, r.track_id) for r in train_refs] == [("ballroom", "a")]
+        assert [(r.dataset_name, r.track_id) for r in val_refs] == [("ballroom", "c")]

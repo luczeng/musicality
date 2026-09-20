@@ -2,7 +2,6 @@
 # (musicality.evaluation.DEFAULTS, tools/annotator/inference.py).
 # Every key is documented in docs/source/configuration.rst — put explanations
 # there, not here. Every key is overridable via the matching --flag.
-
 # --- Run ----------------------------------------------------------------
 dataset: merge
 split: val  # train | val | all
@@ -12,7 +11,6 @@ sample_rate: 22050  # must match the checkpoint's training config
 hop_length: 512  # must match the checkpoint's training config
 tolerance: 0.07  # F-measure matching window, seconds
 device: cpu
-
 # --- Postprocessing, per task -------------------------------------------
 # Selected automatically by musicality.inference.detect_task.
 beat_only:
@@ -31,7 +29,6 @@ beat_phase:
   decoder: global  # global | greedy
   switch_penalty: 2.0  # global only; null forbids mid-track resyncs
   anchor_threshold: 0.8  # greedy only
-
 # --- Sweep grid ---------------------------------------------------------
 # Two-stage: beat knobs first, then the bar-position knob on top of the winner.
 sweep:
