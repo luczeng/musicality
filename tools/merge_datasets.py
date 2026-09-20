@@ -20,6 +20,14 @@ directory is ever created, so there's no dataformat for a merge to violate.
 The merge inherits whatever train/val ratio each source was already split
 at; it never generates a fresh split itself.
 
+Sources may overlap — ``swing`` and ``swing-binary`` hold the same tracks
+when nothing is dropped by the meter filter, ``gtzan-blues`` is a subset of
+``gtzan``, and the same name given twice is the same split twice. Each
+track is written once (see :func:`dedupe_refs`), and a track the sources
+disagree about — train in one, val in another — aborts the merge (see
+:func:`reject_tracks_on_both_sides`) rather than landing in both sides of
+the merged split.
+
 Usage
 -----
     uv run python tools/merge_datasets.py --datasets ballroom brid --output ballroom_brid
@@ -37,6 +45,72 @@ _fmt = dataformats.load()
 SPLITS_DIR = dataformats.ROOT / _fmt.splits_dir
 
 
+def dedupe_refs(refs: list[TrackRef]) -> tuple[list[TrackRef], int]:
+    """Return *refs* with repeated tracks removed, and how many were dropped.
+
+    A track is identified by ``(dataset_name, track_id)`` — the same pair a
+    split line spells — so the same track reached through two overlapping
+    sources collapses to one entry. Order is preserved, first occurrence
+    wins.
+
+    Without this, a track present in two sources is written twice and is
+    then loaded twice per epoch: silently weighted double in training, and
+    counted twice in every validation metric.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    unique: list[TrackRef] = []
+
+    for ref in refs:
+        key = (ref.dataset_name, ref.track_id)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(ref)
+
+    return unique, len(refs) - len(unique)
+
+
+def reject_tracks_on_both_sides(
+    train_refs: list[TrackRef], val_refs: list[TrackRef]
+) -> None:
+    """Raise if any track is in *train_refs* and *val_refs* at once.
+
+    Two sources holding the same track can still disagree about which side
+    it belongs to: ``swing`` and ``swing-binary`` are independent random
+    partitions of the same pool (see
+    :func:`~musicality.splits.splitter.split_name`), so merging both puts
+    roughly a fifth of the tracks into train *and* val. Deduplication can't
+    fix that — whichever side kept the track would be an arbitrary choice
+    between two held-out sets — so it is refused, naming the sources to
+    merge instead.
+
+    :raises RuntimeError: If the two sides intersect.
+    """
+
+    train_keys = {(r.dataset_name, r.track_id) for r in train_refs}
+    both = sorted(
+        f"{r.dataset_name}/{r.track_id}"
+        for r in val_refs
+        if (r.dataset_name, r.track_id) in train_keys
+    )
+
+    if not both:
+        return
+
+    examples = "\n".join(f"  {name}" for name in both[:5])
+
+    raise RuntimeError(
+        f"{len(both)} track(s) are in the train split of one source and the val "
+        f"split of another:\n{examples}\n"
+        "The sources partition the same tracks differently — e.g. a dataset "
+        "and its '-binary' variant, or a dataset and a '--contains' subset of "
+        "it. Merging them would train on tracks the merged split holds out. "
+        "Merge only one split per pool of tracks."
+    )
+
+
 def merge(
     dataset_names: list[str],
     output_name: str,
@@ -44,7 +118,9 @@ def merge(
     force: bool,
 ) -> None:
 
-    sources = [split_name(name, binary_only) for name in dataset_names]
+    sources = list(
+        dict.fromkeys(split_name(name, binary_only) for name in dataset_names)
+    )
     merged_name = split_name(output_name, binary_only)
 
     # Fail fast: every source must already have a split, and the output must
@@ -72,6 +148,20 @@ def merge(
         train_refs.extend(source_train)
         val_refs.extend(source_val)
 
+    # Before deduplication: a track on both sides is a contradiction between
+    # sources, not a repeat, and must stop the merge.
+    reject_tracks_on_both_sides(train_refs, val_refs)
+
+    train_refs, n_repeated_train = dedupe_refs(train_refs)
+    val_refs, n_repeated_val = dedupe_refs(val_refs)
+
+    if n_repeated_train or n_repeated_val:
+        print(
+            f"[merge] '{merged_name}': collapsed {n_repeated_train + n_repeated_val} "
+            f"repeated track(s) ({n_repeated_train} train, {n_repeated_val} val) — "
+            f"the sources overlap"
+        )
+
     train_refs.sort(key=lambda r: f"{r.dataset_name}/{r.track_id}")
     val_refs.sort(key=lambda r: f"{r.dataset_name}/{r.track_id}")
 
@@ -79,7 +169,7 @@ def merge(
 
     print(
         f"[merge] '{merged_name}': {len(train_refs)} train / {len(val_refs)} val "
-        f"track(s) from {len(dataset_names)} dataset(s) ({', '.join(dataset_names)})"
+        f"track(s) from {len(sources)} dataset(s) ({', '.join(sources)})"
     )
 
 

@@ -215,6 +215,25 @@ A merged split name is then usable anywhere a real one is — e.g.
 construct ``TempoDataset``/``BeatDataset`` directly via ``refs=``, with no
 distinction between a plain dataset's split and a merged one.
 
+Sources that hold the same track
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Two source names can cover the same tracks: a dataset and its ``-binary``
+variant (the same pool whenever the meter filter drops nothing — e.g.
+``swing``), a dataset and a ``--contains`` subset of it (``gtzan`` and
+``gtzan-blues``), or simply the same name given twice. The merge handles
+that in two steps, both before anything is written:
+
+- **Repeats collapse.** A track reached through several sources is written
+  once, and the run prints how many repeats it collapsed. Without this the
+  track is loaded twice per epoch — weighted double in training, counted
+  twice in every validation metric.
+- **Disagreements abort.** ``<name>`` and ``<name>-binary`` are drawn
+  independently (see ``split_name``), so they partition the same pool
+  differently: merging both would put roughly a fifth of the tracks into
+  the merged train *and* val splits. There is no right side to pick, so the
+  merge fails and names the tracks. Merge one split per pool of tracks.
+
 Telling training which split to use: ``data.input``
 -----------------------------------------------------
 
