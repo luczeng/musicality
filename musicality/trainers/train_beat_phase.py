@@ -43,11 +43,15 @@ from musicality.trainers.common import (
 # the logged series has one point per scoring epoch.
 _TRACKED_KEYS = (
     "train/loss",
+    "train/loss_beat",
+    "train/loss_position",
     "train/f_beat",
     "train/acc_one",
     "train/acc_last",
     "train/position_acc",
     "val/loss",
+    "val/loss_beat",
+    "val/loss_position",
     "val/f_beat",
     "val/acc_one",
     "val/acc_last",

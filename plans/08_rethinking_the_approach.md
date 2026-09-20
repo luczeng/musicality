@@ -11,6 +11,15 @@ is *not* the fix), promoted §2.1 (input representation) to the first thing to
 build, lowered the target §1.1 sets, closed `plans/07` §2.4 in favour of "the
 material is hard", and re-ordered §7.
 
+**Extended by `plans/09_lessons_from_literature.md` (2026-09-21).** The three
+papers this document argues from were read in full and put on one board. It
+confirms §4.1 and §5.3 and promotes both above the front-end work; confirms
+§4.2 with the mechanism and a price; contradicts §3.1's "more context" framing
+([BD20] found larger kernels and more layers helped nothing); weakens §2.2's
+hop-256 half ([BT24] is state of the art at 50 fps); and notes §1.2's "150 times
+larger than the reference architecture" is stale after the 32×9 trunk. §7's
+order is re-ranked there, not here.
+
 ---
 
 ## Overview

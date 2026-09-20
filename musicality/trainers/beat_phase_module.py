@@ -151,20 +151,30 @@ class BeatPhaseModule(L.LightningModule):
     def _position_step(self, logits, target, stage: str):
         """Loss + logged metrics for the ``group_size``-way softmax head."""
 
-        loss = beat_position_loss(
+        # Logged apart as well as summed: the two terms move for unrelated
+        # reasons and the sum hides it. Position CE can climb on
+        # overconfidence alone while beat BCE and position accuracy both
+        # improve, which is exactly what a rising `val/loss` meant for v6
+        # between epochs 79 and 107 (plans/07 §1.3) — measured there by a
+        # one-off script, since only the sum was ever logged.
+        beat_term, position_term = beat_position_loss(
             logits,
             target,
             pos_weight=self.hparams.pos_weight,
             phase_conditioning=self.hparams.phase_conditioning,
             pos_weight_alpha=self.hparams.pos_weight_alpha,
             position_norm=self.hparams.position_norm,
+            return_terms=True,
         )
+        loss = beat_term + position_term
 
         beat_p = torch.sigmoid(logits[:, 0])
         beat_y, position_y, mask = target[:, 0], target[:, 1:-1], target[:, -1]
 
         log_kw = dict(on_step=False, on_epoch=True)
         self.log(f"{stage}/loss", loss, prog_bar=True, **log_kw)
+        self.log(f"{stage}/loss_beat", beat_term, **log_kw)
+        self.log(f"{stage}/loss_position", position_term, **log_kw)
         self.log(
             f"{stage}/f_beat",
             peak_f_measure(beat_p, beat_y, threshold=self.hparams.threshold),

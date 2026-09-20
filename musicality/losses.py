@@ -278,7 +278,8 @@ def beat_position_loss(
     phase_conditioning: str = "beat",
     pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
     position_norm: str = "global",
-) -> torch.Tensor:
+    return_terms: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     r"""Beat BCE plus a softmax cross-entropy over bar position.
 
     The successor to :func:`beat_phase_loss`. That loss models bar position as
@@ -340,7 +341,15 @@ def beat_position_loss(
           tracks — the same shape as the per-genre metric this is graded by.
 
         See plans/04_beat_phase_generalization_and_data_prep.md §2.6a.
-    :returns: Scalar mean loss, shape ``()``.
+    :param return_terms: Return the two terms separately instead of their sum,
+        as ``(beat_term, position_term)``. The sum is what optimisation needs;
+        the split is what tells a rising loss apart from a rising *error* —
+        position CE can climb on overconfidence alone while beat BCE and
+        position accuracy both improve (plans/07 §1.3, measured between epochs
+        79 and 107 of v6). Logged per epoch by
+        :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule`.
+    :returns: Scalar mean loss, shape ``()`` — or, with ``return_terms``, the
+        pair of scalars that sums to it.
     """
 
     if phase_conditioning not in ("mask", "beat"):
@@ -379,20 +388,26 @@ def beat_position_loss(
     if position_norm == "global":
         n_weighted = phase_w.sum().clamp(min=1.0)
 
-        return beat_term + (position_ce * phase_w).sum() / n_weighted
+        position_term = (position_ce * phase_w).sum() / n_weighted
 
-    # Divide each clip by its own weight before averaging, so tempo stops
-    # buying influence. Clips with no position annotation have `den == 0` and
-    # therefore `num == 0` too — both are sums of `phase_w`-weighted terms —
-    # so the clamp lets them contribute exactly zero with a well-defined
-    # gradient. That keeps a fully unannotated batch finite (it reduces to the
-    # beat term) without boolean indexing, which would make the shape depend
-    # on the data.
-    num = (position_ce * phase_w).sum(dim=-1)  # (B,)
-    den = phase_w.sum(dim=-1)  # (B,)
-    n_valid = (den > 1e-6).sum().clamp(min=1)
+    else:
+        # Divide each clip by its own weight before averaging, so tempo stops
+        # buying influence. Clips with no position annotation have `den == 0`
+        # and therefore `num == 0` too — both are sums of `phase_w`-weighted
+        # terms — so the clamp lets them contribute exactly zero with a
+        # well-defined gradient. That keeps a fully unannotated batch finite
+        # (it reduces to the beat term) without boolean indexing, which would
+        # make the shape depend on the data.
+        num = (position_ce * phase_w).sum(dim=-1)  # (B,)
+        den = phase_w.sum(dim=-1)  # (B,)
+        n_valid = (den > 1e-6).sum().clamp(min=1)
 
-    return beat_term + (num / den.clamp(min=1e-6)).sum() / n_valid
+        position_term = (num / den.clamp(min=1e-6)).sum() / n_valid
+
+    if return_terms:
+        return beat_term, position_term
+
+    return beat_term + position_term
 
 
 def classification_tempo_loss(
