@@ -9,7 +9,7 @@ import pytest
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import TrackRef
 from musicality.splits.splitter import Splitter
-from tools.merge_datasets import merge
+from tools.merge_datasets import dedupe_refs, merge
 
 
 def _write_track_files(ref):
@@ -158,3 +158,87 @@ class TestMerge:
         )
 
         assert not (dataformats.DATA_DIR / "ballroom_brid").exists()
+
+
+class TestOverlappingSources:
+    """Two sources can hold the same track — a dataset and its '-binary'
+    variant, a dataset and a '--contains' subset of it, or the same name
+    given twice. The merged split must still list each track once, on one
+    side."""
+
+    def test_repeated_track_is_written_once(self, _splits_dir):
+        Splitter.save_refs(
+            _splits_dir,
+            "swing",
+            _refs(("swing", "a"), ("swing", "b")),
+            _refs(("swing", "c")),
+        )
+        # Same tracks, same partition — nothing was dropped by the meter filter.
+        Splitter.save_refs(
+            _splits_dir,
+            "swing-binary",
+            _refs(("swing", "a"), ("swing", "b")),
+            _refs(("swing", "c")),
+        )
+
+        merge(["swing", "swing-binary"], "all", binary_only=False, force=False)
+
+        train_refs, val_refs = Splitter.load_refs(_splits_dir, "all")
+        assert [(r.dataset_name, r.track_id) for r in train_refs] == [
+            ("swing", "a"),
+            ("swing", "b"),
+        ]
+        assert [(r.dataset_name, r.track_id) for r in val_refs] == [("swing", "c")]
+
+    def test_same_source_twice_is_merged_once(self, _splits_dir):
+        Splitter.save_refs(
+            _splits_dir, "swing", _refs(("swing", "a")), _refs(("swing", "b"))
+        )
+
+        merge(["swing", "swing"], "all", binary_only=False, force=False)
+
+        train_refs, val_refs = Splitter.load_refs(_splits_dir, "all")
+        assert len(train_refs) == 1
+        assert len(val_refs) == 1
+
+    def test_sources_disagreeing_about_a_track_abort_the_merge(self, _splits_dir):
+        """Independently drawn partitions of the same pool put some tracks in
+        train on one side and val on the other. Merging them would train on a
+        held-out track, so it must fail rather than dedupe to an arbitrary
+        side."""
+
+        Splitter.save_refs(
+            _splits_dir,
+            "swing",
+            _refs(("swing", "a"), ("swing", "b")),
+            _refs(("swing", "c")),
+        )
+        Splitter.save_refs(
+            _splits_dir,
+            "swing-binary",
+            _refs(("swing", "a"), ("swing", "c")),
+            _refs(("swing", "b")),
+        )
+
+        with pytest.raises(RuntimeError, match="train split of one source"):
+            merge(["swing", "swing-binary"], "all", binary_only=False, force=False)
+
+        assert not (_splits_dir / "all").exists()
+
+
+class TestDedupeRefs:
+    def test_keeps_first_occurrence_and_counts_the_rest(self):
+        refs = _refs(("swing", "a"), ("swing", "b"), ("swing", "a"), on_disk=False)
+
+        unique, n_dropped = dedupe_refs(refs)
+
+        assert [r.track_id for r in unique] == ["a", "b"]
+        assert n_dropped == 1
+
+    def test_same_track_id_in_two_datasets_is_not_a_duplicate(self):
+        refs = _refs(("swing", "a"), ("ballroom", "a"), on_disk=False)
+
+        unique, n_dropped = dedupe_refs(refs)
+
+        assert len(unique) == 2
+        assert n_dropped == 0

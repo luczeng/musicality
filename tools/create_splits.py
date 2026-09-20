@@ -35,7 +35,7 @@ import mirdata
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import list_track_refs, sanitize_track_name
 from musicality.loaders.beat_dataset import BeatDataset
-from musicality.splits.splitter import Splitter, split_name
+from musicality.splits.splitter import Splitter, is_flagged, split_name
 
 _fmt = dataformats.load()
 DATA_DIR = dataformats.ROOT / _fmt.data_dir
@@ -65,6 +65,23 @@ def split_exists(name: str) -> bool:
     return (split_path / "train.txt").exists() and (split_path / "val.txt").exists()
 
 
+def split_size(name: str) -> int:
+    """Number of tracks an existing split lists, both sides together."""
+
+    split_path = SPLITS_DIR / name
+
+    return sum(
+        len(
+            [
+                line
+                for line in (split_path / side).read_text().splitlines()
+                if line.strip()
+            ]
+        )
+        for side in ("train.txt", "val.txt")
+    )
+
+
 def create_split(name: str, dataset, val_split: float, force: bool) -> None:
 
     if len(dataset) == 0:
@@ -72,8 +89,25 @@ def create_split(name: str, dataset, val_split: float, force: bool) -> None:
         return
 
     if split_exists(name) and not force:
+        # A split is a file, not a view of the data directory: tracks
+        # annotated since it was written stay out of it until it is
+        # regenerated. Say so, so a skipped dataset is never mistaken for an
+        # up-to-date one after an annotation session.
+        n_eligible = sum(1 for ref in dataset.refs if not is_flagged(ref))
+        n_listed = split_size(name)
+
+        drift = (
+            ""
+            if n_listed == n_eligible
+            else (
+                f" — it lists {n_listed} track(s), {n_eligible} are annotated "
+                f"and unflagged now"
+            )
+        )
+
         print(
-            f"[create_splits] '{name}': split already exists, skipping (use --force to regenerate)"
+            f"[create_splits] '{name}': split already exists, skipping "
+            f"(use --force to regenerate){drift}"
         )
         return
 
