@@ -8,9 +8,11 @@ generates a split itself, so the files here are the ground truth. They're
 meant to be version-controlled (e.g. via DVC) so every machine trains and
 evaluates against the exact same split.
 
-Creates both a tempo split (`<name>`) from TempoDataset and a beat-phase
-split (`beat_phase-<name>`) from BeatDataset for each dataset, skipping
-whichever one has no samples for that dataset.
+One split per dataset serves every task: `<name>`, or `<name>-binary`
+with `--binary-only`. Tempo and beat runs read the same file — a track's
+tempo label is derived from its beat annotation, so the two tasks can never
+disagree about which tracks are usable (see
+``musicality.splits.splitter.split_name``).
 
 ``--contains`` splits only the tracks whose id contains a given substring,
 into their own separately named split (`<name>-<substring>`) — for datasets
@@ -33,8 +35,7 @@ import mirdata
 import musicality.dataformats as dataformats
 from musicality.dataformats.track_io import list_track_refs, sanitize_track_name
 from musicality.loaders.beat_dataset import BeatDataset
-from musicality.loaders.tempo_dataset import TempoDataset
-from musicality.splits.splitter import Splitter
+from musicality.splits.splitter import Splitter, split_name
 
 _fmt = dataformats.load()
 DATA_DIR = dataformats.ROOT / _fmt.data_dir
@@ -112,16 +113,16 @@ def main():
         "--binary-only",
         action="store_true",
         help=(
-            "For beat-phase splits, drop tracks whose beats-per-bar isn't a multiple "
-            "of 2 (e.g. ballroom's waltz/Viennese waltz tracks, which are in triple "
-            "meter — 1, 2, 3 — rather than binary meter)"
+            "Drop tracks whose beats-per-bar isn't a multiple of 2 (e.g. ballroom's "
+            "waltz/Viennese waltz tracks, which are in triple meter — 1, 2, 3 — "
+            "rather than binary meter), into the split's '-binary' variant"
         ),
     )
     parser.add_argument(
         "--group-size",
         type=int,
         default=4,
-        help="Beats per group for the beat-phase 'last' target: 4 for bar position (default), 8 for phrase position",
+        help="Beats per group for the bar-position target: 4 for bar position (default), 8 for phrase position. Does not affect which tracks the split holds",
     )
     args = parser.parse_args()
 
@@ -134,13 +135,11 @@ def main():
         print(f"No recognised mirdata datasets found in {DATA_DIR}/.")
         return
 
-    beat_phase_name_suffix = "-binary" if args.binary_only else ""
-
     for name in names:
         data_home = DATA_DIR / name
 
-        # Filter at the ref level, before either dataset is built, so a
-        # narrowed run never pays to resolve the tracks it's about to drop.
+        # Filter at the ref level, before the dataset is built, so a narrowed
+        # run never pays to resolve the tracks it's about to drop.
         refs = list_track_refs(name, data_home, contains=args.contains)
         base_name = split_base_name(name, args.contains)
 
@@ -150,17 +149,15 @@ def main():
                 f"--contains '{args.contains}' → '{base_name}'"
             )
 
-        tempo_ds = TempoDataset(refs=refs)
-        create_split(base_name, tempo_ds, args.val_split, args.force)
-
-        beat_ds = BeatDataset(
+        dataset = BeatDataset(
             refs=refs,
             group_size=args.group_size,
             binary_only=args.binary_only,
         )
+
         create_split(
-            f"beat_phase-{base_name}{beat_phase_name_suffix}",
-            beat_ds,
+            split_name(base_name, args.binary_only),
+            dataset,
             args.val_split,
             args.force,
         )
