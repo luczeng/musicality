@@ -74,9 +74,19 @@ Entry point: `tools/train.py` uses Hydra to compose config and calls `train()`.
 
 `AugmentedDataset` wraps any dataset with configurable time-stretch, gain, and noise augmentation. `build_augmenter(cfg)` constructs it from the Hydra config.
 
-### Losses (`musicality/losses.py`)
+### Losses (`musicality/losses/`)
 
-Supports absolute, relative, and classification loss modes. Classification loss treats tempo as a discretized bin with a Gaussian target distribution.
+One module per objective, named after the task it trains.
+
+- `tempo_regression.py` — `absolute_tempo_loss`, `relative_tempo_loss`: MAE on a single BPM value, with or without octave invariance.
+- `tempo_classification.py` — `classification_tempo_loss`, `gaussian_soft_target`: tempo as a softmax over BPM bins against a Gaussian soft target, so a neighbouring bin is a near miss rather than an unrelated class.
+- `beat_only.py` — `beat_only_loss`: frame-wise beat BCE alone (`configs/beat_only_train.yaml`).
+- `beat_phase.py` — `beat_phase_loss`: bar position as two independent sigmoids (`one`/`last`). Superseded — it never asks the discriminative "is this beat a 1 or a 3?" question — but kept so existing checkpoints stay readable.
+- `beat_position.py` — `beat_position_loss`: beat BCE plus a softmax over all `G` bar positions, which do compete. **The loss the project trains with** (`configs/beat_train.yaml`).
+- `phase_conditioning.py` — `phase_weight`: which frames the bar-position term is supervised on. `"beat"` restricts it to the frames the decoder actually reads; `"mask"` spends ~96% of the gradient re-learning beat detection.
+- `pos_weight.py` — `beat_pos_weight`: positive-class weight for a beat BCE term, either passed through or derived per sample (`"auto"`), since the right value is a function of tempo and a fixed one is correct at only one tempo.
+
+The last two are shared knobs, not losses, and they are coupled: conditioning on beats removes most of the imbalance `pos_weight` exists to correct. `docs/source/losses.rst` is the rendered index.
 
 ### Metrics (`musicality/metrics/`)
 

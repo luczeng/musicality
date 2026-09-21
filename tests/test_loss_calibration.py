@@ -1,4 +1,4 @@
-"""Tests for the phase-2 loss calibration of :func:`musicality.losses.beat_position_loss`.
+"""Tests for the phase-2 loss calibration of :func:`musicality.losses.beat_position.beat_position_loss`.
 
 Two independent changes, both defaulting off:
 
@@ -18,11 +18,11 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from musicality.loaders.beat_dataset import gaussian_smear
-from musicality.losses import (
+from musicality.losses.beat_position import beat_position_loss
+from musicality.losses.pos_weight import (
     AUTO_POS_WEIGHT_ALPHA,
     AUTO_POS_WEIGHT_RANGE,
     beat_pos_weight,
-    beat_position_loss,
 )
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 

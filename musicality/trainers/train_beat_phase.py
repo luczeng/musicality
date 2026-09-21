@@ -15,7 +15,7 @@ from musicality.callbacks.event_metrics import (
 )
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.callbacks.training_report import TrainingReportLogger
-from musicality.losses import AUTO_POS_WEIGHT_ALPHA
+from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.common import (
     build_beat_dataloaders,

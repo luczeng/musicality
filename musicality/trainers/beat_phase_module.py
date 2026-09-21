@@ -7,11 +7,9 @@ import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.losses import (
-    AUTO_POS_WEIGHT_ALPHA,
-    beat_phase_loss,
-    beat_position_loss,
-)
+from musicality.losses.beat_phase import beat_phase_loss
+from musicality.losses.beat_position import beat_position_loss
+from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
 from musicality.metrics.frame_accuracy import frame_accuracy, peak_f_measure
 
 
@@ -42,12 +40,12 @@ class BeatPhaseModule(L.LightningModule):
 
     - ``group_size=None`` (default): the original three-channel head —
       ``beat``/``one``/``last`` as independent sigmoids, trained with
-      :func:`~musicality.losses.beat_phase_loss`. Pairs with
+      :func:`~musicality.losses.beat_phase.beat_phase_loss`. Pairs with
       :class:`~musicality.loaders.beat_dataset.BeatDataset`'s
       ``target_layout="one_last"``.
     - ``group_size=G``: ``1 + G`` channels — ``beat`` as a sigmoid, then a
       softmax over the ``G`` bar positions, trained with
-      :func:`~musicality.losses.beat_position_loss`. Pairs with
+      :func:`~musicality.losses.beat_position.beat_position_loss`. Pairs with
       ``target_layout="positions"``. Positions 2..G-1 gain their own
       supervised logits, so "is this a 1 or a 3?" becomes a question the model
       is actually asked — see docs/beat_phase_improvement_review.md section 3.
@@ -57,18 +55,18 @@ class BeatPhaseModule(L.LightningModule):
     overrides it for classification mode.
 
     :param model: DictConfig for instantiating the backbone (e.g. ``TCNTempoNet``).
-    :param pos_weight: Positive-class weight passed to :func:`~musicality.losses.beat_phase_loss`.
+    :param pos_weight: Positive-class weight passed to :func:`~musicality.losses.beat_phase.beat_phase_loss`.
         Scalar (shared across heads) or a 3-element sequence (per-head). With
         ``group_size`` set there is only one BCE head, so a sequence is
         rejected up front rather than left to fail as a broadcast error on the
         first batch. ``"auto"`` derives it per sample from the target
-        (:func:`~musicality.losses.beat_pos_weight`); ``group_size`` only.
+        (:func:`~musicality.losses.pos_weight.beat_pos_weight`); ``group_size`` only.
     :param pos_weight_alpha: Scale on a derived ``pos_weight``. Read only when
         ``pos_weight == "auto"``.
     :param position_norm: ``"global"`` (default) or ``"per_item"`` — how
-        :func:`~musicality.losses.beat_position_loss` averages the bar-position
+        :func:`~musicality.losses.beat_position.beat_position_loss` averages the bar-position
         term. ``group_size`` only.
-    :param phase_conditioning: Passed to :func:`~musicality.losses.beat_phase_loss`
+    :param phase_conditioning: Passed to :func:`~musicality.losses.beat_phase.beat_phase_loss`
         — ``"mask"`` supervises the one/last heads on every frame,
         ``"beat"`` only on frames at or near a beat, which is where
         :func:`musicality.postprocess.label_bar_position` actually reads them.

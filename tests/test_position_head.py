@@ -1,7 +1,7 @@
 """Tests for the group_size-way softmax head over bar position.
 
 Covers the ``target_layout="positions"`` dataset target, the
-:func:`musicality.losses.beat_position_loss` objective,
+:func:`musicality.losses.beat_position.beat_position_loss` objective,
 :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule` with
 ``group_size`` set, and the decoder reading a position distribution directly
 instead of inferring one from two independent sigmoids.
@@ -16,7 +16,7 @@ import pytest
 from omegaconf import OmegaConf
 
 from musicality.loaders.beat_dataset import BeatDataset, position_target_channels
-from musicality.losses import beat_position_loss
+from musicality.losses.beat_position import beat_position_loss
 from musicality.postprocess import label_bar_position_global, readout
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 

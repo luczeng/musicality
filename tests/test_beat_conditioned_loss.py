@@ -1,6 +1,6 @@
 """Tests for ``phase_conditioning="beat"`` — the beat-conditioned phase loss.
 
-Covers :func:`musicality.losses.beat_phase_loss`'s weighting and normalisation
+Covers :func:`musicality.losses.beat_phase.beat_phase_loss`'s weighting and normalisation
 under both conditioning modes, and that
 :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule` records the
 setting in its hyperparameters and passes it through.
@@ -13,7 +13,7 @@ import torch.nn.functional as F
 import pytest
 from omegaconf import OmegaConf
 
-from musicality.losses import beat_phase_loss
+from musicality.losses.beat_phase import beat_phase_loss
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
 

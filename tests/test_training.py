@@ -6,7 +6,10 @@ from omegaconf import OmegaConf
 
 from musicality.models.tempo_net import TempoNet
 from musicality.trainers.tempo_module import TempoModule
-from musicality.losses import gaussian_soft_target, classification_tempo_loss
+from musicality.losses.tempo_classification import (
+    gaussian_soft_target,
+    classification_tempo_loss,
+)
 
 CLASSIFICATION_CFG = OmegaConf.create(
     {"bpm_min": 30, "bpm_max": 286, "n_bins": 64, "sigma": 1.5}
