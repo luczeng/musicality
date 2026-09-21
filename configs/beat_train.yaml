@@ -19,6 +19,10 @@ sigma_frames: 1.5
 pos_weight: auto
 pos_weight_alpha: 1.11
 position_norm: per_item  # global | per_item
+# tolerance_frames is coupled to sigma_frames above: it replaces the smear
+# rather than adding to it, so a non-zero value wants sigma_frames: 0.
+tolerance_frames: 0  # 0 = off; 3 = ±70 ms, the metric's own tolerance
+ignore_frames: null  # null = 2 * tolerance_frames; 4 is the value measured here
 balanced: true
 # --- Optimisation -------------------------------------------------------
 lr: 5e-4

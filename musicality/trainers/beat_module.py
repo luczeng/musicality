@@ -6,6 +6,7 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
 from musicality.losses.beat_only import beat_only_loss
+from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
 from musicality.metrics.frame_accuracy import peak_f_measure
 from musicality.trainers.beat_phase_module import align_time
 
@@ -30,6 +31,15 @@ class BeatModule(L.LightningModule):
     :param pos_weight: Positive-class weight passed to
         :func:`~musicality.losses.beat_only.beat_only_loss`, compensating for
         beat frames being a small fraction of all frames.
+    :param pos_weight_alpha: Scale on a derived ``pos_weight``. Read only when
+        ``pos_weight == "auto"``.
+    :param tolerance_frames: Half-width, in frames, of the timing error the
+        beat head is forgiven — ``0`` disables it, which is the pre-existing
+        behaviour. See :mod:`musicality.losses.shift_tolerance`, and pair a
+        non-zero value with ``sigma_frames: 0`` in the config.
+    :param ignore_frames: Half-width of the band around each beat where the
+        negative term is switched off. ``None`` derives it as
+        ``2 * tolerance_frames``.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
     :param threshold: Peak-picking threshold for the logged ``{stage}/f_beat``
@@ -59,7 +69,10 @@ class BeatModule(L.LightningModule):
     def __init__(
         self,
         model: DictConfig,
-        pos_weight: float = 6.0,
+        pos_weight: float | str = 6.0,
+        pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
+        tolerance_frames: int = 0,
+        ignore_frames: int | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
@@ -87,7 +100,14 @@ class BeatModule(L.LightningModule):
         beat_y = target[:, 0]
         logits, beat_y = align_time(logits, beat_y)
 
-        loss = beat_only_loss(logits, beat_y, pos_weight=self.hparams.pos_weight)
+        loss = beat_only_loss(
+            logits,
+            beat_y,
+            pos_weight=self.hparams.pos_weight,
+            pos_weight_alpha=self.hparams.pos_weight_alpha,
+            tolerance_frames=self.hparams.tolerance_frames,
+            ignore_frames=self.hparams.ignore_frames,
+        )
         probs = torch.sigmoid(logits)
 
         log_kw = dict(on_step=False, on_epoch=True)

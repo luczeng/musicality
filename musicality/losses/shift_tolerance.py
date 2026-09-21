@@ -16,10 +16,10 @@ been to blur the *target* instead (``sigma_frames`` in
 :class:`~musicality.loaders.beat_dataset.BeatDataset`), which [BT24]_ names and
 rejects as mitigating slow convergence without helping with the blur.
 
-The two are alternatives, not additions: ±3 frames of pooling on top of ±5
-frames of smearing is ±186 ms of combined tolerance against a ±70 ms metric.
-Pair a non-zero ``tolerance_frames`` with ``sigma_frames: 0``. See
-``plans/09_lessons_from_literature.md`` §2.1.
+The two are alternatives, not additions: ±3 frames of pooling on top of the ±4
+frames ``sigma_frames: 1.5`` smears over is ±162 ms of combined tolerance
+against a ±70 ms metric. Pair a non-zero ``tolerance_frames`` with
+``sigma_frames: 0``. See ``plans/09_lessons_from_literature.md`` §2.1.
 
 .. [BT24] Foscarin, Schlüter and Widmer, "Beat this! Accurate beat tracking
    without DBN postprocessing", ISMIR 2024, §3.3.

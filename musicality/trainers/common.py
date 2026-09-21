@@ -1,6 +1,7 @@
 """Training-pipeline plumbing shared across the tempo, beat-phase, and beat-only trainers."""
 
 import random
+import warnings
 from datetime import datetime
 from itertools import islice
 from pathlib import Path
@@ -130,6 +131,34 @@ def resolve_beat_split_refs(
     return resolve_split_refs(cfg, splits_dir, split_name(cfg.data.input, binary_only))
 
 
+def warn_if_tolerance_stacks_on_smearing(cfg: DictConfig) -> None:
+    """Warn when a config both smears the target and forgives the prediction.
+
+    They are two answers to the same problem — imprecise annotations — and they
+    stack rather than compose. At 43.07 fps a ``sigma_frames`` of 1.5 smears
+    over ±4 frames and a ``tolerance_frames`` of 3 adds its own window on top,
+    so the pair forgives ±162 ms against a ±70 ms metric. See
+    :mod:`musicality.losses.shift_tolerance`.
+
+    A warning rather than a refusal: the two are deliberately independent knobs
+    so that the pair can be swept, and only the experiment can say where the
+    best point sits.
+    """
+
+    if cfg.sigma_frames <= 0 or cfg.get("tolerance_frames", 0) <= 0:
+        return
+
+    combined = round(3 * cfg.sigma_frames) + cfg.tolerance_frames
+    warnings.warn(
+        f"sigma_frames={cfg.sigma_frames} and "
+        f"tolerance_frames={cfg.tolerance_frames} are both set: the target is "
+        f"smeared AND the prediction is forgiven, giving ±{combined} frames of "
+        "combined tolerance against a ±3-frame metric. Shift tolerance is "
+        "meant to replace smearing — set sigma_frames=0.",
+        stacklevel=2,
+    )
+
+
 def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
     """Build train/val DataLoaders over a :class:`~musicality.loaders.beat_dataset.BeatDataset`.
 
@@ -145,6 +174,8 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
     """
 
     binary_only = cfg.get("binary_only", False)
+
+    warn_if_tolerance_stacks_on_smearing(cfg)
 
     dataset_kwargs = dict(
         sample_rate=cfg.data.sample_rate,

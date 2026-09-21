@@ -99,6 +99,8 @@ def build_module(cfg: DictConfig) -> BeatPhaseModule:
         ),
         pos_weight_alpha=cfg.get("pos_weight_alpha", AUTO_POS_WEIGHT_ALPHA),
         position_norm=cfg.get("position_norm", "global"),
+        tolerance_frames=cfg.get("tolerance_frames", 0),
+        ignore_frames=cfg.get("ignore_frames", None),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
         balanced=cfg.balanced,

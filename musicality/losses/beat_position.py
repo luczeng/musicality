@@ -9,7 +9,8 @@ import torch
 import torch.nn.functional as F
 
 from musicality.losses.phase_conditioning import phase_weight
-from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA, beat_pos_weight
+from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
+from musicality.losses.shift_tolerance import shift_tolerant_bce, sliding_windowed_max
 
 POSITION_NORMS = ("global", "per_item")
 
@@ -21,6 +22,8 @@ def beat_position_loss(
     phase_conditioning: str = "beat",
     pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
     position_norm: str = "global",
+    tolerance_frames: int = 0,
+    ignore_frames: int | None = None,
     return_terms: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
     r"""Beat BCE plus a softmax cross-entropy over bar position.
@@ -44,7 +47,8 @@ def beat_position_loss(
         \mathcal{L} = \underbrace{\frac{1}{BT} \sum_{i,t} \ell(\hat{b}_{i,t}, b_{i,t})}_{\text{beat}}
         - \underbrace{\frac{\sum_{i,t} w_{i,t} \sum_{p} q_{i,t,p} \log \hat{q}_{i,t,p}}{\sum_{i,t} w_{i,t}}}_{\text{position}}
 
-    where :math:`\ell` is weighted binary cross-entropy, :math:`q` is the
+    where :math:`\ell` is weighted binary cross-entropy — shift-tolerant once
+    ``tolerance_frames`` is set — :math:`q` is the
     target's normalized position block, :math:`\hat{q}` the softmax over the
     model's position logits, and :math:`w` the per-frame phase weight (see
     ``phase_conditioning``).
@@ -86,6 +90,31 @@ def beat_position_loss(
           tracks — the same shape as the per-genre metric this is graded by.
 
         See plans/04_beat_phase_generalization_and_data_prep.md §2.6a.
+    :param tolerance_frames: Half-width, in frames, of the timing error both
+        heads are forgiven. ``0`` (the default) is the pre-existing loss, bit
+        for bit. A non-zero value means two different things to the two terms,
+        because the decoder reads them two different ways:
+
+        - The ``beat`` term becomes
+          :func:`~musicality.losses.shift_tolerance.shift_tolerant_bce`. That
+          head is *scanned* over time by
+          :func:`musicality.postprocess.pick_peaks`, so where its peak sits is
+          the answer, and tolerance means forgiving a peak that is a frame or
+          two off.
+        - The ``position`` term is *widened* instead — both the gate and the
+          target. That head is never scanned: the decoder rounds a beat time to
+          a frame and reads that one column. Its answer is a label, not a time,
+          so there is no peak to forgive; what it needs is to be right across
+          the whole window the lookup might land in, which shift tolerance on
+          the beat head has just made ``r`` frames wide.
+
+        Pair a non-zero value with ``sigma_frames: 0`` — see
+        :mod:`musicality.losses.shift_tolerance` on why smearing and tolerance
+        do not compose.
+    :param ignore_frames: Half-width of the band around each beat where the
+        ``beat`` term's negative half is switched off. ``None`` derives it as
+        ``2 * tolerance_frames``. Read only when ``tolerance_frames > 0``, and
+        it does not touch the position term, which has no negative class.
     :param return_terms: Return the two terms separately instead of their sum,
         as ``(beat_term, position_term)``. The sum is what optimisation needs;
         the split is what tells a rising loss apart from a rising *error* —
@@ -112,13 +141,42 @@ def beat_position_loss(
             "(B, 1 + G, T) against a (B, 2 + G, T) target"
         )
 
-    phase_w = phase_weight(beat_y, mask, phase_conditioning)
+    phase_w = phase_weight(beat_y, mask, phase_conditioning, tolerance_frames)
 
-    beat_term = F.binary_cross_entropy_with_logits(
+    beat_term = shift_tolerant_bce(
         beat_logits,
         beat_y,
-        pos_weight=beat_pos_weight(beat_y, pos_weight, pos_weight_alpha),
+        pos_weight=pos_weight,
+        pos_weight_alpha=pos_weight_alpha,
+        tolerance_frames=tolerance_frames,
+        ignore_frames=ignore_frames,
     )
+
+    if tolerance_frames:
+        # Widen the target alongside the gate, never on its own. BeatDataset
+        # gives frames away from a beat a uniform 1/G row — "no information
+        # here" — so a wider gate against the untouched target would supervise
+        # the frames the decoder reads towards maximum uncertainty.
+        #
+        # Masking by `beat_y` before the window max is what keeps those uniform
+        # rows out of the result. Pooling the block directly would carry their
+        # 1/G into every channel the beat leaves at zero, and renormalising a
+        # (1, 1/G, 1/G, 1/G) column yields (0.57, 0.14, 0.14, 0.14) — a target
+        # that punishes a confidently *correct* prediction. Masked first, the
+        # window holds the beat's own column and nothing else.
+        #
+        # Frames the window never reaches fall back to uniform, exactly as
+        # BeatDataset builds them: under ``phase_conditioning="beat"`` their
+        # gate is zero anyway, but under ``"mask"`` it is not.
+        n_positions = position_y.shape[1]
+        widened = sliding_windowed_max(
+            position_y * beat_y.unsqueeze(1), tolerance_frames
+        )
+        total = widened.sum(dim=1, keepdim=True)
+
+        position_y = torch.where(
+            total > 1e-6, widened / total.clamp(min=1e-6), 1.0 / n_positions
+        )
 
     # Soft-target cross-entropy over the position axis, per frame.
     log_q = F.log_softmax(position_logits, dim=1)
