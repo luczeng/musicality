@@ -305,9 +305,9 @@ class TCNTempoNet(nn.Module):
         a stack of :class:`SelfAttentionBlock`, giving them context beyond the
         trunk's fixed dilated-conv receptive field. Output channel order is
         always ``beat`` first, then the phase channels — ``(beat, one, last)``
-        for :func:`musicality.losses.beat_phase_loss`, or
+        for :func:`musicality.losses.beat_phase.beat_phase_loss`, or
         ``(beat, pos_1, ..., pos_G)`` for
-        :func:`musicality.losses.beat_position_loss`.
+        :func:`musicality.losses.beat_position.beat_position_loss`.
         See docs/beat_phase_context_ideas.md.
     :param n_attn_layers: Number of stacked :class:`SelfAttentionBlock` in
         ``phase_head``. Only used when ``use_self_attention=True``.

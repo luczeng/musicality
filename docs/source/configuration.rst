@@ -83,7 +83,7 @@ Task and head
         One logit per bar position with a softmax over them, so the positions
         compete and 1-vs-3 becomes a single decision. Widens the head to
         ``1 + group_size`` channels and switches the loss to
-        :func:`~musicality.losses.beat_position_loss`.
+        :func:`~musicality.losses.beat_position.beat_position_loss`.
 
     Measured on ballroom val (binary, viterbi=2), ``one_last`` → ``positions``:
     confusion 0.185 → 0.130, ``f_one`` 0.756 → 0.774, ``f_last`` 0.730 → 0.769.

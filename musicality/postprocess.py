@@ -391,7 +391,7 @@ def label_bar_position_global(
         the decode to the exact single-offset argmax.
     :param position_probs: Optional ``(group_size, T)`` per-frame distribution
         over bar positions, from a softmax-head checkpoint (see
-        :func:`musicality.losses.beat_position_loss`). When given it replaces
+        :func:`musicality.losses.beat_position.beat_position_loss`). When given it replaces
         the emission model built from ``one_probs``/``last_probs`` below — the
         model supplies the full ``group_size``-way distribution directly, so
         there is nothing to infer and positions 2..G-1 stop being

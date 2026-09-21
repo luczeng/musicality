@@ -1,11 +1,11 @@
 """PyTorch Lightning module for frame-level beat-only detection (no bar-position heads)."""
 
 import torch
-import torch.nn.functional as F
 import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
+from musicality.losses.beat_only import beat_only_loss
 from musicality.metrics.frame_accuracy import peak_f_measure
 from musicality.trainers.beat_phase_module import align_time
 
@@ -27,8 +27,9 @@ class BeatModule(L.LightningModule):
     whether it carries bar-position annotations.
 
     :param model: DictConfig for instantiating the backbone (e.g. ``TCNTempoNet``).
-    :param pos_weight: Positive-class weight passed to ``BCEWithLogitsLoss``,
-        compensating for beat frames being a small fraction of all frames.
+    :param pos_weight: Positive-class weight passed to
+        :func:`~musicality.losses.beat_only.beat_only_loss`, compensating for
+        beat frames being a small fraction of all frames.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
     :param threshold: Peak-picking threshold for the logged ``{stage}/f_beat``
@@ -86,10 +87,7 @@ class BeatModule(L.LightningModule):
         beat_y = target[:, 0]
         logits, beat_y = align_time(logits, beat_y)
 
-        pos_weight = torch.as_tensor(
-            self.hparams.pos_weight, device=logits.device, dtype=logits.dtype
-        )
-        loss = F.binary_cross_entropy_with_logits(logits, beat_y, pos_weight=pos_weight)
+        loss = beat_only_loss(logits, beat_y, pos_weight=self.hparams.pos_weight)
         probs = torch.sigmoid(logits)
 
         log_kw = dict(on_step=False, on_epoch=True)

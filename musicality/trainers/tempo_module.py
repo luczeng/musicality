@@ -6,9 +6,9 @@ import lightning as L
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate
 
-from musicality.losses import (
+from musicality.losses.tempo_classification import classification_tempo_loss
+from musicality.losses.tempo_regression import (
     absolute_tempo_loss,
-    classification_tempo_loss,
     relative_tempo_loss,
 )
 from musicality.metrics.tempo_acc1 import tempo_acc1

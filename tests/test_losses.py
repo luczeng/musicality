@@ -1,9 +1,9 @@
-"""Tests for musicality.losses.beat_phase_loss."""
+"""Tests for musicality.losses.beat_phase.beat_phase_loss."""
 
 import torch
 import pytest
 
-from musicality.losses import beat_phase_loss
+from musicality.losses.beat_phase import beat_phase_loss
 
 B, T = 4, 50
 
