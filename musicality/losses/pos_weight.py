@@ -18,7 +18,15 @@ import torch
 # stays under 15 even after a 0.85 time-stretch. They exist for degenerate
 # crops — a window holding a single beat derives ~200, and one holding none is
 # bounded only by the epsilon in the denominator.
-AUTO_POS_WEIGHT_RANGE = (1.0, 20.0)
+#
+# The ceiling is 60 rather than 20 to leave room for sharp targets
+# (``sigma_frames: 0``, paired with :mod:`musicality.losses.shift_tolerance`).
+# Removing the Gaussian cuts the positive mass ~3.75x, so the derived ratio
+# climbs to 13.9 on jtd, 22.1 on ballroom and 49.9 at rwc_classical's 10th
+# percentile — a ceiling of 20 would bind on every corpus below ~135 BPM and
+# silently undo the self-calibration. It stays a no-op under the smeared
+# default, whose 12.5 maximum is the figure quoted just above.
+AUTO_POS_WEIGHT_RANGE = (1.0, 60.0)
 
 # Reproduces the hand-tuned pos_weight of 5 at ballroom's median tempo, where
 # the derived neg:pos ratio is 4.51. Anchoring there makes self-calibration a
@@ -31,6 +39,7 @@ def beat_pos_weight(
     beat_y: torch.Tensor,
     pos_weight: torch.Tensor | float | str,
     alpha: float = AUTO_POS_WEIGHT_ALPHA,
+    neg_weight: torch.Tensor | None = None,
 ) -> torch.Tensor:
     r"""Positive-class weight for a beat BCE term — passed through, or derived
     per sample from the target when ``pos_weight`` is ``"auto"``.
@@ -47,8 +56,9 @@ def beat_pos_weight(
 
     .. math::
 
-        w_i = \alpha \, \frac{1 - \bar{b}_i}{\bar{b}_i},
-        \qquad \bar{b}_i = \frac{1}{T} \sum_t b_{i,t}
+        w_i = \alpha \, \frac{\bar{n}_i}{\bar{b}_i},
+        \qquad \bar{b}_i = \frac{1}{T} \sum_t b_{i,t},
+        \qquad \bar{n}_i = 1 - \bar{b}_i
 
     Deriving it per sample also means it tracks time-stretch augmentation,
     which silently invalidates a hand-tuned value on every augmented clip.
@@ -59,6 +69,15 @@ def beat_pos_weight(
     :param alpha: Scale on the derived ratio. Defaults to
         :data:`AUTO_POS_WEIGHT_ALPHA`; ``1.0`` is exact inverse-frequency
         weighting.
+    :param neg_weight: Per-frame weight the *negative* term actually carries,
+        shape ``(B, T)``, replacing :math:`\bar{n}_i` above. Only
+        :func:`~musicality.losses.shift_tolerance.shift_tolerant_bce` passes
+        it, because that loss ignores negatives near each annotation and the
+        ratio has to count the frames that survive rather than every non-beat
+        frame. On ballroom with sharp targets that is 13.2 against the 22.1 the
+        raw target implies — a 1.7x difference the beat head would otherwise
+        absorb as over-weighted positives. ``None`` uses ``1 - mean(beat_y)``,
+        which is the plain BCE's ``(1 - y)``.
     :returns: Scalar tensor when passed through, shape ``(B, 1)`` when derived
         — which broadcasts against ``(B, T)`` inside
         :func:`~torch.nn.functional.binary_cross_entropy_with_logits`.
@@ -73,6 +92,9 @@ def beat_pos_weight(
         )
 
     pos_frac = beat_y.mean(dim=-1, keepdim=True)  # (B, 1)
-    weight = alpha * (1.0 - pos_frac) / pos_frac.clamp(min=1e-6)
+    neg_frac = (
+        1.0 - pos_frac if neg_weight is None else neg_weight.mean(dim=-1, keepdim=True)
+    )
+    weight = alpha * neg_frac / pos_frac.clamp(min=1e-6)
 
     return weight.clamp(*AUTO_POS_WEIGHT_RANGE)
