@@ -29,10 +29,12 @@ import torch.nn.functional as F
 from omegaconf import OmegaConf
 
 from musicality.loaders.beat_dataset import gaussian_smear
+from musicality.losses.beat_only import beat_only_loss
 from musicality.losses.beat_position import beat_position_loss
 from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA, beat_pos_weight
 from musicality.losses.shift_tolerance import (
     TOLERANCE_FRAMES,
+    resolve_tolerance,
     shift_tolerant_bce,
     sliding_windowed_max,
 )
@@ -395,8 +397,18 @@ class TestPositionWidening:
 
         return logits
 
-    def _position_term(self, logits, target, **kwargs) -> torch.Tensor:
-        return beat_position_loss(logits, target, 5.0, return_terms=True, **kwargs)[1]
+    def _position_term(self, logits, target, tolerance_frames: int = 0):
+        """The position half alone, under whichever objective the radius asks
+        for — ``loss`` and ``tolerance_frames`` are one decision seen twice."""
+
+        return beat_position_loss(
+            logits,
+            target,
+            5.0,
+            loss="shift_tolerant" if tolerance_frames else "bce",
+            tolerance_frames=tolerance_frames or TOLERANCE_FRAMES,
+            return_terms=True,
+        )[1]
 
     def test_the_window_is_supervised_against_the_beats_own_position(self):
         """The trap this exists to avoid, as a test.
@@ -495,29 +507,38 @@ class TestModuleWiring:
         }
     )
 
-    def test_beat_module_defaults_to_off(self):
-        module = BeatModule(model=self.MODEL_CFG)
+    @pytest.mark.parametrize("cls", [BeatModule, BeatPhaseModule])
+    def test_defaults_to_the_plain_objective(self, cls):
+        """`tolerance_frames` sits at its intended value either way — `loss` is
+        what decides, which is the point of naming it."""
 
-        assert module.hparams.tolerance_frames == 0
-        assert module.hparams.ignore_frames is None
+        module = cls(model=self.MODEL_CFG)
 
-    def test_beat_phase_module_defaults_to_off(self):
-        module = BeatPhaseModule(model=self.MODEL_CFG)
-
-        assert module.hparams.tolerance_frames == 0
-        assert module.hparams.ignore_frames is None
+        assert module.hparams.loss == "bce"
+        assert module.hparams.tolerance_frames == TOLERANCE_FRAMES
 
     def test_beat_module_saves_them_to_hparams(self):
-        module = BeatModule(model=self.MODEL_CFG, tolerance_frames=R, ignore_frames=4)
+        module = BeatModule(
+            model=self.MODEL_CFG,
+            loss="shift_tolerant",
+            tolerance_frames=R,
+            ignore_frames=4,
+        )
 
+        assert module.hparams.loss == "shift_tolerant"
         assert module.hparams.tolerance_frames == R
         assert module.hparams.ignore_frames == 4
 
     def test_beat_phase_module_saves_them_to_hparams(self):
         module = BeatPhaseModule(
-            model=self.MODEL_CFG, group_size=G, tolerance_frames=R, ignore_frames=4
+            model=self.MODEL_CFG,
+            group_size=G,
+            loss="shift_tolerant",
+            tolerance_frames=R,
+            ignore_frames=4,
         )
 
+        assert module.hparams.loss == "shift_tolerant"
         assert module.hparams.tolerance_frames == R
         assert module.hparams.ignore_frames == 4
 
@@ -531,12 +552,13 @@ class TestModuleWiring:
         old_hparams = {
             k: v
             for k, v in cls(model=self.MODEL_CFG).hparams.items()
-            if k not in ("tolerance_frames", "ignore_frames", "pos_weight_alpha")
+            if k
+            not in ("loss", "tolerance_frames", "ignore_frames", "pos_weight_alpha")
         }
 
         module = cls(**old_hparams)
 
-        assert module.hparams.tolerance_frames == 0
+        assert module.hparams.loss == "bce"
         assert module.hparams.ignore_frames is None
 
     def test_beat_module_passes_them_to_the_loss(self, monkeypatch):
@@ -549,10 +571,15 @@ class TestModuleWiring:
         monkeypatch.setattr("musicality.trainers.beat_module.beat_only_loss", _spy)
 
         module = BeatModule(
-            model=self.MODEL_CFG, tolerance_frames=R, ignore_frames=4, pos_weight="auto"
+            model=self.MODEL_CFG,
+            loss="shift_tolerant",
+            tolerance_frames=R,
+            ignore_frames=4,
+            pos_weight="auto",
         )
         module._step((torch.randn(B, 1, 4096), torch.zeros(B, 4, 9)), "train")
 
+        assert seen["loss"] == "shift_tolerant"
         assert seen["tolerance_frames"] == R
         assert seen["ignore_frames"] == 4
         assert seen["pos_weight_alpha"] == AUTO_POS_WEIGHT_ALPHA
@@ -569,11 +596,16 @@ class TestModuleWiring:
         )
 
         module = BeatPhaseModule(
-            model=self.MODEL_CFG, group_size=G, tolerance_frames=R, ignore_frames=4
+            model=self.MODEL_CFG,
+            group_size=G,
+            loss="shift_tolerant",
+            tolerance_frames=R,
+            ignore_frames=4,
         )
         target = torch.zeros(B, 2 + G, 9)
         module._position_step(torch.randn(B, 1 + G, 9), target, "train")
 
+        assert seen["loss"] == "shift_tolerant"
         assert seen["tolerance_frames"] == R
         assert seen["ignore_frames"] == 4
 
@@ -582,31 +614,29 @@ class TestSmearingGuard:
     """A config that both smears and forgives is a silent mistake, so it warns."""
 
     @staticmethod
-    def _cfg(sigma_frames: float, tolerance_frames: int) -> OmegaConf:
+    def _cfg(sigma_frames: float, loss: str) -> OmegaConf:
         return OmegaConf.create(
-            {"sigma_frames": sigma_frames, "tolerance_frames": tolerance_frames}
+            {"sigma_frames": sigma_frames, "loss": loss, "tolerance_frames": R}
         )
 
     def test_warns_when_both_are_set(self):
         with pytest.warns(UserWarning, match="meant to replace smearing"):
-            warn_if_tolerance_stacks_on_smearing(self._cfg(1.5, R))
+            warn_if_tolerance_stacks_on_smearing(self._cfg(1.5, "shift_tolerant"))
 
     def test_reports_the_combined_radius(self):
         """±4 from the smear plus ±3 from the window, against a ±3 metric."""
 
         with pytest.warns(UserWarning, match=r"±7 frames"):
-            warn_if_tolerance_stacks_on_smearing(self._cfg(1.5, R))
+            warn_if_tolerance_stacks_on_smearing(self._cfg(1.5, "shift_tolerant"))
 
     @pytest.mark.parametrize(
-        "sigma_frames, tolerance_frames",
-        [(1.5, 0), (0.0, R), (0.0, 0)],
+        "sigma_frames, loss",
+        [(1.5, "bce"), (0.0, "shift_tolerant"), (0.0, "bce")],
     )
-    def test_stays_quiet_otherwise(self, sigma_frames, tolerance_frames):
+    def test_stays_quiet_otherwise(self, sigma_frames, loss):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            warn_if_tolerance_stacks_on_smearing(
-                self._cfg(sigma_frames, tolerance_frames)
-            )
+            warn_if_tolerance_stacks_on_smearing(self._cfg(sigma_frames, loss))
 
     def test_a_config_without_the_key_is_fine(self):
         """Every checkpoint and config predating this change lacks it."""
@@ -616,3 +646,64 @@ class TestSmearingGuard:
             warn_if_tolerance_stacks_on_smearing(
                 OmegaConf.create({"sigma_frames": 1.5})
             )
+
+
+class TestLossSelection:
+    """`loss:` names the objective, so a config says which one it trains with
+    rather than encoding it as a radius that happens to be zero."""
+
+    @pytest.mark.parametrize("loss, expected", [("bce", 0), ("shift_tolerant", R)])
+    def test_resolves_to_the_radius_the_maths_needs(self, loss, expected):
+        assert resolve_tolerance(loss, R) == expected
+
+    def test_bce_ignores_the_configured_radius(self):
+        """Which is what lets a config keep `tolerance_frames: 3` on file while
+        running the plain objective — switching is one line, not three."""
+
+        assert resolve_tolerance("bce", 99) == 0
+
+    def test_rejects_an_unknown_mode(self):
+        with pytest.raises(ValueError, match="Unknown loss 'focal'"):
+            resolve_tolerance("focal", R)
+
+    def test_rejects_naming_shift_tolerance_then_disabling_it(self):
+        """A config that names an objective and sets its radius to zero is a
+        mistake, not a preference — silently running `bce` would hide it."""
+
+        with pytest.raises(ValueError, match="needs tolerance_frames > 0"):
+            resolve_tolerance("shift_tolerant", 0)
+
+    @pytest.mark.parametrize(
+        "loss_fn, args",
+        [
+            (beat_only_loss, (_logits(CENTRE), _sharp_target())),
+            (beat_position_loss, (torch.zeros(B, 1 + G, T), torch.zeros(B, 2 + G, T))),
+        ],
+    )
+    def test_both_losses_validate_the_mode(self, loss_fn, args):
+        with pytest.raises(ValueError, match="Unknown loss"):
+            loss_fn(*args, loss="tolerant")
+
+    def test_beat_only_bce_matches_the_plain_objective(self):
+        """The default path stays bit-identical whatever `tolerance_frames` says."""
+
+        torch.manual_seed(0)
+        beat_y = _beat_channel(125.0, sigma=1.5).expand(B, -1)
+        logits = torch.randn(B, beat_y.shape[-1])
+
+        assert torch.equal(
+            beat_only_loss(logits, beat_y, 6.0, tolerance_frames=99),
+            F.binary_cross_entropy_with_logits(
+                logits, beat_y, pos_weight=beat_pos_weight(beat_y, 6.0)
+            ),
+        )
+
+    def test_shift_tolerant_actually_changes_the_beat_loss(self):
+        """Guards against a mode that parses and then does nothing."""
+
+        beat_y = _sharp_target()
+        logits = _logits(CENTRE + R)  # inside the window, so only tolerance saves it
+
+        assert beat_only_loss(
+            logits, beat_y, 6.0, loss="shift_tolerant", tolerance_frames=R
+        ) < beat_only_loss(logits, beat_y, 6.0)

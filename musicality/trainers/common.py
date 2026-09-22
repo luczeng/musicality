@@ -17,6 +17,7 @@ import musicality.dataformats as dataformats
 from musicality.augmentations import AugmentedBeatDataset, build_beat_phase_augmenter
 from musicality.dataformats.track_io import TrackRef
 from musicality.loaders.beat_dataset import BeatDataset
+from musicality.losses.shift_tolerance import TOLERANCE_FRAMES
 from musicality.splits.splitter import Splitter, split_name
 
 
@@ -132,7 +133,7 @@ def resolve_beat_split_refs(
 
 
 def warn_if_tolerance_stacks_on_smearing(cfg: DictConfig) -> None:
-    """Warn when a config both smears the target and forgives the prediction.
+    """Warn when a config asks for ``loss: shift_tolerant`` and still smears.
 
     They are two answers to the same problem — imprecise annotations — and they
     stack rather than compose. At 43.07 fps a ``sigma_frames`` of 1.5 smears
@@ -145,16 +146,16 @@ def warn_if_tolerance_stacks_on_smearing(cfg: DictConfig) -> None:
     best point sits.
     """
 
-    if cfg.sigma_frames <= 0 or cfg.get("tolerance_frames", 0) <= 0:
+    if cfg.sigma_frames <= 0 or cfg.get("loss", "bce") != "shift_tolerant":
         return
 
-    combined = round(3 * cfg.sigma_frames) + cfg.tolerance_frames
+    tolerance_frames = cfg.get("tolerance_frames", TOLERANCE_FRAMES)
+    combined = round(3 * cfg.sigma_frames) + tolerance_frames
     warnings.warn(
-        f"sigma_frames={cfg.sigma_frames} and "
-        f"tolerance_frames={cfg.tolerance_frames} are both set: the target is "
-        f"smeared AND the prediction is forgiven, giving ±{combined} frames of "
-        "combined tolerance against a ±3-frame metric. Shift tolerance is "
-        "meant to replace smearing — set sigma_frames=0.",
+        f"loss='shift_tolerant' with sigma_frames={cfg.sigma_frames}: the "
+        "target is smeared AND the prediction is forgiven, giving "
+        f"±{combined} frames of combined tolerance against a ±3-frame metric. "
+        "Shift tolerance is meant to replace smearing — set sigma_frames=0.",
         stacklevel=2,
     )
 

@@ -198,13 +198,30 @@ Loss
        ``ModelCheckpoint`` monitors and splices into checkpoint filenames. Runs
        from before and after the switch are not loss-comparable.
 
-``tolerance_frames`` — ``0``
-    Half-width, in frames, of the timing error the loss forgives. ``0`` is off,
-    and the loss is then bit-identical to the one every existing checkpoint was
-    trained with. ``3`` is ±69.7 ms at 43.07 fps — the same tolerance
-    ``mir_eval`` scores at, so the loss forgives exactly what the metric
-    forgives. From Beat This! (ISMIR 2024) §3.3; see
-    :mod:`musicality.losses.shift_tolerance`.
+``loss`` — ``bce``
+    Which objective the ``beat`` term compares against the target.
+
+    ``bce``
+        The plain weighted cross-entropy — what every existing checkpoint was
+        trained with, bit for bit. ``tolerance_frames`` and ``ignore_frames``
+        are not read.
+    ``shift_tolerant``
+        The max-pooled variant from Beat This! (ISMIR 2024) §3.3, which stops
+        punishing a peak that is a frame or two off the annotation. See
+        :mod:`musicality.losses.shift_tolerance`.
+
+    Saved to the checkpoint's hyperparameters, so a checkpoint records which
+    objective trained it. Naming ``shift_tolerant`` with ``tolerance_frames:
+    0`` is refused rather than silently falling back — a config that names an
+    objective and then disables it is a mistake, not a preference.
+
+``tolerance_frames`` — ``3``
+    Half-width, in frames, of the timing error the loss forgives. Read by
+    ``loss: shift_tolerant`` only, which is why it can sit in the config at its
+    intended value while ``loss: bce`` is selected — switching objectives is
+    then a one-line change rather than three. ``3`` is ±69.7 ms at 43.07 fps,
+    the same tolerance ``mir_eval`` scores at, so the loss forgives exactly
+    what the metric forgives.
 
     It means two different things to the two heads, because the decoder reads
     them two different ways. The ``beat`` head is *scanned* over time by
@@ -224,7 +241,7 @@ Loss
        the pair forgives ±162 ms against a ±70 ms metric. Beat This! rejects
        smearing outright, on the grounds that it mitigates slow convergence
        without fixing the blurred peaks it causes. Set ``sigma_frames: 0``
-       alongside a non-zero ``tolerance_frames``;
+       alongside ``loss: shift_tolerant``;
        :func:`~musicality.trainers.common.build_beat_dataloaders` warns if you
        do not. The two are left independent so the pair can be swept.
 
@@ -253,11 +270,12 @@ Loss
          - 13.9
          - 5.0
 
-``ignore_frames`` — ``null``
+``ignore_frames`` — ``4``
     Half-width of the band around each beat where the ``beat`` term's negative
     half is switched off. ``null`` derives it as ``2 * tolerance_frames``,
-    which is Beat This!'s rule. Read only when ``tolerance_frames > 0``, and it
-    does not touch the position term, which has no negative class.
+    which is Beat This!'s rule; the config ships ``4`` instead, for the reason
+    below. Read by ``loss: shift_tolerant`` only, and it does not touch the
+    position term, which has no negative class.
 
     The band exists because the two halves of the loss otherwise contradict
     each other: the positive half accepts a peak ``r`` frames off the
@@ -488,9 +506,9 @@ term. Keys behave as above except:
     this task's ``pos_weight`` is a plain scalar today but ``auto`` works here
     too, and the beat-only head has the same tempo-dependent imbalance.
 
-``tolerance_frames`` — ``0`` / ``ignore_frames`` — ``null``
+``loss`` — ``bce`` / ``tolerance_frames`` — ``3`` / ``ignore_frames`` — ``4``
     As above, minus the position half — there is no position head here, so
-    ``tolerance_frames`` only ever forgives the beat peak. The coupling to
+    ``shift_tolerant`` only ever forgives the beat peak. The coupling to
     ``sigma_frames`` and the ``ignore_frames`` warning apply unchanged.
 
 ``balanced``
