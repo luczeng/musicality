@@ -198,6 +198,104 @@ Loss
        ``ModelCheckpoint`` monitors and splices into checkpoint filenames. Runs
        from before and after the switch are not loss-comparable.
 
+``tolerance_frames`` — ``0``
+    Half-width, in frames, of the timing error the loss forgives. ``0`` is off,
+    and the loss is then bit-identical to the one every existing checkpoint was
+    trained with. ``3`` is ±69.7 ms at 43.07 fps — the same tolerance
+    ``mir_eval`` scores at, so the loss forgives exactly what the metric
+    forgives. From Beat This! (ISMIR 2024) §3.3; see
+    :mod:`musicality.losses.shift_tolerance`.
+
+    It means two different things to the two heads, because the decoder reads
+    them two different ways. The ``beat`` head is *scanned* over time by
+    :func:`~musicality.postprocess.pick_peaks`, so where its peak sits is the
+    answer — tolerance forgives a peak a frame or two off, and in exchange the
+    model is free to make that peak sharp instead of hedging with a wide bump.
+    The ``position`` head is never scanned: the decoder rounds a beat time to a
+    frame and reads that one column. Its answer is a label, not a time, so
+    there is no peak to forgive; instead its supervision is *widened* across
+    the window the lookup might land in — gate and target together.
+
+    .. warning::
+
+       Coupled to ``sigma_frames``. Smearing the target and forgiving the
+       prediction are two answers to the same problem, and they stack rather
+       than compose: ``sigma_frames: 1.5`` already smears over ±4 frames, so
+       the pair forgives ±162 ms against a ±70 ms metric. Beat This! rejects
+       smearing outright, on the grounds that it mitigates slow convergence
+       without fixing the blurred peaks it causes. Set ``sigma_frames: 0``
+       alongside a non-zero ``tolerance_frames``;
+       :func:`~musicality.trainers.common.build_beat_dataloaders` warns if you
+       do not. The two are left independent so the pair can be swept.
+
+    Sharp targets also move ``pos_weight``. Dropping the Gaussian cuts the
+    positive mass ~3.75x, so the derived ``auto`` ratio climbs — which is why
+    ``AUTO_POS_WEIGHT_RANGE``'s ceiling is 60 rather than 20:
+
+    .. list-table::
+       :header-rows: 1
+       :widths: 30 18 18 18
+
+       * - corpus
+         - smeared
+         - sharp
+         - sharp, ``ignore_frames: 4``
+       * - rwc_classical (10th pct, 56 BPM)
+         - 12.5
+         - 49.9
+         - 41.0
+       * - ballroom (median, 125 BPM)
+         - 5.1
+         - 22.1
+         - 13.2
+       * - jtd (median, 193 BPM)
+         - 2.9
+         - 13.9
+         - 5.0
+
+``ignore_frames`` — ``null``
+    Half-width of the band around each beat where the ``beat`` term's negative
+    half is switched off. ``null`` derives it as ``2 * tolerance_frames``,
+    which is Beat This!'s rule. Read only when ``tolerance_frames > 0``, and it
+    does not touch the position term, which has no negative class.
+
+    The band exists because the two halves of the loss otherwise contradict
+    each other: the positive half accepts a peak ``r`` frames off the
+    annotation while the negative half is simultaneously calling that same
+    frame a mistake. A peak at ``+r``, pooled over ``±r``, reaches ``+2r``,
+    hence the default.
+
+    .. warning::
+
+       That default is too wide at our frame rate. It ignores ``4r + 1`` frames
+       per beat, and jtd's 193 BPM leaves only 13.4 frames *between* beats — so
+       ``r = 3`` retains almost no negatives, on 63.8% of ``merge``'s tracks.
+       The negative term all but vanishes and a model that fires everywhere
+       scores well. Frames surviving the band:
+
+       .. list-table::
+          :header-rows: 1
+          :widths: 40 30 30
+
+          * - corpus
+            - ``ignore_frames: 6``
+            - ``ignore_frames: 4``
+          * - rwc_classical (10th pct)
+            - 71.7%
+            - 80.4%
+          * - ballroom (median)
+            - 37.7%
+            - 56.9%
+          * - jtd (median)
+            - 3.8%
+            - 33.4%
+
+       Beat This! does not hit this: 50 fps gives more frames per beat at the
+       same tempo, and their corpora skew slower. The pairing to start from
+       here is ``tolerance_frames: 3`` (to keep ±70 ms) with ``ignore_frames:
+       4``, which accepts a mild contradiction at the edge of the window — and
+       that biases peaks towards its centre, which is no bad thing.
+
 ``balanced`` — ``true``
     Balances the logged ``acc_one``/``acc_last`` metrics (the average of the
     true-positive and true-negative rates) instead of a pooled mean, which
@@ -384,6 +482,16 @@ term. Keys behave as above except:
     A plain scalar here — there is only one head. ~6:1 negative:positive on
     ballroom, measured directly from ``BeatDataset``; see
     ``docs/beat_phase_pos_weight_notes.md``.
+
+``pos_weight_alpha`` — ``1.11``
+    As above, and read only when ``pos_weight`` is ``auto``. Present because
+    this task's ``pos_weight`` is a plain scalar today but ``auto`` works here
+    too, and the beat-only head has the same tempo-dependent imbalance.
+
+``tolerance_frames`` — ``0`` / ``ignore_frames`` — ``null``
+    As above, minus the position half — there is no position head here, so
+    ``tolerance_frames`` only ever forgives the beat peak. The coupling to
+    ``sigma_frames`` and the ``ignore_frames`` warning apply unchanged.
 
 ``balanced``
     Unused, for the reason given above. Kept because it is stored in every

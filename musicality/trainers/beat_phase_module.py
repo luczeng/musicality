@@ -72,6 +72,17 @@ class BeatPhaseModule(L.LightningModule):
         :func:`musicality.postprocess.label_bar_position` actually reads them.
         Must be retuned together with ``pos_weight``: the class imbalance the
         latter compensates for largely disappears under ``"beat"``.
+    :param tolerance_frames: Half-width, in frames, of the timing error both
+        heads are forgiven — ``0`` disables it, which is the pre-existing
+        behaviour. It means two different things to the two heads (the beat
+        term is forgiven a shifted peak, the position term is supervised across
+        a wider window); see
+        :func:`~musicality.losses.beat_position.beat_position_loss`. Pair a
+        non-zero value with ``sigma_frames: 0`` in the config. ``group_size``
+        only — the legacy one/last path ignores it.
+    :param ignore_frames: Half-width of the band around each beat where the
+        beat term's negative half is switched off. ``None`` derives it as
+        ``2 * tolerance_frames``. ``group_size`` only.
     :param lr: Learning rate.
     :param weight_decay: L2 regularisation.
     :param threshold: Sigmoid/target threshold used only for the logged metrics,
@@ -110,6 +121,8 @@ class BeatPhaseModule(L.LightningModule):
         group_size: int | None = None,
         pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
         position_norm: str = "global",
+        tolerance_frames: int = 0,
+        ignore_frames: int | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
         threshold: float = 0.5,
@@ -162,6 +175,8 @@ class BeatPhaseModule(L.LightningModule):
             phase_conditioning=self.hparams.phase_conditioning,
             pos_weight_alpha=self.hparams.pos_weight_alpha,
             position_norm=self.hparams.position_norm,
+            tolerance_frames=self.hparams.tolerance_frames,
+            ignore_frames=self.hparams.ignore_frames,
             return_terms=True,
         )
         loss = beat_term + position_term

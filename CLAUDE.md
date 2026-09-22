@@ -85,8 +85,9 @@ One module per objective, named after the task it trains.
 - `beat_position.py` — `beat_position_loss`: beat BCE plus a softmax over all `G` bar positions, which do compete. **The loss the project trains with** (`configs/beat_train.yaml`).
 - `phase_conditioning.py` — `phase_weight`: which frames the bar-position term is supervised on. `"beat"` restricts it to the frames the decoder actually reads; `"mask"` spends ~96% of the gradient re-learning beat detection.
 - `pos_weight.py` — `beat_pos_weight`: positive-class weight for a beat BCE term, either passed through or derived per sample (`"auto"`), since the right value is a function of tempo and a fixed one is correct at only one tempo.
+- `shift_tolerance.py` — `shift_tolerant_bce`, `sliding_windowed_max`: forgive the beat head a few frames of timing error, by comparing the max-pooled prediction to the label (Beat This!, ISMIR 2024). Off by default (`tolerance_frames: 0`); it *replaces* target smearing rather than adding to it, so pair a non-zero value with `sigma_frames: 0`.
 
-The last two are shared knobs, not losses, and they are coupled: conditioning on beats removes most of the imbalance `pos_weight` exists to correct. `docs/source/losses.rst` is the rendered index.
+The last three are shared knobs, not losses, and they are coupled in a chain: conditioning on beats removes most of the imbalance `pos_weight` exists to correct, and shift tolerance changes both the gate `phase_conditioning` builds and the imbalance `pos_weight` measures. `docs/source/losses.rst` is the rendered index.
 
 ### Metrics (`musicality/metrics/`)
 

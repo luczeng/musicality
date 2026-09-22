@@ -9,6 +9,7 @@ logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARN
 from omegaconf import DictConfig
 
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
+from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
 from musicality.trainers.beat_module import BeatModule
 from musicality.trainers.common import (
     build_beat_dataloaders,
@@ -55,6 +56,9 @@ def build_module(cfg: DictConfig) -> BeatModule:
     return BeatModule(
         model=cfg.model,
         pos_weight=cfg.pos_weight,
+        pos_weight_alpha=cfg.get("pos_weight_alpha", AUTO_POS_WEIGHT_ALPHA),
+        tolerance_frames=cfg.get("tolerance_frames", 0),
+        ignore_frames=cfg.get("ignore_frames", None),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
         balanced=cfg.balanced,
