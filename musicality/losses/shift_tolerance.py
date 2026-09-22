@@ -32,9 +32,47 @@ from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA, beat_pos_weight
 
 # ±3 frames is ±69.7 ms at our 43.07 fps (22050/512) — the mir_eval tolerance
 # `musicality.metrics.f_measure.beat_f_measure` scores at, so the loss forgives
-# exactly what the metric forgives. Not a default anywhere: the losses default
-# to 0 (off) and a config carries the value.
+# exactly what the metric forgives.
 TOLERANCE_FRAMES = 3
+
+# How the beat term compares a prediction to the target. Selected by ``loss:``
+# in configs/beat_train.yaml and configs/beat_only_train.yaml, the same way
+# configs/train.yaml selects between the tempo objectives.
+BEAT_LOSSES = ("bce", "shift_tolerant")
+
+
+def resolve_tolerance(loss: str, tolerance_frames: int) -> int:
+    """Validate a configured beat loss and return the window radius it implies.
+
+    The named mode is what a config and a checkpoint carry; the radius is what
+    the maths needs. Keeping the translation here means the two beat losses
+    share one definition of what ``loss:`` may say, and neither has to encode
+    "classical" as a magic zero.
+
+    :param loss: ``"bce"`` for the plain weighted cross-entropy every existing
+        checkpoint was trained with, or ``"shift_tolerant"`` for the
+        max-pooled variant in :func:`shift_tolerant_bce`.
+    :param tolerance_frames: The configured radius. Read only under
+        ``"shift_tolerant"``.
+    :returns: ``0`` under ``"bce"``, otherwise ``tolerance_frames``.
+    :raises ValueError: If ``loss`` is not a known mode, or if it asks for
+        shift tolerance with a radius of zero — a config that names the
+        objective and then disables it is a mistake, not a preference.
+    """
+
+    if loss not in BEAT_LOSSES:
+        raise ValueError(f"Unknown loss {loss!r} — expected 'bce' or 'shift_tolerant'")
+
+    if loss == "bce":
+        return 0
+
+    if tolerance_frames <= 0:
+        raise ValueError(
+            f"loss='shift_tolerant' needs tolerance_frames > 0, got "
+            f"{tolerance_frames} — use loss='bce' for the plain objective"
+        )
+
+    return tolerance_frames
 
 
 def sliding_windowed_max(x: torch.Tensor, radius: int) -> torch.Tensor:

@@ -10,7 +10,12 @@ import torch.nn.functional as F
 
 from musicality.losses.phase_conditioning import phase_weight
 from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
-from musicality.losses.shift_tolerance import shift_tolerant_bce, sliding_windowed_max
+from musicality.losses.shift_tolerance import (
+    TOLERANCE_FRAMES,
+    resolve_tolerance,
+    shift_tolerant_bce,
+    sliding_windowed_max,
+)
 
 POSITION_NORMS = ("global", "per_item")
 
@@ -22,7 +27,8 @@ def beat_position_loss(
     phase_conditioning: str = "beat",
     pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
     position_norm: str = "global",
-    tolerance_frames: int = 0,
+    loss: str = "bce",
+    tolerance_frames: int = TOLERANCE_FRAMES,
     ignore_frames: int | None = None,
     return_terms: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
@@ -90,10 +96,17 @@ def beat_position_loss(
           tracks — the same shape as the per-genre metric this is graded by.
 
         See plans/04_beat_phase_generalization_and_data_prep.md §2.6a.
+    :param loss: Which objective the ``beat`` term uses — ``"bce"`` (the
+        default, the pre-existing loss bit for bit) or ``"shift_tolerant"``.
+        It also switches the ``position`` term's widening on, since the two
+        are the same decision seen from either head; see ``tolerance_frames``.
+        ``"shift_tolerant"`` wants ``sigma_frames: 0`` alongside it.
     :param tolerance_frames: Half-width, in frames, of the timing error both
-        heads are forgiven. ``0`` (the default) is the pre-existing loss, bit
-        for bit. A non-zero value means two different things to the two terms,
-        because the decoder reads them two different ways:
+        heads are forgiven. Read only under ``loss="shift_tolerant"``; the
+        default is
+        :data:`~musicality.losses.shift_tolerance.TOLERANCE_FRAMES`. It means
+        two different things to the two terms, because the decoder reads them
+        two different ways:
 
         - The ``beat`` term becomes
           :func:`~musicality.losses.shift_tolerance.shift_tolerant_bce`. That
@@ -108,13 +121,12 @@ def beat_position_loss(
           the whole window the lookup might land in, which shift tolerance on
           the beat head has just made ``r`` frames wide.
 
-        Pair a non-zero value with ``sigma_frames: 0`` — see
-        :mod:`musicality.losses.shift_tolerance` on why smearing and tolerance
-        do not compose.
+        See :mod:`musicality.losses.shift_tolerance` on why smearing and
+        tolerance do not compose.
     :param ignore_frames: Half-width of the band around each beat where the
         ``beat`` term's negative half is switched off. ``None`` derives it as
-        ``2 * tolerance_frames``. Read only when ``tolerance_frames > 0``, and
-        it does not touch the position term, which has no negative class.
+        ``2 * tolerance_frames``. Read only under ``loss="shift_tolerant"``,
+        and it does not touch the position term, which has no negative class.
     :param return_terms: Return the two terms separately instead of their sum,
         as ``(beat_term, position_term)``. The sum is what optimisation needs;
         the split is what tells a rising loss apart from a rising *error* —
@@ -130,6 +142,8 @@ def beat_position_loss(
         raise ValueError(
             f"Unknown position_norm {position_norm!r} — expected 'global' or 'per_item'"
         )
+
+    tolerance_frames = resolve_tolerance(loss, tolerance_frames)
 
     beat_logits, position_logits = logits[:, 0], logits[:, 1:]
     beat_y, position_y, mask = target[:, 0], target[:, 1:-1], target[:, -1]
@@ -148,7 +162,7 @@ def beat_position_loss(
         beat_y,
         pos_weight=pos_weight,
         pos_weight_alpha=pos_weight_alpha,
-        tolerance_frames=tolerance_frames,
+        tolerance_frames=tolerance_frames,  # already resolved from `loss`
         ignore_frames=ignore_frames,
     )
 

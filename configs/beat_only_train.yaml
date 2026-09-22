@@ -13,10 +13,12 @@ sigma_frames: 1.5
 # --- Loss ---------------------------------------------------------------
 pos_weight: 6.0  # ~6:1 negative:positive on ballroom
 pos_weight_alpha: 1.11  # read only when pos_weight is `auto`
-# tolerance_frames is coupled to sigma_frames above: it replaces the smear
-# rather than adding to it, so a non-zero value wants sigma_frames: 0.
-tolerance_frames: 0  # 0 = off; 3 = ±70 ms, the metric's own tolerance
-ignore_frames: null  # null = 2 * tolerance_frames; 4 is the value measured here
+# `shift_tolerant` replaces the sigma_frames smear above rather than adding to
+# it, so switching it on wants sigma_frames: 0 as well. The two below are read
+# by `loss: shift_tolerant` only.
+loss: bce  # bce | shift_tolerant
+tolerance_frames: 3  # ±70 ms at 43.07 fps, the metric's own tolerance
+ignore_frames: 4  # null = 2 * tolerance_frames; 4 is measured for our corpora
 balanced: true  # unused by this task; kept because it is stored in every checkpoint
 # --- Optimisation -------------------------------------------------------
 lr: 5e-4

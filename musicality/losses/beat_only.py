@@ -10,7 +10,11 @@ shares that loss's positive-class weighting and shift tolerance.
 import torch
 
 from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
-from musicality.losses.shift_tolerance import shift_tolerant_bce
+from musicality.losses.shift_tolerance import (
+    TOLERANCE_FRAMES,
+    resolve_tolerance,
+    shift_tolerant_bce,
+)
 
 
 def beat_only_loss(
@@ -18,7 +22,8 @@ def beat_only_loss(
     beat_y: torch.Tensor,
     pos_weight: torch.Tensor | float | str = 6.0,
     pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
-    tolerance_frames: int = 0,
+    loss: str = "bce",
+    tolerance_frames: int = TOLERANCE_FRAMES,
     ignore_frames: int | None = None,
 ) -> torch.Tensor:
     r"""Frame-wise weighted BCE against the beat target.
@@ -40,14 +45,27 @@ def beat_only_loss(
         :func:`~musicality.losses.pos_weight.beat_pos_weight`.
     :param pos_weight_alpha: Scale on the derived ``pos_weight``. Read only
         when ``pos_weight == "auto"``.
+    :param loss: Which objective to compare against the target.
+
+        ``"bce"`` (the default)
+            The plain weighted cross-entropy above — what every existing
+            checkpoint was trained with, bit for bit.
+        ``"shift_tolerant"``
+            The max-pooled variant from Beat This! (ISMIR 2024), which stops
+            punishing a peak that is a frame or two off the annotation. See
+            :mod:`musicality.losses.shift_tolerance`, and pair it with
+            ``sigma_frames: 0`` — it replaces target smearing rather than
+            adding to it.
     :param tolerance_frames: Half-width, in frames, of the window the model's
-        peak may sit anywhere in without penalty. ``0`` (the default) is a
-        plain BCE, bit for bit. See :mod:`musicality.losses.shift_tolerance`,
-        and pair a non-zero value with ``sigma_frames: 0``.
+        peak may sit anywhere in without penalty. Read only under
+        ``loss="shift_tolerant"``; the default is
+        :data:`~musicality.losses.shift_tolerance.TOLERANCE_FRAMES`.
     :param ignore_frames: Half-width of the band around each beat where the
         negative term is switched off. ``None`` derives it as
-        ``2 * tolerance_frames``. Read only when ``tolerance_frames > 0``.
+        ``2 * tolerance_frames``. Read only under ``loss="shift_tolerant"``.
     :returns: Scalar mean loss, shape ``()``.
+    :raises ValueError: If ``loss`` is not a known mode, or names shift
+        tolerance with a zero radius.
     """
 
     return shift_tolerant_bce(
@@ -55,6 +73,6 @@ def beat_only_loss(
         beat_y,
         pos_weight=pos_weight,
         pos_weight_alpha=pos_weight_alpha,
-        tolerance_frames=tolerance_frames,
+        tolerance_frames=resolve_tolerance(loss, tolerance_frames),
         ignore_frames=ignore_frames,
     )

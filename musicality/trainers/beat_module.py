@@ -7,6 +7,7 @@ from hydra.utils import instantiate
 
 from musicality.losses.beat_only import beat_only_loss
 from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
+from musicality.losses.shift_tolerance import TOLERANCE_FRAMES
 from musicality.metrics.frame_accuracy import peak_f_measure
 from musicality.trainers.beat_phase_module import align_time
 
@@ -33,10 +34,14 @@ class BeatModule(L.LightningModule):
         beat frames being a small fraction of all frames.
     :param pos_weight_alpha: Scale on a derived ``pos_weight``. Read only when
         ``pos_weight == "auto"``.
+    :param loss: ``"bce"`` (the default, the pre-existing objective bit for
+        bit) or ``"shift_tolerant"``. Saved to the checkpoint's
+        hyperparameters, so a checkpoint records which objective trained it
+        rather than leaving it to be inferred from a radius.
     :param tolerance_frames: Half-width, in frames, of the timing error the
-        beat head is forgiven — ``0`` disables it, which is the pre-existing
-        behaviour. See :mod:`musicality.losses.shift_tolerance`, and pair a
-        non-zero value with ``sigma_frames: 0`` in the config.
+        beat head is forgiven. Read only under ``loss="shift_tolerant"``,
+        which also wants ``sigma_frames: 0`` in the config. See
+        :mod:`musicality.losses.shift_tolerance`.
     :param ignore_frames: Half-width of the band around each beat where the
         negative term is switched off. ``None`` derives it as
         ``2 * tolerance_frames``.
@@ -71,7 +76,8 @@ class BeatModule(L.LightningModule):
         model: DictConfig,
         pos_weight: float | str = 6.0,
         pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
-        tolerance_frames: int = 0,
+        loss: str = "bce",
+        tolerance_frames: int = TOLERANCE_FRAMES,
         ignore_frames: int | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
@@ -105,6 +111,7 @@ class BeatModule(L.LightningModule):
             beat_y,
             pos_weight=self.hparams.pos_weight,
             pos_weight_alpha=self.hparams.pos_weight_alpha,
+            loss=self.hparams.loss,
             tolerance_frames=self.hparams.tolerance_frames,
             ignore_frames=self.hparams.ignore_frames,
         )

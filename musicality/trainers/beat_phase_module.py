@@ -10,6 +10,7 @@ from hydra.utils import instantiate
 from musicality.losses.beat_phase import beat_phase_loss
 from musicality.losses.beat_position import beat_position_loss
 from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
+from musicality.losses.shift_tolerance import TOLERANCE_FRAMES
 from musicality.metrics.frame_accuracy import frame_accuracy, peak_f_measure
 
 
@@ -72,14 +73,18 @@ class BeatPhaseModule(L.LightningModule):
         :func:`musicality.postprocess.label_bar_position` actually reads them.
         Must be retuned together with ``pos_weight``: the class imbalance the
         latter compensates for largely disappears under ``"beat"``.
-    :param tolerance_frames: Half-width, in frames, of the timing error both
-        heads are forgiven — ``0`` disables it, which is the pre-existing
-        behaviour. It means two different things to the two heads (the beat
-        term is forgiven a shifted peak, the position term is supervised across
-        a wider window); see
-        :func:`~musicality.losses.beat_position.beat_position_loss`. Pair a
-        non-zero value with ``sigma_frames: 0`` in the config. ``group_size``
+    :param loss: ``"bce"`` (the default, the pre-existing objective bit for
+        bit) or ``"shift_tolerant"``. Saved to the checkpoint's
+        hyperparameters, so a checkpoint records which objective trained it
+        rather than leaving it to be inferred from a radius. ``group_size``
         only — the legacy one/last path ignores it.
+    :param tolerance_frames: Half-width, in frames, of the timing error both
+        heads are forgiven. Read only under ``loss="shift_tolerant"``, which
+        also wants ``sigma_frames: 0`` in the config. It means two different
+        things to the two heads — the beat term is forgiven a shifted peak,
+        the position term is supervised across a wider window; see
+        :func:`~musicality.losses.beat_position.beat_position_loss`.
+        ``group_size`` only.
     :param ignore_frames: Half-width of the band around each beat where the
         beat term's negative half is switched off. ``None`` derives it as
         ``2 * tolerance_frames``. ``group_size`` only.
@@ -121,7 +126,8 @@ class BeatPhaseModule(L.LightningModule):
         group_size: int | None = None,
         pos_weight_alpha: float = AUTO_POS_WEIGHT_ALPHA,
         position_norm: str = "global",
-        tolerance_frames: int = 0,
+        loss: str = "bce",
+        tolerance_frames: int = TOLERANCE_FRAMES,
         ignore_frames: int | None = None,
         lr: float = 1e-3,
         weight_decay: float = 1e-4,
@@ -175,6 +181,7 @@ class BeatPhaseModule(L.LightningModule):
             phase_conditioning=self.hparams.phase_conditioning,
             pos_weight_alpha=self.hparams.pos_weight_alpha,
             position_norm=self.hparams.position_norm,
+            loss=self.hparams.loss,
             tolerance_frames=self.hparams.tolerance_frames,
             ignore_frames=self.hparams.ignore_frames,
             return_terms=True,

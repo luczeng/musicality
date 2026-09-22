@@ -16,6 +16,7 @@ from musicality.callbacks.event_metrics import (
 from musicality.callbacks.metrics_logger import BestMetricsPrinter
 from musicality.callbacks.training_report import TrainingReportLogger
 from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA
+from musicality.losses.shift_tolerance import TOLERANCE_FRAMES
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.common import (
     build_beat_dataloaders,
@@ -99,7 +100,8 @@ def build_module(cfg: DictConfig) -> BeatPhaseModule:
         ),
         pos_weight_alpha=cfg.get("pos_weight_alpha", AUTO_POS_WEIGHT_ALPHA),
         position_norm=cfg.get("position_norm", "global"),
-        tolerance_frames=cfg.get("tolerance_frames", 0),
+        loss=cfg.get("loss", "bce"),
+        tolerance_frames=cfg.get("tolerance_frames", TOLERANCE_FRAMES),
         ignore_frames=cfg.get("ignore_frames", None),
         lr=cfg.lr,
         weight_decay=cfg.weight_decay,
