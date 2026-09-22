@@ -130,7 +130,8 @@ class _StubLogger(EventMetricsLogger):
     instead of a model pass over real audio."""
 
     def __init__(self, rows: list[dict], **kwargs):
-        super().__init__([], **kwargs)
+        # No knobs: `score` is stubbed out below, so nothing ever decodes.
+        super().__init__([], {}, **kwargs)
         self._rows = rows
         self._dataset = list(range(len(rows)))  # only len() is ever taken
 
@@ -232,10 +233,26 @@ class TestStratifiedSample:
         assert {r.dataset_name for r in selected} == {"ballroom"}
 
 
+# The decode the callback hands to BeatEvaluator. Written out here rather than
+# read from the shipped config so these pin the callback's behaviour, not the
+# project's current tuning.
+POSTPROCESS = {
+    "beat_phase": {
+        "beat_threshold": 0.5,
+        "min_distance_frames": 4,
+        "gate_tolerance": 0.1,
+        "group_size": 4,
+        "decoder": "global",
+        "switch_penalty": 2.0,
+        "anchor_threshold": 0.8,
+    }
+}
+
+
 class TestShouldRun:
     @staticmethod
     def _logger(**kwargs):
-        return EventMetricsLogger([], **kwargs)
+        return EventMetricsLogger([], POSTPROCESS, **kwargs)
 
     def test_fires_on_multiples_of_every_n_epochs(self):
         logger = self._logger(every_n_epochs=5)
@@ -374,7 +391,12 @@ class TestScore:
     @staticmethod
     def _logger(corpora):
         logger = EventMetricsLogger(
-            [], every_n_epochs=1, sample_rate=int(FPS), hop_length=1, group_size=G
+            [],
+            POSTPROCESS,
+            every_n_epochs=1,
+            sample_rate=int(FPS),
+            hop_length=1,
+            group_size=G,
         )
         logger._dataset = _fake_dataset(corpora)
 
@@ -442,7 +464,7 @@ class TestScore:
 
 
 class TestBuildEventMetricsCallback:
-    """The config surface in configs/beat_train.yaml."""
+    """The config surface in configs/train_phase_beat.yaml."""
 
     @staticmethod
     def _cfg(event_metrics=None, **overrides):

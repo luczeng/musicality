@@ -28,13 +28,13 @@ Which config drives what
    * - File
      - Entry point
      - Selects
-   * - ``beat_train.yaml``
+   * - ``train_phase_beat.yaml``
      - ``tools/train_beat.py``, ``tools/sweep_lr.py``
      - ``model/tcn_frames.yaml``
-   * - ``beat_only_train.yaml``
+   * - ``train_beat_only.yaml``
      - ``tools/train_beat_only.py``
      - ``model/tcn_frames_beat.yaml``
-   * - ``train.yaml``
+   * - ``train_tempo.yaml``
      - ``tools/train_tempo.py``
      - ``model/tcn.yaml``
    * - ``eval_beat.yaml``
@@ -44,8 +44,8 @@ Which config drives what
      - ``tools/download_dataset.py``
      - —
 
-Beat-phase training (``configs/beat_train.yaml``)
--------------------------------------------------
+Beat-phase training (``configs/train_phase_beat.yaml``)
+-------------------------------------------------------
 
 Task and head
 ~~~~~~~~~~~~~
@@ -466,11 +466,28 @@ Logging and outputs
 
     .. note::
 
-       Postprocessing is **not** configured here. It comes from
-       ``configs/eval_beat.yaml``, resolved by the detected task, which is what
-       keeps the training-time and eval-time decoders from drifting apart. See
+       Postprocessing is **not** configured here — it comes from ``eval``
+       below, resolved by the detected task, which is what keeps the
+       training-time and eval-time decoders from drifting apart. See
        :mod:`musicality.callbacks.event_metrics` for why these numbers differ
        from the frame metrics beside them.
+
+``eval.*``
+    Composed, not written: the ``defaults:`` list pulls in
+    ``configs/eval_beat.yaml`` under this key, so the decode
+    ``event_metrics`` scores a run with *is* the one ``tools/eval_beat.py``
+    re-scores it with afterwards. Only the ``eval.beat_only`` and
+    ``eval.beat_phase`` blocks are read, by
+    :func:`~musicality.trainers.train_beat_phase.postprocess_knobs`; the run
+    settings and sweep grid come along unused.
+
+    Restating the knobs here instead would give the same numbers two homes,
+    and a re-sweep would then silently only reach one of them. Override for
+    one run on the command line as usual — ``eval.beat_phase.decoder=greedy``.
+
+    A config that omits this composition leaves every knob unresolved, which
+    surfaces as a failed decode on the first scoring epoch rather than as
+    quietly different numbers.
 
 ``training_report.enabled`` — ``true``
     Writes one ``training_report.json`` per run beside that run's checkpoints
@@ -483,11 +500,11 @@ Logging and outputs
 ``wandb.*``
     ``project``, ``run_name`` (``null`` lets W&B generate one), ``tags``.
 
-.. literalinclude:: ../../configs/beat_train.yaml
+.. literalinclude:: ../../configs/train_phase_beat.yaml
    :language: yaml
-   :caption: configs/beat_train.yaml
+   :caption: configs/train_phase_beat.yaml
 
-Beat-only training (``configs/beat_only_train.yaml``)
+Beat-only training (``configs/train_beat_only.yaml``)
 ------------------------------------------------------
 
 The same scaffolding with the phase heads removed: one output channel, one BCE
@@ -519,12 +536,12 @@ term. Keys behave as above except:
     Meter does not affect a beat-only detector, so the filter is a data-selection
     lever rather than a requirement. It still has to match the split.
 
-.. literalinclude:: ../../configs/beat_only_train.yaml
+.. literalinclude:: ../../configs/train_beat_only.yaml
    :language: yaml
-   :caption: configs/beat_only_train.yaml
+   :caption: configs/train_beat_only.yaml
 
-Tempo training (``configs/train.yaml``)
-----------------------------------------
+Tempo training (``configs/train_tempo.yaml``)
+----------------------------------------------
 
 ``loss`` — ``classification``
     ``absolute`` and ``relative`` regress BPM directly; ``classification``
@@ -535,9 +552,9 @@ Tempo training (``configs/train.yaml``)
 Everything else (``lr``, ``batch_size``, ``trainer.*``, ``data.*``,
 ``augmentations.*``, ``wandb.*``) matches the beat configs.
 
-.. literalinclude:: ../../configs/train.yaml
+.. literalinclude:: ../../configs/train_tempo.yaml
    :language: yaml
-   :caption: configs/train.yaml
+   :caption: configs/train_tempo.yaml
 
 Model backbones (``configs/model/``)
 -------------------------------------
@@ -547,15 +564,15 @@ command line (``model=tcn``). All three are the same dilated TCN trunk
 (:class:`~musicality.models.tcn.TCNTempoNet`) at different output shapes.
 
 ``tcn.yaml``
-    Clip-level tempo regression. Used by ``train.yaml``.
+    Clip-level tempo regression. Used by ``train_tempo.yaml``.
 
 ``tcn_frames.yaml``
-    Frame-level, 3 outputs. Used by ``beat_train.yaml``. ``frame_level`` and
+    Frame-level, 3 outputs. Used by ``train_phase_beat.yaml``. ``frame_level`` and
     ``n_outputs`` are forced to ``True``/``3`` by ``BeatPhaseModule`` regardless
     of what is set here; they are listed for documentation only.
 
 ``tcn_frames_beat.yaml``
-    Frame-level, 1 output. Used by ``beat_only_train.yaml``. ``frame_level`` and
+    Frame-level, 1 output. Used by ``train_beat_only.yaml``. ``frame_level`` and
     ``n_outputs`` are likewise forced, to ``True``/``1``, by ``BeatModule``.
 
 ``channels`` — ``32`` / ``n_layers`` — ``9``
@@ -708,9 +725,26 @@ Evaluation (``configs/eval_beat.yaml``)
 ----------------------------------------
 
 Defaults for ``tools/eval_beat.py``, every key overridable via the matching
-``--flag`` (e.g. ``--beat-threshold 0.4``). Also loaded at import time as
-:data:`musicality.evaluation.DEFAULTS` and by the annotator, so these are the
-project-wide postprocessing defaults.
+``--flag`` (e.g. ``--beat-threshold 0.4``). Also read by the annotator, and
+composed into ``train_phase_beat.yaml`` under ``eval`` (see below), so these
+are the project-wide postprocessing defaults rather than one CLI's.
+
+Nothing under ``musicality/`` opens this file.
+:class:`~musicality.evaluation.BeatEvaluator` takes every setting defined here
+as a **required** keyword argument — the ``postprocess`` block, plus
+``sample_rate``, ``hop_length``, ``tolerance`` and ``device`` — and defines no
+fallback of its own. So these values live here and only here: a re-swept
+number cannot be quietly overridden by a stale copy in the library, importing
+the library does not depend on this file being on disk, and a caller that
+forgets one is told at construction rather than scored against a value it
+never chose.
+
+``split``, ``val_split`` and ``binary_only`` are the exception: they default
+to ``None`` for *not supplied*, because they are read only when a split has to
+be resolved, which
+:meth:`~musicality.evaluation.BeatEvaluator.from_module` skips. That is still
+not a default *value* — ``load()`` names the missing ones rather than
+inventing them.
 
 Top level
 ~~~~~~~~~
@@ -723,7 +757,7 @@ in seconds.
 
 ``dataset`` and ``binary_only`` together name the split that gets evaluated —
 :func:`musicality.splits.splitter.split_name` folds the second into the
-directory name, so ``merge`` + ``binary_only: true`` reads ``merge-binary``. They default to what ``configs/beat_train.yaml``
+directory name, so ``merge`` + ``binary_only: true`` reads ``merge-binary``. They default to what ``configs/train_phase_beat.yaml``
 trains on, so evaluating a checkpoint needs no flags to land on the split it was
 held out against. ``--no-binary-only`` (or ``binary_only: false``) evaluates the
 meter-mixed split instead, which only makes sense for a checkpoint trained on
@@ -756,7 +790,7 @@ The same three beat knobs, plus ``group_size`` and the bar-position stage.
    produced by the old ``tools/sweep_beat_postprocess.py``, which hardcoded the
    probability channels and never passed the decoder, switch penalty or
    position probabilities — so it was sweeping the *greedy* decoder against a
-   two-sigmoid ``one_last`` head, neither of which ``beat_train.yaml`` trains
+   two-sigmoid ``one_last`` head, neither of which ``train_phase_beat.yaml`` trains
    any more. Re-sweep before trusting them::
 
        uv run python tools/eval_beat.py --checkpoint <ckpt> \

@@ -4,9 +4,9 @@ running a forward pass through :mod:`musicality.postprocess`'s readout
 functions.
 
 Task type is identified entirely from a checkpoint's own saved
-``hyper_parameters`` — specifically the ``task`` field declared explicitly in
-``configs/beat_train.yaml``/``configs/beat_only_train.yaml`` and threaded
-through :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule`/
+``hyper_parameters`` — specifically the ``task`` field, declared explicitly by
+whatever trained the checkpoint and threaded through
+:class:`~musicality.trainers.beat_phase_module.BeatPhaseModule`/
 :class:`~musicality.trainers.beat_module.BeatModule`'s ``save_hyperparameters()``
 call. No companion Hydra config file is read at inference time.
 """
@@ -27,9 +27,7 @@ _MODULE_CLASSES = {"beat_only": BeatModule, "beat_phase": BeatPhaseModule}
 
 
 def detect_task(hyper_parameters: dict) -> str:
-    """Task tag declared explicitly by the checkpoint's training config
-    (``configs/beat_train.yaml``'s / ``configs/beat_only_train.yaml``'s
-    ``task:`` field).
+    """Task tag declared explicitly by the run that trained the checkpoint.
 
     :param hyper_parameters: A checkpoint's ``hyper_parameters`` dict, as
         saved by Lightning's ``save_hyperparameters()``.
@@ -42,8 +40,7 @@ def detect_task(hyper_parameters: dict) -> str:
     if "task" not in hyper_parameters:
         raise KeyError(
             "Checkpoint has no 'task' field in its saved hyperparameters — it "
-            "predates the explicit task: config field (configs/beat_train.yaml / "
-            "configs/beat_only_train.yaml) and must be retrained."
+            "predates the explicit task parameter and must be retrained."
         )
 
     task = hyper_parameters["task"]

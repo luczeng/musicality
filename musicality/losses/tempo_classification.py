@@ -3,8 +3,9 @@
 Instead of regressing a number, the model scores a discrete grid of BPM bins.
 The target is not one-hot but a Gaussian centred on the true tempo, which
 gives the bin grid back its ordinal structure — a neighbouring bin is a near
-miss, not an unrelated class. Selected by ``loss: classification`` in
-``configs/train.yaml``, which also supplies the bin grid and ``sigma``.
+miss, not an unrelated class. Selected by ``loss: classification`` and
+dispatched by :class:`~musicality.trainers.tempo_module.TempoModule`, which
+also supplies the bin grid and ``sigma``.
 """
 
 import torch

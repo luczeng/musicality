@@ -49,8 +49,9 @@ def phase_weight(
        Measured neg:pos mass on ballroom is ~20:1 under ``"mask"`` but ~4.7:1
        under ``"beat"`` (not 3:1 — the positive mass is a product of the
        smeared beat weight and the smeared position target, so it decays
-       faster than the weight alone). ``configs/beat_train.yaml`` uses ``18``
-       and ``4`` respectively. ``tolerance_frames`` pushes back the other way:
+       faster than the weight alone). The beat-phase task was calibrated at
+       ``18`` and ``4`` respectively. ``tolerance_frames`` pushes back the
+       other way:
        widening the window raises the positive mass again.
 
     :param beat_y: Beat target channel, shape ``(B, T)``. Under the default

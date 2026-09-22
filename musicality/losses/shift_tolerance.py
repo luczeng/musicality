@@ -36,8 +36,7 @@ from musicality.losses.pos_weight import AUTO_POS_WEIGHT_ALPHA, beat_pos_weight
 TOLERANCE_FRAMES = 3
 
 # How the beat term compares a prediction to the target. Selected by ``loss:``
-# in configs/beat_train.yaml and configs/beat_only_train.yaml, the same way
-# configs/train.yaml selects between the tempo objectives.
+# on both beat tasks, the same way it selects between the tempo objectives.
 BEAT_LOSSES = ("bce", "shift_tolerant")
 
 

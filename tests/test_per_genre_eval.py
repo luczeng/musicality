@@ -37,6 +37,8 @@ G = 4
 # fps is derived from sample_rate/hop_length rather than passed in, so these
 # two are what pin the synthetic grid at FPS=10.
 EVALUATOR_KW = dict(
+    postprocess={},  # every knob below is explicit
+    device="cpu",
     sample_rate=int(FPS),
     hop_length=1,
     decoder="greedy",
@@ -269,7 +271,16 @@ class TestTrackCorpora:
         module = MagicMock(return_value=torch.zeros(1, 3, 8))
         module.hparams = {}  # not a softmax bar-position checkpoint
 
-        evaluator = BeatEvaluator(checkpoint="unused.ckpt", dataset="merge", **kwargs)
+        evaluator = BeatEvaluator(
+            checkpoint="unused.ckpt",
+            dataset="merge",
+            postprocess={},
+            sample_rate=int(FPS),
+            hop_length=1,
+            tolerance=0.07,
+            device="cpu",
+            **kwargs,
+        )
         evaluator._loaded = (module, "beat_phase", dataset, list(range(len(corpora))))
 
         return evaluator, module

@@ -1,4 +1,4 @@
-# Dilated TCN, single frame-level beat head. Used by configs/beat_only_train.yaml.
+# Dilated TCN, single frame-level beat head. Used by configs/train_beat_only.yaml.
 # Documented in docs/source/configuration.rst.
 _target_: musicality.models.tcn.TCNTempoNet
 arch: TCN-frames-beat

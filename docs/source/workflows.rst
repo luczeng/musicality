@@ -24,19 +24,19 @@ the target format.
      - Checkpoint dir
    * - Tempo
      - ``uv run python tools/train_tempo.py``
-     - ``configs/train.yaml``
+     - ``configs/train_tempo.yaml``
      - Pooled regression or classification (BPM bin) — see
        :doc:`losses`
      - ``checkpoints/``
    * - Beat-only
      - ``uv run python tools/train_beat_only.py``
-     - ``configs/beat_only_train.yaml``
+     - ``configs/train_beat_only.yaml``
      - Single frame-level ``beat`` head, BCE —
        :class:`~musicality.trainers.beat_module.BeatModule`
      - ``checkpoints_beat_only/``
    * - Beat-phase
      - ``uv run python tools/train_beat.py``
-     - ``configs/beat_train.yaml``
+     - ``configs/train_phase_beat.yaml``
      - Three frame-level heads (``beat``/``one``/``last``), BCE —
        :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule`
      - ``checkpoints_beat/``
@@ -164,7 +164,7 @@ report are the same number.
     uv run python tools/leaderboard.py checkpoints_deeper checkpoints_norm
 
 The split it lands on is ``configs/eval_beat.yaml``'s ``dataset`` +
-``binary_only`` + ``split`` — defaulting to what ``beat_train.yaml`` trains on,
+``binary_only`` + ``split`` — defaulting to what ``train_phase_beat.yaml`` trains on,
 so no flags are needed to evaluate against the split a checkpoint was held out
 against.
 

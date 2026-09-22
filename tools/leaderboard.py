@@ -41,11 +41,12 @@ from musicality.evaluation import (
     group_by_corpus,
     summarize,
 )
-from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
 from tools.eval_beat import (
     _BETTER,
     _KNOB_LABELS,
     _LABELS,
+    EVAL_DEFAULTS,
+    POSTPROCESS,
     rank_key,
     resolve_group_size,
     sweep_grid,
@@ -135,6 +136,7 @@ def evaluator_for(checkpoint: Path, split: str, device: str, **overrides):
 
     return BeatEvaluator(
         checkpoint=checkpoint,
+        postprocess=POSTPROCESS,
         **{**RUN, "split": split},
         device=device,
         verbose=False,

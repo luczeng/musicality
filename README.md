@@ -38,7 +38,7 @@ bash tools/setup_remote.sh
 
 This also fetches custom dataset from the remote via DVC (currently on Infomaniak s3). Requirements are to setup env variables `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `WANDB_API_KEY`. The custom datasets might become available on demand.
 
-What it pulls is decided by the split `configs/beat_train.yaml` names, not by
+What it pulls is decided by the split `configs/train_phase_beat.yaml` names, not by
 `configs/download.yaml` — that file lists what *mirdata* can fetch, and some
 corpora (gtzan, rwc_genre) reach the data repo by migration instead. The running
 leaderboard comes down too, once one has been pushed.
@@ -174,7 +174,7 @@ wav2vec2/BEaT) and `musicality/models/torch_audio.py` (wraps pretrained
 at one to use it.
 
 Training is configured with [Hydra](https://hydra.cc) and overridable on the
-command line. `configs/train.yaml` holds values only — every key is explained in
+command line. `configs/train_tempo.yaml` holds values only — every key is explained in
 the [configuration reference](https://luczeng.github.io/musicality/configuration.html).
 
 ```bash
@@ -204,7 +204,7 @@ A second pipeline, alongside tempo estimation, detects frame-level **beat** /
 **"one"** (downbeat) / **"last"** (last beat of the group — bar position 4 by
 default) events. It reuses the same dataset/training scaffolding as tempo
 estimation (`BeatDataset`, Hydra config, Lightning). Configured through
-`configs/beat_train.yaml`; every key is explained in the
+`configs/train_phase_beat.yaml`; every key is explained in the
 [configuration reference](https://luczeng.github.io/musicality/configuration.html).
 
 ```bash
@@ -278,7 +278,7 @@ and pushed after writing, so a board built on a rented instance survives the
 instance. You only ever evaluate what's new:
 
 The split comes from `configs/eval_beat.yaml` (`merge`, binary meter only, val
-— what `beat_train.yaml` trains on), so a board needs no flags:
+— what `train_phase_beat.yaml` trains on), so a board needs no flags:
 
 ```bash
 # first time — the file doesn't exist yet, so this starts the board

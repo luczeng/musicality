@@ -317,8 +317,8 @@ class TCNTempoNet(nn.Module):
         instead of projecting the raw bands. Defaults to ``False`` *here* so
         that checkpoints predating the stem reconstruct into identical parameter
         shapes from their own saved hyperparameters; the shipped frame-level
-        configs (``configs/model/tcn_frames*.yaml``) turn it on. Measured cost
-        at those configs' ``channels=32``: 32,805 parameters to 40,773 — the
+        backbones turn it on. Measured cost at their ``channels=32``: 32,805
+        parameters to 40,773 — the
         stem itself is 4.9 k, the rest is ``input_proj`` widening from 128 to
         224 inputs.
     :param stem_channels: Feature maps per stem layer. ``conv2d_stem`` only.

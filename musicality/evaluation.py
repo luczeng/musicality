@@ -29,7 +29,6 @@ from pathlib import Path
 
 import numpy as np
 import torch
-import yaml
 
 import musicality.dataformats as dataformats
 from musicality.inference import detect_task, load_module, load_track_waveform
@@ -42,9 +41,6 @@ from musicality.postprocess import readout, readout_beat_only
 from musicality.splits.splitter import Splitter, split_name
 
 DATA_DIR = dataformats.ROOT / dataformats.load().data_dir
-
-# Default CLI/postprocessing values — see configs/eval_beat.yaml for what each means.
-DEFAULTS = yaml.safe_load((dataformats.ROOT / "configs" / "eval_beat.yaml").read_text())
 
 # The canonical metric set, in report order. Every one is higher-is-better
 # except `confusion`. `modal_offset` is deliberately absent: it is categorical,
@@ -61,17 +57,19 @@ SCORE_KEYS = (
     "confusion",
 )
 
-# Postprocessing knobs resolved by :meth:`BeatEvaluator.resolve_postprocess`,
-# with the fallback used when the checkpoint's task has no tuned value.
-_KNOB_FALLBACKS = {
-    "beat_threshold": 0.3,
-    "min_distance_frames": 1,
-    "gate_tolerance": 0.2,
-    "anchor_threshold": 0.5,
-    "group_size": 4,
-    "decoder": "greedy",
-    "switch_penalty": None,
-}
+# Every postprocessing knob :meth:`BeatEvaluator.resolve_postprocess` resolves.
+# Names only, deliberately: the values are the caller's. A tuned number written
+# down in here as well as in a config is a number that can disagree with
+# itself, and the one in here is the copy nobody remembers to re-sweep.
+POSTPROCESS_KNOBS = (
+    "beat_threshold",
+    "min_distance_frames",
+    "gate_tolerance",
+    "anchor_threshold",
+    "group_size",
+    "decoder",
+    "switch_penalty",
+)
 
 
 def _mean(values: list) -> float:
@@ -253,8 +251,24 @@ class BeatEvaluator:
     """Evaluates a beat-only or beat-phase checkpoint (task auto-detected from
     the checkpoint itself) on full-length tracks.
 
-    Postprocessing knobs left as ``None`` fall back to the tuned defaults for
-    the checkpoint's detected task (``configs/eval_beat.yaml``).
+    This class defines no value the evaluation config also defines. Every
+    setting that has to agree with something outside it — the tuned decode,
+    the frame rate the checkpoint was trained at, the matching window, the
+    device — is a required keyword argument, because a default here would be a
+    second opinion, and the way that ends is the two disagreeing with nobody
+    noticing. The caller reads them from the config; nothing in
+    :mod:`musicality` opens that file, so importing this module does not
+    depend on a config being on disk and a re-swept number cannot be quietly
+    overridden by a stale copy in here.
+
+    *postprocess* is keyed by task (``{"beat_only": {...}, "beat_phase":
+    {...}}``) rather than flat, because which block applies is only known once
+    :meth:`load` has detected the checkpoint's task.
+
+    *split*, *val_split* and *binary_only* are the exception, and default to
+    ``None`` meaning *not supplied* rather than to a value: they are read only
+    when a split has to be resolved, which :meth:`from_module` skips entirely.
+    :meth:`load` says so plainly if it needs one that is missing.
 
     :meth:`score` is the entry point. It runs the model once per track and
     caches the frame probabilities, so scoring several decoder configurations —
@@ -266,27 +280,38 @@ class BeatEvaluator:
         self,
         checkpoint: str | Path | None,
         dataset: str,
+        *,
+        # Required: the evaluation config defines every one of these, so a
+        # value written here too would be a second opinion about a setting
+        # that has to match the checkpoint or the split to mean anything.
+        postprocess: dict,
+        sample_rate: int,
+        hop_length: int,
+        tolerance: float,
+        device: str,
+        # Required only to resolve a split, which `from_module` skips — hence
+        # `None` for "not supplied" rather than a value standing in for one.
+        split: str | None = None,
+        val_split: float | None = None,
+        binary_only: bool | None = None,
+        # This class's own, and absent from the config: how much of the split
+        # to look at, and how loud to be about it.
         data_home: str | Path | None = None,
-        split: str = "val",
-        val_split: float = 0.2,
-        sample_rate: int = 22050,
-        hop_length: int = 512,
-        group_size: int | None = None,
-        binary_only: bool = False,
-        tolerance: float = 0.07,
         trim: bool = True,
+        limit: int | None = None,
+        verbose: bool = True,
+        # Per-run overrides of the resolved `postprocess` block, by presence.
+        group_size: int | None = None,
         beat_threshold: float | None = None,
         min_distance_frames: int | None = None,
         gate_tolerance: float | None = None,
         anchor_threshold: float | None = None,
         decoder: str | None = None,
         switch_penalty: float | None = None,
-        limit: int | None = None,
-        device: str = "cpu",
-        verbose: bool = True,
     ):
         self.checkpoint = checkpoint
         self.dataset_name = dataset
+        self.postprocess = postprocess
         self.data_home = Path(data_home) if data_home else DATA_DIR / dataset
         self.split = split
         self.val_split = val_split
@@ -345,8 +370,11 @@ class BeatEvaluator:
         :param task: Task tag; detected from the module's own hyperparameters
             when omitted, the same way :func:`~musicality.inference.load_module`
             detects it from a checkpoint's.
-        :param kwargs: Any other constructor argument (``sample_rate``,
-            ``group_size``, ``tolerance``, ``device``, ...).
+        :param kwargs: Any other constructor argument, including the required
+            ones — ``postprocess``, ``sample_rate``, ``hop_length``,
+            ``tolerance`` and ``device``. ``split``, ``val_split`` and
+            ``binary_only`` are the ones this path does *not* want: the
+            tracks are already chosen, so there is no split left to resolve.
         """
 
         evaluator = cls(checkpoint=None, dataset=name, **kwargs)
@@ -387,9 +415,23 @@ class BeatEvaluator:
           corpus is present.
 
         :returns: ``(module, task, dataset, indices)``.
+        :raises ValueError: If a split has to be resolved and one of *split*,
+            *val_split* or *binary_only* was never supplied.
         """
 
         if self._loaded is None:
+            missing = [
+                name
+                for name in ("split", "val_split", "binary_only")
+                if getattr(self, name) is None
+            ]
+            if missing:
+                raise ValueError(
+                    f"resolving a split needs {', '.join(missing)} — pass "
+                    "them, or use from_module() when the tracks have already "
+                    "been chosen"
+                )
+
             module, task = load_module(self.checkpoint, self.device)
 
             if self.split != "all" and not self.data_home.is_dir():
@@ -431,7 +473,8 @@ class BeatEvaluator:
 
     def resolve_postprocess(self, **overrides) -> dict:
         """Resolve every postprocessing knob: explicit *override* beats the
-        constructor value, which beats the tuned default for the detected task.
+        constructor value, which beats the *postprocess* block for the
+        detected task.
 
         Overrides are keyed by **presence**, not by value, because ``None`` is
         itself a meaningful ``switch_penalty`` (the exact single-offset decode,
@@ -439,20 +482,27 @@ class BeatEvaluator:
         ``switch_penalty=None`` explicitly; one that wants the configured value
         omits the key.
 
-        :returns: A dict over :data:`_KNOB_FALLBACKS`' keys.
+        A knob none of the three supply resolves to ``None`` rather than to a
+        value invented here. That is the normal case for a beat-only
+        checkpoint, whose block defines the three beat knobs and nothing else:
+        ``decoder``, ``switch_penalty``, ``anchor_threshold`` and
+        ``group_size`` describe a bar-position stage it does not have, and
+        every caller that reads them is already guarded on ``beat_phase``.
+
+        :returns: A dict over :data:`POSTPROCESS_KNOBS`.
         """
 
         _module, task, _dataset, _indices = self.load()
-        task_defaults = DEFAULTS[task]
+        task_knobs = self.postprocess.get(task) or {}
 
         resolved = {}
-        for key, fallback in _KNOB_FALLBACKS.items():
+        for key in POSTPROCESS_KNOBS:
             if key in overrides:
                 resolved[key] = overrides[key]
             elif getattr(self, key, None) is not None:
                 resolved[key] = getattr(self, key)
             else:
-                resolved[key] = task_defaults.get(key, fallback)
+                resolved[key] = task_knobs.get(key)
 
         return resolved
 

@@ -1,4 +1,4 @@
-# Dilated TCN, frame-level beat/position heads. Used by configs/beat_train.yaml.
+# Dilated TCN, frame-level beat/position heads. Used by configs/train_phase_beat.yaml.
 # Documented in docs/source/configuration.rst.
 _target_: musicality.models.tcn.TCNTempoNet
 arch: TCN-frames

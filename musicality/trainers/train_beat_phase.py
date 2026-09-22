@@ -6,7 +6,7 @@ import lightning as L
 
 # Suppress Lightning's promotional tip about LitLogger (INFO-level noise)
 logging.getLogger("lightning.pytorch.utilities.rank_zero").setLevel(logging.WARNING)
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from musicality.callbacks.event_metrics import (
     LOGGED_KEYS,
@@ -137,6 +137,32 @@ def build_callbacks(cfg: DictConfig) -> list:
     return callbacks
 
 
+def postprocess_knobs(cfg: DictConfig) -> dict:
+    """Pick the per-task decode blocks out of ``cfg`` and return them as plain
+    dicts, which is the form :class:`~musicality.evaluation.BeatEvaluator`
+    indexes.
+
+    This reads; it does not compose. Hydra has already done that by the time
+    it runs: ``configs/train_phase_beat.yaml`` lists ``eval_beat@eval`` in its
+    ``defaults:``, so the evaluation config is grafted onto ``cfg.eval`` while
+    the config is being built. That indirection is the point — the knobs a run
+    scores itself with are the same file ``tools/eval_beat.py`` re-scores it
+    with afterwards, rather than a second copy that drifts.
+
+    A config that doesn't compose them yields ``{}``, and every knob then
+    resolves to ``None`` — which surfaces as a failed decode, not as quietly
+    different numbers.
+    """
+
+    block = cfg.get("eval") or {}
+
+    return {
+        task: OmegaConf.to_container(block[task], resolve=True)
+        for task in ("beat_only", "beat_phase")
+        if task in block
+    }
+
+
 def build_event_metrics_callback(cfg: DictConfig) -> EventMetricsLogger | None:
     """Build the event-level validation metrics callback, or ``None`` when the
     config switches it off.
@@ -158,6 +184,7 @@ def build_event_metrics_callback(cfg: DictConfig) -> EventMetricsLogger | None:
 
     return EventMetricsLogger(
         val_refs,
+        postprocess_knobs(cfg),
         n_tracks=settings.get("n_tracks", 50),
         every_n_epochs=settings.get("every_n_epochs", 5),
         sample_rate=cfg.data.sample_rate,

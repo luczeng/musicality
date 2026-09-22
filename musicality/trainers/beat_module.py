@@ -49,7 +49,7 @@ class BeatModule(L.LightningModule):
     :param weight_decay: L2 regularisation.
     :param threshold: Peak-picking threshold for the logged ``{stage}/f_beat``
         metric, not used by the loss itself. Note the beat-only task's tuned
-        evaluation threshold is ``0.8`` (``configs/eval_beat.yaml``), so unless
+        evaluation threshold is ``0.8``, so unless
         this is set to match, the training-time number is a close proxy for the
         reported ``f_beat`` rather than the identical computation.
     :param balanced: Unused since the beat head moved from
@@ -61,8 +61,8 @@ class BeatModule(L.LightningModule):
     :param task: Saved into the checkpoint's hyperparameters for
         :func:`~musicality.inference.detect_task` to read back at eval/inference
         time. Always ``"beat_only"`` for this class; exists as a parameter
-        (rather than hardcoded) so ``configs/beat_only_train.yaml``'s ``task:``
-        field is the visible, single source of truth for what a checkpoint is.
+        (rather than hardcoded) so the training run's ``task:`` setting is the
+        visible, single source of truth for what a checkpoint is.
     :param check_val_every_n_epoch: How often the trainer actually runs
         validation (``cfg.trainer.check_val_every_n_epoch``). The
         ``ReduceLROnPlateau`` scheduler needs this as its ``frequency`` —

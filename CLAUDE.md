@@ -80,9 +80,9 @@ One module per objective, named after the task it trains.
 
 - `tempo_regression.py` — `absolute_tempo_loss`, `relative_tempo_loss`: MAE on a single BPM value, with or without octave invariance.
 - `tempo_classification.py` — `classification_tempo_loss`, `gaussian_soft_target`: tempo as a softmax over BPM bins against a Gaussian soft target, so a neighbouring bin is a near miss rather than an unrelated class.
-- `beat_only.py` — `beat_only_loss`: frame-wise beat BCE alone (`configs/beat_only_train.yaml`).
+- `beat_only.py` — `beat_only_loss`: frame-wise beat BCE alone (`configs/train_beat_only.yaml`).
 - `beat_phase.py` — `beat_phase_loss`: bar position as two independent sigmoids (`one`/`last`). Superseded — it never asks the discriminative "is this beat a 1 or a 3?" question — but kept so existing checkpoints stay readable.
-- `beat_position.py` — `beat_position_loss`: beat BCE plus a softmax over all `G` bar positions, which do compete. **The loss the project trains with** (`configs/beat_train.yaml`).
+- `beat_position.py` — `beat_position_loss`: beat BCE plus a softmax over all `G` bar positions, which do compete. **The loss the project trains with** (`configs/train_phase_beat.yaml`).
 - `phase_conditioning.py` — `phase_weight`: which frames the bar-position term is supervised on. `"beat"` restricts it to the frames the decoder actually reads; `"mask"` spends ~96% of the gradient re-learning beat detection.
 - `pos_weight.py` — `beat_pos_weight`: positive-class weight for a beat BCE term, either passed through or derived per sample (`"auto"`), since the right value is a function of tempo and a fixed one is correct at only one tempo.
 - `shift_tolerance.py` — `shift_tolerant_bce`, `sliding_windowed_max`: forgive the beat head a few frames of timing error, by comparing the max-pooled prediction to the label (Beat This!, ISMIR 2024). Selected by `loss: bce | shift_tolerant` in the beat configs, `bce` by default. It *replaces* target smearing rather than adding to it, so pair `shift_tolerant` with `sigma_frames: 0`.
@@ -104,7 +104,7 @@ separate reasons — see `docs/frame_vs_event_metrics.md` before quoting either.
 ### Callbacks (`musicality/callbacks/`)
 
 - `error_plot.py` — `ErrorVsTempoPlot`: logs a per-epoch error-vs-tempo scatter to W&B.
-- `event_metrics.py` — `EventMetricsLogger`: every few epochs, decodes a fixed corpus-stratified slice of the validation split on **full tracks** and logs `val_event/f_beat`, `cmlt`, `amlt`, `position_acc`, `position_acc_best_offset`. Scores through `BeatEvaluator.score`, so these are the same numbers `tools/eval_beat.py` reports afterwards — unlike the frame metrics beside them, which are measured on a 16s clip. Configured by `event_metrics:` in `configs/beat_train.yaml`.
+- `event_metrics.py` — `EventMetricsLogger`: every few epochs, decodes a fixed corpus-stratified slice of the validation split on **full tracks** and logs `val_event/f_beat`, `cmlt`, `amlt`, `position_acc`, `position_acc_best_offset`. Scores through `BeatEvaluator.score`, so these are the same numbers `tools/eval_beat.py` reports afterwards — unlike the frame metrics beside them, which are measured on a 16s clip. Configured by `event_metrics:` in `configs/train_phase_beat.yaml`.
 - `metrics_logger.py` — `BestMetricsPrinter`: prints best validation metrics at the end of training.
 - `training_report.py` — `TrainingReportLogger`: at `on_fit_end`, writes one `training_report.json` beside the run's checkpoints and uploads it to the W&B run's Files tab. Holds final/best metrics, the per-epoch history, per-track and per-corpus event scores, the resolved config, and the run's identity (W&B id, git commit, best checkpoint) — a run as a single shareable attachment. Decodes nothing; it reuses `EventMetricsLogger`'s last scoring pass.
 
@@ -137,10 +137,10 @@ documented in `docs/source/configuration.rst`**, which is the source of truth
 for what a key means, which keys are coupled, and the measurements behind the
 defaults. Add explanations there, not as YAML comments.
 
-- `beat_train.yaml` — Beat-phase training (`tools/train_beat.py`). The config the project currently trains with.
-- `beat_only_train.yaml` — Beat-only training (`tools/train_beat_only.py`).
-- `train.yaml` — Tempo training (`tools/train_tempo.py`).
-- `eval_beat.yaml` — `tools/eval_beat.py` defaults. Also loaded at import time as `musicality.evaluation.DEFAULTS` and by the annotator, so it is the project-wide postprocessing default, not just CLI defaults.
+- `train_phase_beat.yaml` — Beat-phase training (`tools/train_beat.py`). The config the project currently trains with.
+- `train_beat_only.yaml` — Beat-only training (`tools/train_beat_only.py`).
+- `train_tempo.yaml` — Tempo training (`tools/train_tempo.py`).
+- `eval_beat.yaml` — `tools/eval_beat.py` defaults. Also read by the annotator and composed into `train_phase_beat.yaml` under `eval`, so it is the project-wide postprocessing default, not just CLI defaults. Nothing under `musicality/` opens it: `BeatEvaluator` takes the per-task block as a required `postprocess` argument, so the tuned numbers have exactly one home and the library holds no defaults to drift from them.
 - `download.yaml` — List of datasets to download and their `data_home`.
 - `model/` — Backbone overrides selected by each config's `defaults:` list: `tcn.yaml` (tempo), `tcn_frames.yaml` (beat-phase), `tcn_frames_beat.yaml` (beat-only).
 

@@ -3,8 +3,8 @@
 # there, not here. Trailing comments list legal values only.
 defaults:
   - model: tcn_frames
+  - eval_beat@eval
   - _self_
-
 task: beat_phase
 # --- Head ---------------------------------------------------------------
 phase_conditioning: beat  # mask | beat

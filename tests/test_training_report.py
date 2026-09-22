@@ -78,7 +78,7 @@ class _FakeTrainer:
 
 
 def _events(rows=None, scored=(0,)):
-    logger = EventMetricsLogger([])
+    logger = EventMetricsLogger([], {})
     logger.last_rows = list(rows or [_row()])
     logger.scored_epochs = list(scored)
 

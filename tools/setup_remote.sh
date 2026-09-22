@@ -24,7 +24,7 @@ uv pip install -e .
 
 repo_root="$PWD"
 db_dir="$(uv run python -c 'import yaml; from pathlib import Path; print(Path(yaml.safe_load(open("configs/download.yaml"))["data_home"]).resolve())')"
-split_name="$(uv run python -c 'import yaml; from musicality.splits.splitter import split_name; c = yaml.safe_load(open("configs/beat_train.yaml")); print(split_name(c["data"]["input"], c.get("binary_only", False)))')"
+split_name="$(uv run python -c 'import yaml; from musicality.splits.splitter import split_name; c = yaml.safe_load(open("configs/train_phase_beat.yaml")); print(split_name(c["data"]["input"], c.get("binary_only", False)))')"
 # Named by dataformat.yaml so a rename there doesn't leave this pulling a dead path.
 read -r splits_name board_name <<<"$(uv run python -c 'import musicality.dataformats as d; from pathlib import Path; print(Path(d.FORMAT.splits_dir).name, Path(d.FORMAT.leaderboard_dir).name)')"
 

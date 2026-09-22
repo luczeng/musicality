@@ -27,9 +27,9 @@ from musicality.losses.pos_weight import (
 from musicality.trainers.beat_phase_module import BeatPhaseModule
 
 FPS = 22050 / 512  # the training front-end's frame rate, 43.07
-SIGMA = 1.5  # configs/beat_train.yaml sigma_frames
+SIGMA = 1.5  # configs/train_phase_beat.yaml sigma_frames
 G = 4
-N_FRAMES = int(16.0 * FPS)  # a 16 s crop, configs/beat_train.yaml data.duration
+N_FRAMES = int(16.0 * FPS)  # a 16 s crop, configs/train_phase_beat.yaml data.duration
 
 
 def _spikes(frames: np.ndarray, n_frames: int) -> np.ndarray:
@@ -382,7 +382,7 @@ class TestModuleWiring:
         ids=["list", "ListConfig"],
     )
     def test_a_per_head_pos_weight_is_rejected_for_the_softmax_head(self, pos_weight):
-        """``configs/beat_train.yaml`` ships ``[5, 4, 4]``. Against the single
+        """``configs/train_phase_beat.yaml`` ships ``[5, 4, 4]``. Against the single
         BCE head of ``beat_position_loss`` that dies as a broadcast error on
         the first batch. OmegaConf's ``ListConfig`` is not a ``list``, hence
         both cases."""

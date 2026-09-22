@@ -64,7 +64,9 @@ import math
 from pathlib import Path
 
 import numpy as np
+import yaml
 
+import musicality.dataformats as dataformats
 from musicality.evaluation import (
     DATA_DIR,
     SCORE_KEYS,
@@ -74,7 +76,18 @@ from musicality.evaluation import (
     group_by_corpus,
     summarize,
 )
-from musicality.evaluation import DEFAULTS as EVAL_DEFAULTS
+
+# Read here rather than in :mod:`musicality.evaluation`: the library takes its
+# knobs as arguments and opens no config file, so this script is the one place
+# the path is written down. `tools/leaderboard.py` imports both names from here.
+EVAL_DEFAULTS = yaml.safe_load(
+    (dataformats.ROOT / "configs" / "eval_beat.yaml").read_text()
+)
+
+# The per-task decode blocks, in the shape BeatEvaluator takes them. Which one
+# applies depends on the checkpoint's task, which is only known after it loads,
+# so both are handed over and the evaluator picks.
+POSTPROCESS = {task: EVAL_DEFAULTS[task] for task in ("beat_only", "beat_phase")}
 
 SWEEP_DEFAULTS = EVAL_DEFAULTS["sweep"]
 
@@ -884,6 +897,7 @@ def main():
     evaluator = BeatEvaluator(
         checkpoint=args.checkpoint,
         dataset=args.dataset,
+        postprocess=POSTPROCESS,
         data_home=args.data_home,
         split=args.split,
         val_split=args.val_split,

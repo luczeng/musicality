@@ -43,10 +43,10 @@ from musicality.trainers.beat_phase_module import BeatPhaseModule
 from musicality.trainers.common import warn_if_tolerance_stacks_on_smearing
 
 FPS = 22050 / 512  # the training front-end's frame rate, 43.07
-N_FRAMES = int(16.0 * FPS)  # a 16 s crop, configs/beat_train.yaml data.duration
+N_FRAMES = int(16.0 * FPS)  # a 16 s crop, configs/train_phase_beat.yaml data.duration
 
 B, T = 2, 64
-G = 4  # configs/beat_train.yaml group_size
+G = 4  # configs/train_phase_beat.yaml group_size
 CENTRE = T // 2  # one beat here, far enough from both edges for any window
 R = TOLERANCE_FRAMES  # 3 frames, ±69.7 ms
 IGNORE = 2 * R  # the paper's default band
