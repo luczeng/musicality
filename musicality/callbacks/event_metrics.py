@@ -111,16 +111,15 @@ def stratified_sample(refs: list, n_tracks: int | None, seed: int = 0) -> list:
 class EventMetricsLogger(L.Callback):
     """Logs ``val_event/*`` metrics for a fixed validation subsample.
 
-    Postprocessing knobs are deliberately *not* parameters: leaving them unset
-    makes :meth:`~musicality.evaluation.BeatEvaluator.resolve_postprocess` fall
-    back to the tuned defaults for the detected task in
-    ``configs/eval_beat.yaml``, which is the same thing ``tools/eval_beat.py``
-    does. Two config files disagreeing about the decoder is exactly how the
-    numbers drifted apart before.
-
     :param refs: Validation ``TrackRef`` entries to sample from — the same
         refs the validation dataloader is built over (see
         :func:`~musicality.trainers.common.resolve_beat_split_refs`).
+    :param postprocess: Tuned decode knobs per task, handed straight to
+        :class:`~musicality.evaluation.BeatEvaluator`. It has to be the same
+        block ``tools/eval_beat.py`` scores with, or a number logged during
+        training and the same number recomputed afterwards mean different
+        things — two sources disagreeing about the decoder is exactly how
+        they drifted apart before.
     :param n_tracks: Size of the fixed subsample; ``None`` scores every ref.
         Cost is roughly one full-track model pass per track, so this trades
         directly against how often it can run.
@@ -141,6 +140,7 @@ class EventMetricsLogger(L.Callback):
     def __init__(
         self,
         refs: list,
+        postprocess: dict,
         *,
         n_tracks: int | None = 50,
         every_n_epochs: int = 5,
@@ -153,6 +153,7 @@ class EventMetricsLogger(L.Callback):
         name: str = "val",
     ):
         self.refs = stratified_sample(refs, n_tracks, seed=seed)
+        self.postprocess = postprocess
         self.every_n_epochs = max(1, every_n_epochs)
         self.sample_rate = sample_rate
         self.hop_length = hop_length
@@ -222,6 +223,7 @@ class EventMetricsLogger(L.Callback):
             pl_module,
             self.dataset,
             name=self.name,
+            postprocess=self.postprocess,
             sample_rate=self.sample_rate,
             hop_length=self.hop_length,
             group_size=self.group_size,

@@ -107,9 +107,9 @@ def peak_f_measure(
     The default ``tolerance_frames=3`` is 70 ms at ``sample_rate: 22050`` /
     ``hop_length: 512`` (``0.07 * 43.07 = 3.01``), matching ``mir_eval``'s
     window. ``threshold`` and ``min_distance`` default to the tuned beat-phase
-    values in ``configs/eval_beat.yaml``; the beat-only task is tuned to
-    ``beat_threshold: 0.8`` instead, so for that head the training-time number
-    is a proxy rather than the identical computation.
+    evaluation values; the beat-only task is tuned to ``0.8`` instead, so for
+    that head the training-time number is a proxy rather than the identical
+    computation.
 
     :param probs: Predicted probabilities (post-sigmoid), shape ``(B, T)``.
     :param target: Ground-truth Gaussian-smeared target, shape ``(B, T)``.

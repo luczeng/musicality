@@ -237,8 +237,8 @@ that in two steps, both before anything is written:
 Telling training which split to use: ``data.input``
 -----------------------------------------------------
 
-Training configs (``configs/train.yaml``, ``beat_train.yaml``,
-``beat_only_train.yaml``) have one field, ``data.input``, for naming the
+Training configs (``configs/train_tempo.yaml``, ``train_phase_beat.yaml``,
+``train_beat_only.yaml``) have one field, ``data.input``, for naming the
 split to train on. It's read two ways, told apart by whether it contains a
 ``/``:
 

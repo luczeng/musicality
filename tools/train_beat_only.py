@@ -9,7 +9,7 @@ from omegaconf import DictConfig
 from musicality.trainers.train_beat_only import train
 
 
-@hydra.main(config_path="../configs", config_name="beat_only_train", version_base="1.3")
+@hydra.main(config_path="../configs", config_name="train_beat_only", version_base="1.3")
 def launch_training(cfg: DictConfig) -> None:
     train(cfg)
 

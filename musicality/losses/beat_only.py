@@ -1,6 +1,6 @@
 """Beat detection alone, with no bar-position term.
 
-The objective behind ``configs/beat_only_train.yaml`` and
+The objective behind the beat-only task and
 :class:`~musicality.trainers.beat_module.BeatModule`: a single frame-wise
 sigmoid over "is there a beat here?". It is the ``beat`` term of
 :func:`~musicality.losses.beat_position.beat_position_loss` on its own, and

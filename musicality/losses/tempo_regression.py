@@ -2,8 +2,8 @@
 
 Both are mean absolute error; they differ only in whether predicting a
 metrical multiple of the annotated tempo is treated as an error. Selected by
-``loss: absolute`` / ``loss: relative`` in ``configs/train.yaml`` and
-dispatched by :class:`~musicality.trainers.tempo_module.TempoModule`.
+``loss: absolute`` / ``loss: relative`` and dispatched by
+:class:`~musicality.trainers.tempo_module.TempoModule`.
 """
 
 import torch

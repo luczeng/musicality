@@ -4,7 +4,6 @@
 defaults:
   - model: tcn_frames_beat
   - _self_
-
 task: beat_only
 # --- Head ---------------------------------------------------------------
 n_mels: 128

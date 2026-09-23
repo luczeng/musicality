@@ -1,6 +1,6 @@
 """Bar position as a softmax over the ``G`` positions in a bar.
 
-The current beat-phase objective (``configs/beat_train.yaml``), paired with
+The current beat-phase objective, paired with
 :class:`~musicality.trainers.beat_phase_module.BeatPhaseModule` and a backbone
 emitting ``1 + G`` frame-level channels.
 """

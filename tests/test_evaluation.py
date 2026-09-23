@@ -20,12 +20,49 @@ import torch
 
 from musicality.evaluation import (
     DATA_DIR,
-    DEFAULTS,
     SCORE_KEYS,
     BeatEvaluator,
     score_events,
     summarize,
     summary_block,
+)
+
+
+# BeatEvaluator holds no default knobs, so every construction below supplies
+# these. Fixed values rather than the shipped config: what is under test is the
+# resolution order, not what the project happens to be tuned to this week.
+POSTPROCESS = {
+    "beat_only": {
+        "beat_threshold": 0.8,
+        "min_distance_frames": 4,
+        "gate_tolerance": 0.1,
+    },
+    "beat_phase": {
+        "beat_threshold": 0.5,
+        "min_distance_frames": 4,
+        "gate_tolerance": 0.1,
+        "group_size": 4,
+        "decoder": "global",
+        "switch_penalty": 2.0,
+        "anchor_threshold": 0.8,
+    },
+}
+
+
+# BeatEvaluator keeps no defaults of its own, so these have to be passed at
+# every construction. Values match what the class used to assume, so the tests
+# below measure the same thing they did before the defaults were removed.
+RUN_KW = dict(
+    postprocess=POSTPROCESS,
+    sample_rate=22050,
+    hop_length=512,
+    tolerance=0.07,
+    device="cpu",
+    # Not required by the class — `from_module` never resolves a split — but
+    # `load()` reads all three, and every test below that reaches it needs
+    # them. `split` stays out: several tests set it themselves.
+    val_split=0.2,
+    binary_only=False,
 )
 
 
@@ -209,23 +246,34 @@ class TestResolvePostprocess:
     def test_beat_only_falls_back_to_task_defaults(self):
         with _mocked(task="beat_only"):
             knobs = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).resolve_postprocess()
 
-            task_defaults = DEFAULTS["beat_only"]
-            assert knobs["beat_threshold"] == task_defaults["beat_threshold"]
-            assert knobs["min_distance_frames"] == task_defaults["min_distance_frames"]
-            assert knobs["gate_tolerance"] == task_defaults["gate_tolerance"]
-            assert knobs["anchor_threshold"] == 0.5  # no beat_only-specific default
-            assert knobs["group_size"] == 4
+            task_knobs = POSTPROCESS["beat_only"]
+            assert knobs["beat_threshold"] == task_knobs["beat_threshold"]
+            assert knobs["min_distance_frames"] == task_knobs["min_distance_frames"]
+            assert knobs["gate_tolerance"] == task_knobs["gate_tolerance"]
+            # The bar-position knobs describe a stage this task does not have.
+            # Nothing invents a value for them, and every caller that reads
+            # them is guarded on beat_phase.
+            assert knobs["anchor_threshold"] is None
+            assert knobs["group_size"] is None
 
     def test_beat_phase_falls_back_to_task_defaults(self):
         with _mocked(task="beat_phase"):
             knobs = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).resolve_postprocess()
 
-            task_defaults = DEFAULTS["beat_phase"]
+            task_knobs = POSTPROCESS["beat_phase"]
             for key in (
                 "beat_threshold",
                 "min_distance_frames",
@@ -235,11 +283,12 @@ class TestResolvePostprocess:
                 "decoder",
                 "switch_penalty",
             ):
-                assert knobs[key] == task_defaults[key]
+                assert knobs[key] == task_knobs[key]
 
     def test_constructor_values_beat_task_defaults(self):
         with _mocked(task="beat_phase"):
             knobs = BeatEvaluator(
+                **RUN_KW,
                 checkpoint="fake.ckpt",
                 dataset="ballroom",
                 split="all",
@@ -260,6 +309,7 @@ class TestResolvePostprocess:
     def test_explicit_override_beats_constructor(self):
         with _mocked(task="beat_phase"):
             knobs = BeatEvaluator(
+                **RUN_KW,
                 checkpoint="fake.ckpt",
                 dataset="ballroom",
                 split="all",
@@ -275,7 +325,11 @@ class TestResolvePostprocess:
         # key must fall through to the tuned default instead.
         with _mocked(task="beat_phase"):
             evaluator = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             )
 
             assert (
@@ -284,7 +338,7 @@ class TestResolvePostprocess:
             )
             assert (
                 evaluator.resolve_postprocess()["switch_penalty"]
-                == DEFAULTS["beat_phase"]["switch_penalty"]
+                == POSTPROCESS["beat_phase"]["switch_penalty"]
             )
 
 
@@ -293,11 +347,47 @@ class TestResolvePostprocess:
 # ---------------------------------------------------------------------------
 
 
+class TestSplitSettingsOnlyMatterWhenResolvingASplit:
+    """`split`, `val_split` and `binary_only` default to "not supplied" rather
+    than to a value, so the class states no opinion the config could disagree
+    with. `load()` has to name the ones it needs, and `from_module` — which
+    never resolves a split — must not need them at all."""
+
+    _MINIMAL = dict(
+        postprocess=POSTPROCESS,
+        sample_rate=22050,
+        hop_length=512,
+        tolerance=0.07,
+        device="cpu",
+        verbose=False,
+    )
+
+    def test_load_names_every_missing_one(self):
+        evaluator = BeatEvaluator(
+            checkpoint="fake.ckpt", dataset="ballroom", **self._MINIMAL
+        )
+
+        with pytest.raises(ValueError, match="split, val_split, binary_only"):
+            evaluator.load()
+
+    def test_from_module_needs_none_of_them(self):
+        module = MagicMock()
+        module.hparams = {"task": "beat_phase", "group_size": 4}
+
+        evaluator = BeatEvaluator.from_module(module, _fake_dataset(2), **self._MINIMAL)
+
+        assert evaluator.load()[1] == "beat_phase"
+
+
 class TestBeatEvaluatorDataHome:
     def test_defaults_to_data_dir_slash_dataset_name(self):
         with _mocked() as mocks:
             BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).run()
 
             assert mocks["BeatDataset"].call_args.kwargs["data_home"] == (
@@ -307,6 +397,7 @@ class TestBeatEvaluatorDataHome:
     def test_explicit_data_home_is_used_verbatim(self):
         with _mocked() as mocks:
             BeatEvaluator(
+                **RUN_KW,
                 checkpoint="fake.ckpt",
                 dataset="ballroom",
                 data_home="/some/custom/path",
@@ -321,6 +412,7 @@ class TestBeatEvaluatorDataHome:
     def test_group_size_threaded_into_dataset_construction(self):
         with _mocked() as mocks:
             BeatEvaluator(
+                **RUN_KW,
                 checkpoint="fake.ckpt",
                 dataset="ballroom",
                 split="all",
@@ -335,6 +427,7 @@ class TestBeatEvaluatorLimit:
     def test_limit_truncates_indices(self):
         with _mocked(n_tracks=5) as mocks:
             results = BeatEvaluator(
+                **RUN_KW,
                 checkpoint="fake.ckpt",
                 dataset="ballroom",
                 split="all",
@@ -348,7 +441,11 @@ class TestBeatEvaluatorLimit:
     def test_no_limit_evaluates_every_index(self):
         with _mocked(n_tracks=5) as mocks:
             results = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).run()
 
             assert mocks["score_events"].call_count == 5
@@ -360,7 +457,11 @@ class TestBeatEvaluatorReturnValue:
         track_results = [_blank_row(f_beat=0.1), _blank_row(f_beat=0.2)]
         with _mocked(n_tracks=2, track_results=track_results, corpora=["a", "b"]):
             results = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).run()
 
             assert [r["f_beat"] for r in results] == [0.1, 0.2]
@@ -371,7 +472,11 @@ class TestBeatEvaluatorMemoization:
     def test_load_memoized_across_repeated_calls(self):
         with _mocked(n_tracks=3) as mocks:
             evaluator = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             )
             evaluator.load()
             evaluator.load()
@@ -385,7 +490,11 @@ class TestBeatEvaluatorMemoization:
         results = [_blank_row(f_beat=0.9) for _ in range(9)]
         with _mocked(n_tracks=3, track_results=results) as mocks:
             evaluator = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             )
             evaluator.score()
             evaluator.score()
@@ -417,7 +526,11 @@ class TestBeatEvaluatorComputeTrackProbs:
             ),
         ):
             evaluator = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             )
             return evaluator.compute_track_probs()
 
@@ -451,7 +564,11 @@ class TestBeatEvaluatorComputeTrackProbs:
             ),
         ):
             cached = BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).compute_track_probs()
 
         probs = cached[0][3]
@@ -464,7 +581,11 @@ class TestBeatEvaluatorVerbose:
     def test_silent_when_verbose_false(self, capsys):
         with _mocked():
             BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=False
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=False,
             ).run()
 
         assert capsys.readouterr().out == ""
@@ -472,7 +593,11 @@ class TestBeatEvaluatorVerbose:
     def test_beat_only_omits_the_position_columns(self, capsys):
         with _mocked(task="beat_only"):
             BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=True
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=True,
             ).run()
 
         out = capsys.readouterr().out
@@ -484,7 +609,11 @@ class TestBeatEvaluatorVerbose:
         rows = [_blank_row(f_beat=0.9, position_acc=0.5, position_acc_best_offset=0.7)]
         with _mocked(task="beat_phase", n_tracks=1, track_results=rows):
             BeatEvaluator(
-                checkpoint="fake.ckpt", dataset="ballroom", split="all", verbose=True
+                **RUN_KW,
+                checkpoint="fake.ckpt",
+                dataset="ballroom",
+                split="all",
+                verbose=True,
             ).run()
 
         out = capsys.readouterr().out
@@ -500,6 +629,10 @@ class TestFromModule:
     skipped. Everything downstream must behave as if `load()` had run."""
 
     @staticmethod
+    def _from_module(*args, **kwargs):
+        return BeatEvaluator.from_module(*args, **RUN_KW, **kwargs)
+
+    @staticmethod
     def _module(task="beat_phase", group_size=4):
         module = MagicMock()
         module.hparams = {"task": task, "group_size": group_size}
@@ -507,20 +640,20 @@ class TestFromModule:
         return module
 
     def test_detects_the_task_from_the_modules_hyperparameters(self):
-        evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(2))
+        evaluator = self._from_module(self._module(), _fake_dataset(2))
 
         _module, task, _dataset, _indices = evaluator.load()
         assert task == "beat_phase"
 
     def test_explicit_task_wins_over_detection(self):
-        evaluator = BeatEvaluator.from_module(
+        evaluator = self._from_module(
             self._module(task="beat_phase"), _fake_dataset(2), task="beat_only"
         )
 
         assert evaluator.load()[1] == "beat_only"
 
     def test_selects_every_track_in_the_dataset(self):
-        evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(5))
+        evaluator = self._from_module(self._module(), _fake_dataset(5))
 
         assert evaluator.load()[3] == [0, 1, 2, 3, 4]
 
@@ -528,31 +661,31 @@ class TestFromModule:
         """`load()` is bypassed, so the limit has to be applied here or it is
         silently ignored."""
 
-        evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(5), limit=2)
+        evaluator = self._from_module(self._module(), _fake_dataset(5), limit=2)
 
         assert evaluator.load()[3] == [0, 1]
 
     def test_never_touches_the_checkpoint_loader(self):
         with patch("musicality.evaluation.load_module") as load:
-            evaluator = BeatEvaluator.from_module(self._module(), _fake_dataset(2))
+            evaluator = self._from_module(self._module(), _fake_dataset(2))
             evaluator.load()
 
         load.assert_not_called()
 
     def test_constructor_settings_still_reach_postprocessing(self):
-        evaluator = BeatEvaluator.from_module(
+        evaluator = self._from_module(
             self._module(), _fake_dataset(2), group_size=8, beat_threshold=0.42
         )
         knobs = evaluator.resolve_postprocess()
 
         assert knobs["group_size"] == 8
         assert knobs["beat_threshold"] == 0.42
-        # ...and everything left unset still falls back to the task defaults
-        # in configs/eval_beat.yaml, the same file tools/eval_beat.py reads.
-        assert knobs["decoder"] == DEFAULTS["beat_phase"]["decoder"]
+        # ...and everything left unset still falls back to the block the
+        # caller handed over.
+        assert knobs["decoder"] == POSTPROCESS["beat_phase"]["decoder"]
 
     def test_track_corpora_still_line_up(self):
-        evaluator = BeatEvaluator.from_module(
+        evaluator = self._from_module(
             self._module(), _fake_dataset(3, corpora=["ballroom", "jtd", "jtd"])
         )
 

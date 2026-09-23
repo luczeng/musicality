@@ -114,8 +114,8 @@ class BeatPhaseModule(L.LightningModule):
     :param task: Saved into the checkpoint's hyperparameters for
         :func:`~musicality.inference.detect_task` to read back at eval/inference
         time. Always ``"beat_phase"`` for this class; exists as a parameter
-        (rather than hardcoded) so ``configs/beat_train.yaml``'s ``task:`` field
-        is the visible, single source of truth for what a checkpoint is.
+        (rather than hardcoded) so the training run's ``task:`` setting is the
+        visible, single source of truth for what a checkpoint is.
     """
 
     def __init__(
@@ -144,8 +144,8 @@ class BeatPhaseModule(L.LightningModule):
         if group_size is not None and group_size < 2:
             raise ValueError(f"group_size must be >= 2 or None, got {group_size}")
 
-        # `configs/beat_train.yaml` carries a 3-element pos_weight for the
-        # one/last head. beat_position_loss has a single BCE head, so a
+        # The one/last head takes a 3-element pos_weight.
+        # beat_position_loss has a single BCE head, so a
         # sequence reaches binary_cross_entropy_with_logits as a shape-(3,)
         # weight against (B, T) and dies on a broadcast error mid-run.
         # OmegaConf's ListConfig is a Sequence but not a list, hence the ABC.

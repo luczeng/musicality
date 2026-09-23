@@ -67,10 +67,10 @@ SEED = 42
 
 
 def _compose(overrides: list[str]) -> DictConfig:
-    """Compose ``beat_train`` with ``overrides``."""
+    """Compose ``train_phase_beat`` with ``overrides``."""
 
     with initialize(version_base="1.3", config_path="../configs"):
-        cfg = compose(config_name="beat_train", overrides=overrides)
+        cfg = compose(config_name="train_phase_beat", overrides=overrides)
 
     return cfg
 
