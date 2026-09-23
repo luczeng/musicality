@@ -36,6 +36,14 @@ flag gates all of them at once.
        axis by the same rate so beat/one/last/mask events stay aligned
        with the stretched audio.
      - ``augmentations.time_stretch.{enabled,min_rate,max_rate}``
+   * - Pitch shift
+     - Shifts pitch by a number of semitones drawn from
+       ``[min_semitones, max_semitones]`` without moving any onset, so the
+       tempo label and the frame target are left untouched. Unlike time
+       stretch, pitch moves independently of tempo — it teaches the model
+       that rhythm is not pitch. A short-window phase vocoder (23 ms) keeps
+       onsets within half a frame of where they were.
+     - ``augmentations.pitch_shift.{enabled,min_semitones,max_semitones}``
    * - Gain
      - Scales waveform amplitude by a random gain drawn uniformly from
        ``[min_db, max_db]``.
@@ -46,8 +54,8 @@ flag gates all of them at once.
        training config.
      - ``augmentations.noise.{enabled,std}``
 
-Two augmenter classes apply the waveform ops (time stretch, gain, noise) in
-that order: :class:`~musicality.augmentations.TempoAugmenter` for the
+Two augmenter classes apply the waveform ops (time stretch, pitch shift,
+gain, noise) in that order: :class:`~musicality.augmentations.TempoAugmenter` for the
 scalar-label tempo pipeline, :class:`~musicality.augmentations.BeatPhaseAugmenter`
 for the frame-level beat pipeline — the latter additionally carries the
 frame target through the time-stretch step. Both are built from the same
