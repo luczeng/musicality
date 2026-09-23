@@ -48,6 +48,10 @@ augmentations:
     enabled: true
     min_rate: 0.85
     max_rate: 1.15
+  pitch_shift:
+    enabled: false
+    min_semitones: -5.0
+    max_semitones: 6.0
   gain:
     enabled: true
     min_db: -6.0
