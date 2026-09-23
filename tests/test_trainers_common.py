@@ -215,10 +215,29 @@ class TestBuildCheckpointCallback:
         assert callback.save_top_k == 1
 
     def test_monitors_val_loss_and_keeps_the_lowest(self):
+        """The default, for a config that names no monitor of its own."""
+
         callback = build_checkpoint_callback(_cfg(), "tempo")
 
         assert callback.monitor == "val/loss"
         assert callback.mode == "min"
+
+    def test_monitor_is_configurable_and_names_the_file_it_ranks(self):
+        """`mode` is derived, not configured: selecting on an F-measure with
+        `min` would keep the run's *worst* epochs. The tag in the filename is
+        what lets tools/leaderboard.py read the group in the same direction."""
+
+        callback = build_checkpoint_callback(
+            _cfg(trainer={"monitor": "val/f_beat"}), "beat-phase"
+        )
+
+        assert callback.monitor == "val/f_beat"
+        assert callback.mode == "max"
+
+        rendered = Path(
+            callback.format_checkpoint_name({"epoch": 42, "val/f_beat": 0.8123})
+        )
+        assert rendered.name == "beat-phase-epoch42-valfbeat0.8123.ckpt"
 
     def test_works_without_a_wandb_section(self):
         cfg = OmegaConf.create({"checkpoint_dir": "ckpts/", "trainer": {}})

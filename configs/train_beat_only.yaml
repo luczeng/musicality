@@ -29,6 +29,7 @@ trainer:
   devices: 1
   log_every_n_steps: 10
   check_val_every_n_epoch: 1
+  monitor: val/f_beat  # any logged key; min/max is inferred from the name
 # --- Data ---------------------------------------------------------------
 # binary_only is folded into the split name, so it must match the split it is
 # read with (`--binary-only` on tools/create_splits.py).

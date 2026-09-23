@@ -33,6 +33,7 @@ from pathlib import Path
 
 import musicality.dataformats as dataformats
 from musicality.callbacks.event_metrics import stratified_sample
+from musicality.callbacks.metrics_logger import metric_mode
 from musicality.callbacks.training_report import git_commit, jsonable
 from musicality.evaluation import (
     SCORE_KEYS,
@@ -93,22 +94,32 @@ BOARD_COLUMNS = (
     "confusion",
 )
 
-_VALLOSS = re.compile(r"valloss([0-9]*\.?[0-9]+)")
+# The `trainer.monitor` a run selected on, as its checkpoint names carry it,
+# plus that checkpoint's score: `valloss1.3894`, `valfbeat0.8123`.
+_SELECTED = re.compile(r"-(val[a-z]+)([0-9]*\.?[0-9]+)\.ckpt$")
 
 
 def run_checkpoints(run_dir: Path) -> list[tuple[str, Path]]:
     """The ``(label, checkpoint)`` pairs one directory contributes.
 
-    A ``save_top_k`` group (``val/loss`` in every name) is one run, represented
-    by its best file. Names without a loss are hand-named checkpoints sharing a
-    folder — one run each, since collapsing those would drop five models.
+    A ``save_top_k`` group (a selection metric in every name) is one run,
+    represented by its best file. Names without one are hand-named checkpoints
+    sharing a folder — one run each, since collapsing those would drop five
+    models.
+
+    Best is best *for the metric that run selected on*, which is not always a
+    minimum — a ``val/f_beat`` group is led by its highest file, and reading it
+    as a loss would pick the run's worst checkpoint. One directory is one run
+    under one monitor, so the first file's tag decides for the group.
     """
 
     checkpoints = sorted(run_dir.glob("*.ckpt"))
-    scored = [(match, c) for c in checkpoints if (match := _VALLOSS.search(c.name))]
+    scored = [(match, c) for c in checkpoints if (match := _SELECTED.search(c.name))]
 
     if scored:
-        return [(str(run_dir), min(scored, key=lambda p: float(p[0].group(1)))[1])]
+        best = min if metric_mode(scored[0][0].group(1)) == "min" else max
+
+        return [(str(run_dir), best(scored, key=lambda p: float(p[0].group(2)))[1])]
 
     return [(str(c.with_suffix("")), c) for c in checkpoints]
 

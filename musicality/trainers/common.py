@@ -1,6 +1,7 @@
 """Training-pipeline plumbing shared across the tempo, beat-phase, and beat-only trainers."""
 
 import random
+import re
 import warnings
 from datetime import datetime
 from itertools import islice
@@ -15,6 +16,7 @@ from torch.utils.data import DataLoader, Subset
 
 import musicality.dataformats as dataformats
 from musicality.augmentations import AugmentedBeatDataset, build_beat_phase_augmenter
+from musicality.callbacks.metrics_logger import metric_mode
 from musicality.dataformats.track_io import TrackRef
 from musicality.loaders.beat_dataset import BeatDataset
 from musicality.losses.shift_tolerance import TOLERANCE_FRAMES
@@ -245,7 +247,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
 def build_checkpoint_callback(cfg: DictConfig, prefix: str) -> ModelCheckpoint:
     """One directory per run, holding that run's ``save_top_k`` best checkpoints.
 
-    Two things this gets right that a bare :class:`ModelCheckpoint` does not:
+    Three things this gets right that a bare :class:`ModelCheckpoint` does not:
 
     **The metric name must not reach the filename.** Lightning's
     ``auto_insert_metric_name`` splices the monitored key into the filename, and
@@ -261,8 +263,17 @@ def build_checkpoint_callback(cfg: DictConfig, prefix: str) -> ModelCheckpoint:
     checkpoints interleaved — ``save_top_k`` is per-run bookkeeping and cannot
     prune another run's files. Each run gets its own subdirectory instead.
 
-    :param cfg: Needs ``checkpoint_dir``, ``trainer.save_top_k`` (optional,
-        defaults to 3) and ``wandb.run_name`` (optional).
+    **Which metric selects is the run's choice.** ``trainer.monitor`` names any
+    key the module logs, defaulting to ``val/loss``; the beat configs set
+    ``val/f_beat``. Its direction comes from the name
+    (:func:`~musicality.callbacks.metrics_logger.metric_mode`) rather than a
+    ``mode`` key that could disagree with it, and a flattened copy of the name
+    goes in the filename (``valfbeat0.8477``), so ``tools/leaderboard.py`` can
+    tell which way to read a ``save_top_k`` group instead of assuming a loss.
+
+    :param cfg: Needs ``checkpoint_dir``, ``trainer.monitor`` (optional,
+        defaults to ``val/loss``), ``trainer.save_top_k`` (optional, defaults
+        to 3) and ``wandb.run_name`` (optional).
     :param prefix: Filename stem for this task, e.g. ``"beat-phase"``.
     """
 
@@ -274,12 +285,15 @@ def build_checkpoint_callback(cfg: DictConfig, prefix: str) -> ModelCheckpoint:
         "%Y%m%d-%H%M%S"
     )
 
+    monitor = cfg.trainer.get("monitor", "val/loss")
+    tag = re.sub(r"[^a-z0-9]", "", monitor.lower())
+
     return ModelCheckpoint(
         dirpath=Path(cfg.checkpoint_dir) / run_name,
-        monitor="val/loss",
-        mode="min",
+        monitor=monitor,
+        mode=metric_mode(monitor),
         save_top_k=cfg.trainer.get("save_top_k", 3),
-        filename=f"{prefix}-epoch{{epoch:02d}}-valloss{{val/loss:.4f}}",
+        filename=f"{prefix}-epoch{{epoch:02d}}-{tag}{{{monitor}:.4f}}",
         auto_insert_metric_name=False,
         save_weights_only=True,
     )
