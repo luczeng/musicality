@@ -31,9 +31,21 @@ _LOWER_BETTER = ("loss", "mae")  # substring match against the metric key
 _VAL_PREFIXES = ("val/", "val_event/")
 
 
+def metric_mode(key: str) -> str:
+    """``"min"`` or ``"max"`` for a metric name — also read by the checkpoint
+    monitor and ``tools/leaderboard.py``, so the direction is defined once.
+
+    Substring match, so it works on the flattened form the checkpoint
+    filenames carry (``valloss``) as well as on ``val/loss``.
+    """
+
+    return "min" if any(s in key for s in _LOWER_BETTER) else "max"
+
+
 def _is_better(key: str, val: float, current_best: float) -> bool:
-    if any(s in key for s in _LOWER_BETTER):
+    if metric_mode(key) == "min":
         return val < current_best
+
     return val > current_best
 
 

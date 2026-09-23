@@ -244,14 +244,17 @@ mean, which weights each corpus equally instead of letting the largest one
 decide for all of them.
 
 Which checkpoint stands for a run: a directory whose checkpoints carry a
-``valloss`` in their filename is one run's ``save_top_k`` group, represented by
-its best-scoring file; a directory of hand-named checkpoints is one entry per
-file. A checkpoint that fails to load is reported under ``failed`` and the rest
-of the board still runs — the model pass is the expensive part here.
+selection metric in their filename (``valloss1.3894``, ``valfbeat0.8477``) is
+one run's ``save_top_k`` group, represented by its best-scoring file; a
+directory of hand-named checkpoints is one entry per file. A checkpoint that
+fails to load is reported under ``failed`` and the rest of the board still runs
+— the model pass is the expensive part here.
 
-Picking by ``val/loss`` is weaker than it looks for beat-phase: it tracks the
-position head's confidence rather than decoded accuracy, so the lowest-loss
-epoch is not reliably the best-decoding one. Scoring all three of a
+Best means best *for the metric that run selected on* (``trainer.monitor``),
+which the tag in the filename identifies: ``valloss`` is read low-is-best,
+``valfbeat`` high-is-best. Assuming a loss would hand the board each
+``f_beat``-selected run's worst checkpoint. Older ``valloss`` folders are still
+read as such, so both kinds coexist on one board. Scoring all three of a
 ``save_top_k`` group would cost three model passes per run.
 
 The board is written twice, to the two places it is read from.

@@ -342,9 +342,24 @@ Optimisation
 ``trainer.*``
     Passed straight to ``lightning.Trainer``: ``max_epochs``, ``accelerator``
     (``cpu | gpu | auto``), ``devices``, ``log_every_n_steps``,
-    ``check_val_every_n_epoch``. ``trainer.save_top_k`` (default 3) is read by
+    ``check_val_every_n_epoch``. ``trainer.save_top_k`` (default 3) and
+    ``trainer.monitor`` (below) are read by
     :func:`~musicality.trainers.common.build_checkpoint_callback` rather than
     by Lightning.
+
+``trainer.monitor`` — ``val/f_beat``
+    Which metric decides the epochs a run keeps. Any key the module logs; the
+    default in code is ``val/loss``, and both beat configs override it because
+    ``val/loss`` there is dominated by the position head's confidence rather
+    than by decoded accuracy, so its best epoch is not reliably the
+    best-decoding one.
+
+    Min or max is not a separate key — it comes from the name via
+    :func:`~musicality.callbacks.metrics_logger.metric_mode` (``loss`` and
+    ``mae`` minimise, everything else maximises), since a ``mode`` beside it
+    could disagree with the metric it names. The name also reaches the filename
+    (``beat-phase-epoch42-valfbeat0.8123.ckpt``), which is how
+    ``tools/leaderboard.py`` knows which way to read a ``save_top_k`` group.
 
 Data
 ~~~~

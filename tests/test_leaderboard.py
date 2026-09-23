@@ -68,6 +68,23 @@ class TestRunCheckpoints:
         assert label == str(run)
         assert checkpoint.name == "beat-phase-epoch103-valloss1.3894.ckpt"
 
+    def test_a_group_selected_on_f_beat_is_read_at_its_highest(self, tmp_path):
+        """The direction has to come from the metric in the name. Under
+        `trainer.monitor: val/f_beat` the best file is the *highest*, and
+        reading the group as a loss would hand the board each run's worst
+        checkpoint."""
+
+        run = _touch(
+            tmp_path / "20260923-101500",
+            "beat-phase-epoch83-valfbeat0.8012.ckpt",
+            "beat-phase-epoch103-valfbeat0.8477.ckpt",
+            "beat-phase-epoch107-valfbeat0.8310.ckpt",
+        )
+
+        ((_label, checkpoint),) = run_checkpoints(run)
+
+        assert checkpoint.name == "beat-phase-epoch103-valfbeat0.8477.ckpt"
+
     def test_hand_named_checkpoints_are_one_run_each(self, tmp_path):
         run = _touch(tmp_path / "checkpoints", "merge_v5.ckpt", "checkpoint_v6.ckpt")
 
