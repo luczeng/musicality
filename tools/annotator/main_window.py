@@ -10,7 +10,7 @@ from pathlib import Path
 import librosa
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtGui import QFontDatabase
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -27,8 +27,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QSplitter,
-    QTreeWidget,
-    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -53,16 +51,13 @@ from .data import (
     active_bar_index,
     active_beat_position,
     add_beat,
-    annotation_meter_label,
     annotation_path,
     bar_indices,
     beats_per_bar,
     cycle_positions,
     dataset_bpm_summary,
     format_bpm_histogram,
-    has_annotation,
     is_accent_beat,
-    list_datasets,
     load_dataset_tracks,
     load_metadata,
     load_track,
@@ -72,12 +67,10 @@ from .data import (
     save_annotations,
     save_metadata,
     tempo_from_beats,
-    track_needs_review,
-    track_split,
-    track_warning,
 )
 from .metronome_widget import MetronomeWidget
 from .tap_tempo_widget import TapTempoWidget
+from .track_tree import TrackTree
 from .waveform_widget import WaveformWidget
 
 _TICK_MS = 30  # ~33 fps refresh rate
@@ -585,45 +578,18 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self._tap_widget)
 
         # Left panel: dataset tree
-        self._dataset_sort_combo = QComboBox()
-        self._dataset_sort_combo.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._dataset_sort_combo.addItem("Alphabetical", "alphabetical")
-        self._dataset_sort_combo.addItem("Recording date (newest)", "recording_date")
-        self._dataset_sort_combo.currentIndexChanged.connect(
-            lambda _i: self._populate_dataset_list()
+        self._track_tree = TrackTree()
+        self._track_tree.track_clicked.connect(self._on_track_clicked)
+        self._track_tree.dataset_clicked.connect(self._update_dataset_summary)
+        self._track_tree.tree.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu
         )
-        sort_bar = QHBoxLayout()
-        sort_bar.addWidget(QLabel("Sort:"))
-        sort_bar.addWidget(self._dataset_sort_combo)
-
-        self._dataset_tree = QTreeWidget()
-        self._dataset_tree.setColumnCount(5)
-        self._dataset_tree.header().hide()
-        self._dataset_tree.setColumnWidth(0, 320)
-        self._dataset_tree.setColumnWidth(1, 18)
-        self._dataset_tree.setColumnWidth(2, 36)
-        self._dataset_tree.setColumnWidth(3, 24)
-        self._dataset_tree.setColumnWidth(4, 24)
-        self._dataset_tree.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
-        self._dataset_tree.itemExpanded.connect(self._on_item_expanded)
-        self._dataset_tree.itemClicked.connect(self._on_item_clicked)
-        self._dataset_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self._dataset_tree.customContextMenuRequested.connect(
+        self._track_tree.tree.customContextMenuRequested.connect(
             self._on_tree_context_menu
         )
-        self._populate_dataset_list()
-
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(4, 4, 4, 4)
-        left_layout.setSpacing(0)
-        left_layout.addLayout(sort_bar)
-        left_layout.addWidget(self._dataset_tree)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(left_panel)
+        splitter.addWidget(self._track_tree)
         splitter.addWidget(right_panel)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
@@ -690,69 +656,13 @@ class MainWindow(QMainWindow):
         self._update_dataset_summary(self._dataset_name)
         self.setWindowTitle(f"{self._dataset_name}  /  {track_id}")
 
-    def _populate_dataset_list(self, *, keep_selection: bool = False) -> None:
-        selected_dataset = self._dataset_name if keep_selection else None
-        selected_track = (
-            self._track.track_id if keep_selection and self._track else None
+    def _repopulate_tree(self) -> None:
+        """Rebuild the track tree from disk, keeping the current track selected."""
+        self._track_tree.populate(
+            self._dataset_name, self._track.track_id if self._track else None
         )
 
-        self._dataset_tree.clear()
-        bold = QFont()
-        bold.setBold(True)
-        infos = list_datasets()
-        if self._dataset_sort_combo.currentData() == "recording_date":
-            infos.sort(key=lambda info: info.mtime, reverse=True)
-        else:
-            infos.sort(key=lambda info: info.name.lower())
-        for info in infos:
-            suffix = f"  ({info.n_tracks} · {info.n_annotations} ann)"
-            ds_item = QTreeWidgetItem([info.name + suffix])
-            ds_item.setFont(0, bold)
-            ds_item.setData(0, Qt.ItemDataRole.UserRole, info.name)
-            ds_item.setFirstColumnSpanned(True)
-            # Placeholder keeps the expand arrow visible until the user expands
-            placeholder = QTreeWidgetItem([""])
-            placeholder.setData(0, Qt.ItemDataRole.UserRole, "__loading__")
-            ds_item.addChild(placeholder)
-            self._dataset_tree.addTopLevelItem(ds_item)
-
-            if info.name == selected_dataset:
-                ds_item.setExpanded(True)  # triggers lazy-load of children
-                if selected_track:
-                    for j in range(ds_item.childCount()):
-                        child = ds_item.child(j)
-                        if child.data(0, Qt.ItemDataRole.UserRole) == selected_track:
-                            self._dataset_tree.setCurrentItem(child)
-                            self._dataset_tree.scrollToItem(child)
-                            break
-
-    def _on_item_expanded(self, item: QTreeWidgetItem) -> None:
-        if item.childCount() != 1:
-            return
-        if item.child(0).data(0, Qt.ItemDataRole.UserRole) != "__loading__":
-            return
-        self._load_children(item)
-
-    def _load_children(self, item: QTreeWidgetItem) -> None:
-        """(Re)populate *item*'s track children from disk, replacing whatever is there."""
-        item.takeChildren()
-        dataset_name = item.data(0, Qt.ItemDataRole.UserRole)
-        for track_id in load_dataset_tracks(dataset_name):
-            track_item = QTreeWidgetItem()
-            track_item.setText(0, track_id)
-            track_item.setData(0, Qt.ItemDataRole.UserRole, track_id)
-            self._set_row_indicators(track_item, dataset_name, track_id)
-            item.addChild(track_item)
-
-    def _on_item_clicked(self, item: QTreeWidgetItem, column: int) -> None:
-        parent = item.parent()
-        if parent is None:
-            # Dataset header — expand/collapse handled by Qt, but selecting it
-            # should still surface that dataset's summary.
-            self._update_dataset_summary(item.data(0, Qt.ItemDataRole.UserRole))
-            return
-        dataset_name = parent.data(0, Qt.ItemDataRole.UserRole)
-        track_id = item.data(0, Qt.ItemDataRole.UserRole)
+    def _on_track_clicked(self, dataset_name: str, track_id: str) -> None:
         if dataset_name != self._dataset_name:
             self._engine.stop()
             self._dataset_name = dataset_name
@@ -785,7 +695,7 @@ class MainWindow(QMainWindow):
         self._dataset_summary_label.setText("\n".join(lines))
 
     def _on_tree_context_menu(self, pos) -> None:
-        item = self._dataset_tree.itemAt(pos)
+        item = self._track_tree.tree.itemAt(pos)
         if item is None or item.parent() is None:
             return  # empty space or a dataset header — no menu
 
@@ -796,84 +706,27 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         rename_action = menu.addAction("Rename")
         delete_action = menu.addAction("🗑  Delete track")
-        action = menu.exec(self._dataset_tree.viewport().mapToGlobal(pos))
+        action = menu.exec(self._track_tree.tree.viewport().mapToGlobal(pos))
         if action is None:
             return
 
         # Rename/delete act on self._track, so make sure the right-clicked
         # track is the one currently loaded before invoking them.
         if self._track is None or track_id != self._track.track_id:
-            self._on_item_clicked(item, 0)
+            self._on_track_clicked(
+                item.parent().data(0, Qt.ItemDataRole.UserRole), track_id
+            )
 
         if action is rename_action:
             self._on_rename()
         elif action is delete_action:
             self._on_delete_track()
 
-    @staticmethod
-    def _set_row_indicators(
-        item: QTreeWidgetItem, dataset_name: str, track_id: str
-    ) -> None:
-        item.setToolTip(1, "Has a saved annotation from this app")
-        if has_annotation(dataset_name, track_id):
-            item.setText(1, "●")
-            item.setForeground(1, QColor("#44cc44"))
-        else:
-            item.setText(1, "✕")
-            item.setForeground(1, QColor("#cc4444"))
-        item.setToolTip(
-            2,
-            "Annotated meter (1..N bar positions) — "
-            "• for beats with no position data, blank for no annotation",
-        )
-        item.setText(2, annotation_meter_label(dataset_name, track_id))
-
-        item.setToolTip(
-            3,
-            "Train/val split (musicality_db/splits) — "
-            "blank if no split has been generated for this dataset/track",
-        )
-        split = track_split(dataset_name, track_id)
-        if split == "train":
-            item.setText(3, "T")
-            item.setForeground(3, QColor("#4488cc"))
-        elif split == "val":
-            item.setText(3, "V")
-            item.setForeground(3, QColor("#cc8844"))
-        else:
-            item.setText(3, "")
-
-        item.setToolTip(
-            4,
-            "⚠ Flagged as a suspicious annotation (toggle with the Flag button) — "
-            "takes priority in this column over ❓ needs review (toggle with the "
-            "To Review button)",
-        )
-        if track_warning(dataset_name, track_id):
-            item.setText(4, "⚠")
-            item.setForeground(4, QColor("#ffcc00"))
-        elif track_needs_review(dataset_name, track_id):
-            item.setText(4, "❓")
-            item.setForeground(4, QColor("#aa66ff"))
-        else:
-            item.setText(4, "")
-
     def _update_row_indicators(self) -> None:
         """Refresh the annotation/split columns for the currently loaded track
         without rebuilding the tree."""
-        if not self._track:
-            return
-        for i in range(self._dataset_tree.topLevelItemCount()):
-            ds_item = self._dataset_tree.topLevelItem(i)
-            if ds_item.data(0, Qt.ItemDataRole.UserRole) != self._dataset_name:
-                continue
-            for j in range(ds_item.childCount()):
-                child = ds_item.child(j)
-                if child.data(0, Qt.ItemDataRole.UserRole) == self._track.track_id:
-                    self._set_row_indicators(
-                        child, self._dataset_name, self._track.track_id
-                    )
-                    return
+        if self._track:
+            self._track_tree.refresh_row(self._dataset_name, self._track.track_id)
 
     def _on_prev(self) -> None:
         if self._index > 0:
@@ -1147,7 +1000,7 @@ class MainWindow(QMainWindow):
                 self._inferred_waveform.set_waveform(self._track_audio, self._track_sr)
                 self._inferred_container.setVisible(True)
             self.statusBar().showMessage(f"Recording saved → {path}", 4000)
-            self._populate_dataset_list(keep_selection=True)
+            self._repopulate_tree()
             if dataset == self._dataset_name:
                 self._track_ids = load_dataset_tracks(dataset)
 
@@ -1293,7 +1146,7 @@ class MainWindow(QMainWindow):
             self._update_flag_button()
             self._update_review_button()
             self._update_phase_shift_controls()
-        self._populate_dataset_list(keep_selection=True)
+        self._repopulate_tree()
         self.statusBar().showMessage(f"Track deleted.", 3000)
 
     def _on_rename(self) -> None:
@@ -1318,19 +1171,7 @@ class MainWindow(QMainWindow):
         self._update_info_label()
         # Refresh tree row if the dataset is currently expanded, keeping it
         # expanded and re-selecting the renamed track instead of collapsing.
-        for i in range(self._dataset_tree.topLevelItemCount()):
-            ds_item = self._dataset_tree.topLevelItem(i)
-            if ds_item.data(0, Qt.ItemDataRole.UserRole) != self._dataset_name:
-                continue
-            if ds_item.isExpanded():
-                self._load_children(ds_item)
-                for j in range(ds_item.childCount()):
-                    child = ds_item.child(j)
-                    if child.data(0, Qt.ItemDataRole.UserRole) == new_id:
-                        self._dataset_tree.setCurrentItem(child)
-                        self._dataset_tree.scrollToItem(child)
-                        break
-            break
+        self._track_tree.reload_dataset(self._dataset_name, new_id)
         self.statusBar().showMessage(f"Renamed → {new_id}", 3000)
 
     def _on_flag_suspicious(self, checked: bool) -> None:

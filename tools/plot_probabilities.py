@@ -1,47 +1,51 @@
 #!/usr/bin/env python3
 """Plot a beat-phase checkpoint's output over time: the beat probability and
-the probability of each bar position, one row each, for the tracks you name.
+the probability of each bar position, one row each.
 
-The annotated beats are drawn as grey lines — every beat on the beat row, and
-on each position row the beats annotated at that position — so a row should
-peak on its own lines. The position head is only trained at beats, so what it
-says in between means nothing.
+Pick a track in the tree on the left — the annotator's own — and its plot
+appears on the right. The annotated beats are drawn as grey lines — every beat
+on the beat row, and on each position row the beats annotated at that
+position — so a row should peak on its own lines. The position head is only
+trained at beats, so what it says in between means nothing. When the track has
+bar-position annotations, a row on top shows its beats: downbeats in green,
+every other beat in orange.
 
 Usage
 -----
     uv run python tools/plot_probabilities.py \\
-        --checkpoint checkpoints/v7/beat-phase-epoch123-valloss0.8799.ckpt \\
-        --track ballroom/Albums-Cafe_Paradiso-02 gtzan/rock_00016
+        --checkpoint checkpoints/v7/beat-phase-epoch123-valloss0.8799.ckpt
 
-    # open on 20 s from the two-minute mark
-    uv run python tools/plot_probabilities.py --checkpoint ... \\
-        --track rwc_genre/RWC_G057 --start 120 --duration 20
+    # open every plot on 20 s from the two-minute mark
+    uv run python tools/plot_probabilities.py --checkpoint ... --start 120 --duration 20
 
-Tracks are named ``corpus/track_id``, as in the split files. Each opens in its
-own window. The whole track is plotted; ``--start``/``--duration`` only set the
-initial view, and the toolbar pans and zooms from there.
+The whole track is plotted; ``--start``/``--duration`` only set the initial
+view, and the toolbar above the plot pans and zooms from there.
 """
 
 import argparse
+import sys
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.figure import Figure
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
-import musicality.dataformats as dataformats
-from musicality.dataformats.track_io import TrackRef
 from musicality.inference import load_module, load_track_waveform
-from musicality.loaders.beat_dataset import BeatDataset
-from musicality.splits.splitter import verify_refs_present
+from musicality.loaders.beat_dataset import fold_positions
+from tools.annotator.data import load_track
+from tools.annotator.track_tree import TrackTree
 
-
-def track_ref(name: str) -> TrackRef:
-    """``corpus/track_id`` to the track it names."""
-
-    corpus, track_id = name.split("/", 1)
-
-    return TrackRef(corpus, track_id, dataformats.DATA_DIR / corpus)
+# The annotator's colours: downbeats green, every other beat orange.
+DOWNBEAT_COLOR, BEAT_COLOR = "#44cc44", "#cc7700"
 
 
 @torch.no_grad()
@@ -56,25 +60,73 @@ def probabilities(module, wav: torch.Tensor, device: str) -> np.ndarray:
     return torch.cat([beat, positions]).cpu().numpy()
 
 
-def plot_track(title: str, probs: np.ndarray, fps: float, beat_times, positions):
-    """One row per output on a shared time axis, with the annotated beats."""
+def bar_positions(positions: np.ndarray | None, group_size: int) -> np.ndarray | None:
+    """Annotated bar positions folded onto the head's ``group_size``, as
+    training folds them — ``None`` when there are none, or when the meter
+    cannot be folded (a 6-beat bar against a 4-way head)."""
+
+    if positions is None or not np.any(positions > 0):
+        return None
+
+    return fold_positions(positions, group_size)
+
+
+def plot_track(
+    fig: Figure, title: str, probs: np.ndarray, fps: float, beat_times, positions
+):
+    """One row per output on a shared time axis, with the annotated beats.
+
+    When *positions* is given, a thinner row on top shows the annotated beats,
+    the downbeats in their own colour.
+    """
 
     times = np.arange(probs.shape[1]) / fps
     names = ["beat"] + [f"position {p}" for p in range(1, len(probs))]
+    annotated = positions is not None
 
-    fig, axes = plt.subplots(
-        len(names),
+    heights = ([0.5] if annotated else []) + [1] * len(names)
+    axes = fig.subplots(
+        len(heights),
         1,
         sharex=True,
         sharey=True,
-        figsize=(14, 1.5 * len(names) + 1),
-        layout="constrained",
+        gridspec_kw={"height_ratios": heights},
     )
+
+    if annotated:
+        top, axes = axes[0], axes[1:]
+        downbeat = positions == 1
+
+        top.vlines(
+            beat_times[downbeat],
+            0,
+            1,
+            color=DOWNBEAT_COLOR,
+            linewidth=2,
+            label="position 1",
+        )
+        top.vlines(
+            beat_times[~downbeat],
+            0,
+            1,
+            color=BEAT_COLOR,
+            linewidth=2,
+            label="other positions",
+        )
+
+        top.tick_params(left=False, labelleft=False)
+        top.set_ylabel("annotation", rotation=0, ha="right", va="center")
+        top.legend(
+            ncol=2,
+            loc="lower right",
+            bbox_to_anchor=(1, 1),
+            frameon=False,
+        )
 
     for row, (ax, name) in enumerate(zip(axes, names)):
         if row == 0:
             marks = beat_times
-        elif positions is not None:
+        elif annotated:
             marks = beat_times[positions == row]
         else:
             marks = []
@@ -87,21 +139,77 @@ def plot_track(title: str, probs: np.ndarray, fps: float, beat_times, positions)
     axes[-1].set_xlabel("time (s)")
     fig.suptitle(title)
 
-    return fig
+
+class Viewer(QMainWindow):
+    """The annotator's track tree on the left; clicking a track plots it on
+    the right."""
+
+    def __init__(
+        self, module, checkpoint: Path, device: str, start: float, duration: float
+    ):
+        super().__init__()
+
+        self._module = module
+        self._device = device
+        self._view = (start, start + duration)
+
+        hparams = module.hparams
+        self._group_size = hparams["group_size"]
+        self._sample_rate = hparams["model"]["sample_rate"]
+        self._fps = self._sample_rate / hparams["model"]["hop_length"]
+
+        self._figure = Figure(layout="constrained")
+        self._canvas = FigureCanvasQTAgg(self._figure)
+
+        tree = TrackTree()
+        tree.track_clicked.connect(self._show_track)
+
+        plot_panel = QWidget()
+        plot_layout = QVBoxLayout(plot_panel)
+        plot_layout.addWidget(NavigationToolbar2QT(self._canvas, plot_panel))
+        plot_layout.addWidget(self._canvas)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(tree)
+        splitter.addWidget(plot_panel)
+        splitter.setStretchFactor(1, 1)
+        splitter.setSizes([480, 1100])
+
+        self.setCentralWidget(splitter)
+        self.setWindowTitle(f"{checkpoint.parent.name}/{checkpoint.name}")
+
+    def _show_track(self, dataset_name: str, track_id: str) -> None:
+
+        # Loading and a full-track forward pass take a moment on long tracks.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            track = load_track(dataset_name, track_id)
+            wav = load_track_waveform(track.audio_path, self._sample_rate)
+            probs = probabilities(self._module, wav, self._device)
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self._figure.clear()
+        plot_track(
+            self._figure,
+            f"{dataset_name}/{track_id}",
+            probs,
+            self._fps,
+            track.beat_times,
+            bar_positions(track.beat_positions, self._group_size),
+        )
+        self._figure.axes[0].set_xlim(*self._view)
+        self._canvas.draw_idle()
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot a beat-phase checkpoint's beat and bar-position probabilities over time."
+        description=(
+            "Plot a beat-phase checkpoint's beat and bar-position probabilities "
+            "over time, for tracks picked in the annotator's track tree."
+        )
     )
     parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument(
-        "--track",
-        type=track_ref,
-        nargs="+",
-        required=True,
-        help="One or more corpus/track_id, as in the split files",
-    )
     parser.add_argument(
         "--start", type=float, default=0.0, help="Initial view start, seconds"
     )
@@ -112,33 +220,17 @@ def main():
     args = parser.parse_args()
 
     module, task = load_module(args.checkpoint, args.device)
-    group_size = module.hparams.get("group_size")
 
-    if task != "beat_phase" or group_size is None:
+    if task != "beat_phase" or module.hparams.get("group_size") is None:
         raise SystemExit(f"{args.checkpoint} has no bar-position softmax head.")
 
-    sample_rate = module.hparams["model"]["sample_rate"]
-    fps = sample_rate / module.hparams["model"]["hop_length"]
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")  # the annotator's style, so the tree looks the same
 
-    # Annotations come through BeatDataset so that a longer annotated bar is
-    # folded onto the head's positions, exactly as in training.
-    verify_refs_present(args.track)
-    dataset = BeatDataset(refs=args.track, group_size=group_size)
+    viewer = Viewer(module, args.checkpoint, args.device, args.start, args.duration)
+    viewer.showMaximized()
 
-    for ref, (audio_path, beat_times, positions, _) in zip(
-        dataset.refs, dataset.samples
-    ):
-        wav = load_track_waveform(audio_path, sample_rate)
-        probs = probabilities(module, wav, args.device)
-
-        title = (
-            f"{ref.dataset_name}/{ref.track_id} — "
-            f"{args.checkpoint.parent.name}/{args.checkpoint.name}"
-        )
-        fig = plot_track(title, probs, fps, beat_times, positions)
-        fig.axes[0].set_xlim(args.start, args.start + args.duration)
-
-    plt.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

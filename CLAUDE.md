@@ -43,8 +43,8 @@ uv run python tools/plot_tempo_histograms.py
 # Visualize BeatDataset's smeared beat/one/four targets for one clip
 uv run python tools/plot_beat_targets.py --dataset ballroom
 
-# Plot a beat-phase checkpoint's beat + bar-position probabilities over time for chosen tracks
-uv run python tools/plot_probabilities.py --checkpoint <path-to-ckpt> --track ballroom/Albums-Cafe_Paradiso-02
+# Plot a beat-phase checkpoint's beat + bar-position probabilities over time, picking tracks from the annotator's tree
+uv run python tools/plot_probabilities.py --checkpoint <path-to-ckpt>
 
 # Add a dependency
 uv add <package>
@@ -124,11 +124,11 @@ of silently shrinking its dataset (see `docs/source/data.rst`).
 
 ### Tools (`tools/`)
 
-- `annotator/` — PySide6 GUI for manual beat/tempo annotation. Features: waveform display, playback, tap-tempo widget, metronome, recording.
+- `annotator/` — PySide6 GUI for manual beat/tempo annotation. Features: waveform display, playback, tap-tempo widget, metronome, recording. Its dataset → track tree is a widget of its own (`track_tree.py`, `TrackTree`), shared with `plot_probabilities.py`.
 - `download_dataset.py` — Downloads datasets listed in `configs/download.yaml` via `mirdata`.
 - `inspect_track.py` — Prints metadata and annotations for a single audio file.
 - `plot_tempo_histograms.py` — Plots BPM distributions across datasets.
-- `plot_probabilities.py` — Runs a beat-phase checkpoint on full tracks named `corpus/track_id` and plots, on a shared time axis, the beat probability and each bar position's softmax probability (one row each), with the annotated beats marked. `--start`/`--duration` set the initial view.
+- `plot_probabilities.py` — A window with the annotator's track tree: click a track and it runs a beat-phase checkpoint on the full track and plots, on a shared time axis, the beat probability and each bar position's softmax probability (one row each), with the annotated beats marked — plus, when the track has bar-position annotations, a top row of its beats with the downbeats in their own colour (the annotator's green/orange). `--start`/`--duration` set the initial view.
 - `summarize_datasets.py` — Prints summary statistics for all datasets.
 - `train.py` — Hydra entry point for training.
 - `leaderboard.py` — Compares *several* runs, where `eval_beat.py` scores one. Walks checkpoint folders, re-evaluates every run it finds through `BeatEvaluator` (so the numbers match `eval_beat.py`) on the split `configs/eval_beat.yaml` names, sweeping each checkpoint's own postprocessing on the **train** split first so the reported val numbers stay held out — unlike `eval_beat.py --sweep`, which tunes and reports on the same tracks. Results merge into one **running** board: a single `leaderboard.json` in the DVC-tracked data repo (`musicality_db/leaderboard/`, `--board` for another path), pulled before reading and `dvc push`ed after writing so it outlives the instance that produced it; only the `.dvc` pointer is left to commit. The board is written twice, to the two places it is read from: `leaderboard.json` is the record, DVC-tracked in the data repo; `leaderboard/LEADERBOARD.md` in **this** repo is the page — git-tracked, so the standings render on GitHub with no `dvc pull` (ranking, the ranking metric per corpus, each row's decode, and its checkpoint path). Only the default `--board` writes the page, `--top N` cuts it to the best N runs, and `--render-only` rebuilds it from the JSON alone, scoring nothing. Only the runs named on the command line are evaluated, the rest are carried over, and rows measured under different settings are refused rather than merged.
