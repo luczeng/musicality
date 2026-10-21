@@ -84,6 +84,14 @@ Where this gets used:
   inference in the GUI, via ``tools.annotator.inference.infer_beats``.
   Beat-phase only (it displays bar positions, which a beat-only checkpoint
   has no concept of).
+- ``tools/plot_probabilities.py`` — the raw, undecoded curves: pick a track
+  in the annotator's track tree and it plots a beat-phase checkpoint's beat
+  probability and each bar position's probability over the full track, one
+  row each, against the annotated beats. Calls ``load_module`` but not
+  ``run_inference``, since it shows what the model says before
+  postprocessing touches it::
+
+      uv run python tools/plot_probabilities.py --checkpoint <path-to-ckpt>
 
 Postprocessing tools
 ---------------------
