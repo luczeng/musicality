@@ -329,6 +329,7 @@ attachment.
 | `tools/sweep_lr.py` | Batch-train the beat-phase model over a list of learning rates and compare results |
 | `tools/leaderboard.py` | Re-score every run in one or more checkpoint folders on a common split, sweeping each checkpoint's postprocessing, into one running `leaderboard.json` kept in the DVC-tracked data repo |
 | `tools/plot_beat_targets.py` | Visualize a `BeatDataset` clip's waveform against its smeared beat/one/last targets |
+| `tools/plot_probabilities.py` | Pick a track in the annotator's track tree and plot a beat-phase checkpoint's raw output on the full track: the beat probability and each bar position's probability over time, one row each, against the annotated beats (downbeats highlighted when the track has bar positions). `uv run python tools/plot_probabilities.py --checkpoint <ckpt>`; `--start`/`--duration` set the initial view |
 | `tools/download_dataset.py` | Download datasets listed in `configs/download.yaml` via mirdata |
 | `tools/migrate_mirdata_dataset.py` | Migrate a mirdata dataset's beat annotations into this project's own `tracks/`/`annotations/` layout (see [Data format](#data-format)), so tools that only understand that layout can read it like a homemade dataset |
 | `tools/summarize_datasets.py` | Print summary statistics (song count, annotation types) for all downloaded datasets |
