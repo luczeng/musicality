@@ -43,7 +43,7 @@ m = \max_{i \in \mathcal{I}} a_i, \qquad
 $$
 
 $$
-\operatorname{softmax}_{\kappa}(a)_i = \frac{\exp\big( (a_i - m)/\tau \big)}{\sum_{i' \in \mathcal{I}} \exp\big( (a_{i'} - m)/\tau \big)}
+\mathrm{softmax}_{\kappa}(a)_i = \frac{\exp\big( (a_i - m)/\tau \big)}{\sum_{i' \in \mathcal{I}} \exp\big( (a_{i'} - m)/\tau \big)}
 $$
 
 **Why adaptive.** Beat This!-style training produces overconfident logits ($|a| \approx 10$). With a fixed $\tau$, the softmax becomes one-hot and the gradients, which are proportional to $p_i$ (see §6), vanish. With the adaptive $\tau$, whenever the floor is inactive the scaled mean logit sits exactly $\kappa$ below the scaled maximum, $(m - \bar a)/\tau = \kappa$, whatever the logit scale. The temperature is detached, so it is never a path for the network to lower the loss. In the code, `kappa=None` gives a fixed $\tau = \tau_{\min}$.
@@ -102,7 +102,7 @@ Bars cut by the excerpt edge are dropped, because a partial bar would bias the c
 **Soft-argmax inside each window**
 
 $$
-p_{k,\cdot} = \operatorname{softmax}_{\kappa_b}\big( z_t \big)_{t \in \mathcal{W}_k}, \qquad
+p_{k,\cdot} = \mathrm{softmax}_{\kappa_b}\big( z_t \big)_{t \in \mathcal{W}_k}, \qquad
 \hat b_k = \sum_{t \in \mathcal{W}_k} p_{k,t}\ t, \qquad
 m_k = \max_{t \in \mathcal{W}_k} z_t
 $$
@@ -148,13 +148,13 @@ $$
 $$
 \tilde z^{d}_t = \max_{|s| \le 3} z^{d}_{t+s}, \qquad
 u_k = \tilde z^{d}_{f_k}, \qquad
-f_k = \operatorname{clip}\big( \operatorname{round}(b_k),\ 0,\ T - 1 \big)
+f_k = \mathrm{clip}\big( \mathrm{round}(b_k),\ 0,\ T - 1 \big)
 $$
 
 **Circular soft-argmax over each bar**
 
 $$
-q_{j,\cdot} = \operatorname{softmax}_{\kappa_\phi}\big( u_k \big)_{k \in \mathcal{B}_j}, \qquad
+q_{j,\cdot} = \mathrm{softmax}_{\kappa_\phi}\big( u_k \big)_{k \in \mathcal{B}_j}, \qquad
 C_j = \sum_{k \in \mathcal{B}_j} q_{j,k} \cos \theta_k, \qquad
 S_j = \sum_{k \in \mathcal{B}_j} q_{j,k} \sin \theta_k
 $$
@@ -185,7 +185,7 @@ For small errors $1 - \cos\varphi \approx \varphi^2/2$. The hinge $\delta = 0.05
 **Diagnostics (no gradient)**
 
 $$
-\hat\varphi_j = \operatorname{atan2}(S_j, C_j), \qquad
+\hat\varphi_j = \mathrm{atan2}(S_j, C_j), \qquad
 R_j = \sqrt{C_j^2 + S_j^2}, \qquad
 \text{err}_j = \frac{|\hat\varphi_j|}{2\pi} \ \ \text{(fraction of a bar)}
 $$
@@ -209,7 +209,7 @@ $$
 $$
 
 $$
-\lambda(e) = \lambda \cdot \operatorname{clip}\!\left( \frac{e - e_0}{e_1 - e_0},\ 0,\ 1 \right)
+\lambda(e) = \lambda \cdot \mathrm{clip}\!\left( \frac{e - e_0}{e_1 - e_0},\ 0,\ 1 \right)
 $$
 
 The ramp over the epoch index $e$ switches the periodicity terms on only after peaks have formed. On a flat, untrained output the soft-argmax is noise.
@@ -231,7 +231,7 @@ $$
 
 The derivatives sum to zero over the window. So the beat term only **redistributes** logit mass inside a window and cannot create or remove a peak in aggregate.
 
-Let $s_k = \operatorname{sign}(\rho_k)\, \mathbb{1}\big[ |\rho_k| > \varepsilon \big]$ and $h'(x) = \min(x, 1)$. Since the windows are disjoint, frame $t \in \mathcal{W}_k$ receives gradient only through $\hat b_k$, which enters the two neighbouring pairs:
+Let $s_k = \mathrm{sign}(\rho_k)\, \mathbb{1}\big[ |\rho_k| > \varepsilon \big]$ and $h'(x) = \min(x, 1)$. Since the windows are disjoint, frame $t \in \mathcal{W}_k$ receives gradient only through $\hat b_k$, which enters the two neighbouring pairs:
 
 $$
 \frac{\partial \mathcal{L}_{\text{beat}}}{\partial \hat b_k} = \frac{1}{\gamma\, |\mathcal{P}|} \left[ \frac{g_{k-1}\, h'(x_{k-1})\, s_{k-1}}{\hat b_k - \hat b_{k-1}} - \frac{g_k\, h'(x_k)\, s_k}{\hat b_{k+1} - \hat b_k} \right]
