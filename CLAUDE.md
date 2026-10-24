@@ -75,7 +75,7 @@ Entry point: `tools/train.py` uses Hydra to compose config and calls `train()`.
 
 ### Augmentations (`musicality/augmentations.py`)
 
-`AugmentedDataset` wraps any dataset with configurable time-stretch, gain, and noise augmentation. `build_augmenter(cfg)` constructs it from the Hydra config.
+`AugmentedDataset` wraps any dataset with configurable time-stretch, pitch-shift, gain, and noise augmentation. `build_augmenter(cfg)` constructs it from the Hydra config.
 
 ### Losses (`musicality/losses/`)
 

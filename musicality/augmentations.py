@@ -7,12 +7,14 @@ All augmentations operate on (1, T) float32 tensors.  The composed
 
 from __future__ import annotations
 
+import math
 import random
 
 import torch
 import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
+from torchaudio.functional import phase_vocoder
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +48,58 @@ class TimeStretch:
             wav.unsqueeze(0), size=new_len, mode="linear", align_corners=False
         ).squeeze(0)
         return stretched, tempo * rate
+
+
+class PitchShift:
+    """Shift pitch by a random number of semitones without moving any onset.
+
+    A phase vocoder first stretches the clip by the pitch ratio (duration
+    changes, pitch doesn't), then resampling squeezes it back to its original
+    length (pitch changes, duration is restored).  Onsets end up where they
+    were, so neither the tempo label nor the frame target needs adjusting —
+    unlike :class:`TimeStretch`, which moves pitch and tempo together.
+
+    The STFT window is short (512 samples, 23 ms at 22.05 kHz) because a phase
+    vocoder smears every onset across its window: at librosa's default of 2048,
+    onsets drift ~15 ms early.
+
+    :param min_semitones: Lower bound of the shift (negative = lower pitch).
+    :param max_semitones: Upper bound of the shift (positive = higher pitch).
+    """
+
+    n_fft = 512
+    hop_length = 128
+
+    def __init__(self, min_semitones: float = -5.0, max_semitones: float = 6.0) -> None:
+        self.min_semitones = min_semitones
+        self.max_semitones = max_semitones
+
+    def __call__(self, wav: torch.Tensor) -> torch.Tensor:
+        semitones = random.uniform(self.min_semitones, self.max_semitones)
+        ratio = 2.0 ** (semitones / 12.0)
+        window = torch.hann_window(self.n_fft)
+
+        spec = torch.stft(
+            wav, self.n_fft, self.hop_length, window=window, return_complex=True
+        )
+        phase_advance = torch.linspace(
+            0, math.pi * self.hop_length, spec.shape[-2]
+        ).unsqueeze(-1)
+
+        # Stretch to `ratio` times the length at the original pitch...
+        stretched = phase_vocoder(spec, 1.0 / ratio, phase_advance)
+        longer = torch.istft(
+            stretched,
+            self.n_fft,
+            self.hop_length,
+            window=window,
+            length=round(wav.shape[-1] * ratio),
+        )
+
+        # ...then resample back to the original length, scaling pitch by `ratio`.
+        return F.interpolate(
+            longer.unsqueeze(0), size=wav.shape[-1], mode="linear", align_corners=False
+        ).squeeze(0)
 
 
 class RandomGain:
@@ -87,17 +141,20 @@ class TempoAugmenter:
 
     Applied in order:
     1. :class:`TimeStretch` — changes length; re-crops/pads back to ``n_samples``.
-    2. :class:`RandomGain`
-    3. :class:`AddNoise`
+    2. :class:`PitchShift` — leaves the tempo label untouched.
+    3. :class:`RandomGain`
+    4. :class:`AddNoise`
     """
 
     def __init__(
         self,
         time_stretch: TimeStretch | None = None,
+        pitch_shift: PitchShift | None = None,
         gain: RandomGain | None = None,
         noise: AddNoise | None = None,
     ) -> None:
         self.time_stretch = time_stretch
+        self.pitch_shift = pitch_shift
         self.gain = gain
         self.noise = noise
 
@@ -111,6 +168,9 @@ class TempoAugmenter:
                 wav = wav[..., :n_samples]
             else:
                 wav = F.pad(wav, (0, n_samples - wav.shape[-1]))
+
+        if self.pitch_shift is not None:
+            wav = self.pitch_shift(wav)
 
         if self.gain is not None:
             wav = self.gain(wav)
@@ -184,6 +244,13 @@ def build_augmenter(cfg: DictConfig) -> TempoAugmenter | None:
             max_rate=cfg.time_stretch.max_rate,
         )
 
+    pitch_shift = None
+    if cfg.pitch_shift.get("enabled", False):
+        pitch_shift = PitchShift(
+            min_semitones=cfg.pitch_shift.min_semitones,
+            max_semitones=cfg.pitch_shift.max_semitones,
+        )
+
     gain = None
     if cfg.gain.get("enabled", False):
         gain = RandomGain(
@@ -195,10 +262,12 @@ def build_augmenter(cfg: DictConfig) -> TempoAugmenter | None:
     if cfg.noise.get("enabled", False):
         noise = AddNoise(std=cfg.noise.std)
 
-    if time_stretch is None and gain is None and noise is None:
+    if time_stretch is None and pitch_shift is None and gain is None and noise is None:
         return None
 
-    return TempoAugmenter(time_stretch=time_stretch, gain=gain, noise=noise)
+    return TempoAugmenter(
+        time_stretch=time_stretch, pitch_shift=pitch_shift, gain=gain, noise=noise
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -250,17 +319,20 @@ class BeatPhaseAugmenter:
 
     1. :class:`FrameTimeStretch` — changes length; re-crops/pads both the
        waveform and the target back to their expected fixed lengths.
-    2. :class:`RandomGain`
-    3. :class:`AddNoise`
+    2. :class:`PitchShift` — waveform only; the target is left untouched.
+    3. :class:`RandomGain`
+    4. :class:`AddNoise`
     """
 
     def __init__(
         self,
         time_stretch: FrameTimeStretch | None = None,
+        pitch_shift: PitchShift | None = None,
         gain: RandomGain | None = None,
         noise: AddNoise | None = None,
     ) -> None:
         self.time_stretch = time_stretch
+        self.pitch_shift = pitch_shift
         self.gain = gain
         self.noise = noise
 
@@ -284,6 +356,9 @@ class BeatPhaseAugmenter:
                 target = target[..., :n_frames]
             else:
                 target = F.pad(target, (0, n_frames - target.shape[-1]))
+
+        if self.pitch_shift is not None:
+            wav = self.pitch_shift(wav)
 
         if self.gain is not None:
             wav = self.gain(wav)
@@ -354,6 +429,13 @@ def build_beat_phase_augmenter(cfg: DictConfig) -> BeatPhaseAugmenter | None:
             max_rate=cfg.time_stretch.max_rate,
         )
 
+    pitch_shift = None
+    if cfg.pitch_shift.get("enabled", False):
+        pitch_shift = PitchShift(
+            min_semitones=cfg.pitch_shift.min_semitones,
+            max_semitones=cfg.pitch_shift.max_semitones,
+        )
+
     gain = None
     if cfg.gain.get("enabled", False):
         gain = RandomGain(
@@ -365,7 +447,9 @@ def build_beat_phase_augmenter(cfg: DictConfig) -> BeatPhaseAugmenter | None:
     if cfg.noise.get("enabled", False):
         noise = AddNoise(std=cfg.noise.std)
 
-    if time_stretch is None and gain is None and noise is None:
+    if time_stretch is None and pitch_shift is None and gain is None and noise is None:
         return None
 
-    return BeatPhaseAugmenter(time_stretch=time_stretch, gain=gain, noise=noise)
+    return BeatPhaseAugmenter(
+        time_stretch=time_stretch, pitch_shift=pitch_shift, gain=gain, noise=noise
+    )

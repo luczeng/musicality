@@ -453,6 +453,19 @@ Data
     ``enabled`` flag. Time-stretch is safe on the target side and is what
     ``pos_weight: auto`` exists to stay calibrated against.
 
+    ``pitch_shift`` — ``min_semitones: -5.0``, ``max_semitones: 6.0``
+        Moves pitch without moving any onset, so the target is untouched. The
+        range is Beat This!'s, whose ablation puts pitch augmentation at −4.3
+        beat F1 when removed — the second-largest effect it reports
+        (``plans/09_lessons_from_literature.md`` §2.3). On in this config only;
+        off in the beat-only and tempo configs.
+
+        It is by far the most expensive augmentation: switching it on took the
+        train loader from 92 to 385 ms per batch (16 clips, 4 workers, 8-core
+        laptop), so raise ``data.num_workers`` if GPU utilisation drops. The
+        phase vocoder it runs on also softens the strongest onsets by 2–6 % on
+        real music, which validation clips never see.
+
 Logging and outputs
 ~~~~~~~~~~~~~~~~~~~
 
