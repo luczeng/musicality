@@ -1,3 +1,4 @@
+# Periodicity losses for the beat and bar-position heads: mathematical formulation
 
 <!-- Math has to render on GitHub and in markdown-it/KaTeX previews (nvim), so it uses only $...$ and $$...$$.
 GitHub strips the backslash from \, \; \! \{ \} \\ inside math: write \thinspace, \negthinspace, "\ " (a space),
@@ -7,23 +8,29 @@ GitHub strips the backslash from \, \; \! \{ \} \\ inside math: write \thinspace
 
 ### High level
 
-Beat This!'s loss judges each moment of a track on its own: should there be a beat here or not? It never compares two predicted beats with each other, so nothing in it asks that consecutive beats be as far apart as the annotated ones, or that the downbeat fall on the first beat of the bar. The evaluation asks both. The continuity metrics only accept a beat whose distance to the previous one is within 17.5% of the annotated distance, and a downbeat placed on the wrong beat puts every beat of that bar in the wrong position. The Beat This! authors end their paper by asking for losses that enforce periodicity during training.
+Our model has two heads. The beat head says, for every moment, whether a beat is there. The position head says, for every beat, which position of the bar it is: 1, 2, 3 or 4. Both are trained one moment or one beat at a time. Nothing in training asks consecutive beats to be as far apart as the annotated ones, and nothing asks the positions to *count*: 1, 2, 3, 4, then 1 again.
 
-This document specifies three such losses, added to the existing one rather than replacing it. The first compares the gap between neighbouring predicted beats with the annotated gap, and penalises differences larger than annotation jitter. The other two are about the downbeat, and they split it into two questions. Which beat is the 1? The anchor term looks at each annotated bar and penalises downbeat predictions that are not concentrated on its first beat. Does the 1 come back every bar? The periodicity term asks that the model place the downbeat at the same position in every bar of a track, whichever position that is. The anchor alone does not ask this: it scores each bar on its own, so it even rates a prediction that flips between beats 1 and 3 as better than one that sits consistently on beat 3. The periodicity term needs no downbeat annotation, only the beats and the bar length. The existing loss keeps deciding whether a beat is there; the new terms decide where beats sit relative to each other. All three act only during training, and they switch on gradually, once the model has learned to produce clear peaks. Several questions about the periodicity term are still open (§9).
+The position head gets a single beat right about three times in four, and each beat is judged alone: a head that is right on one beat and wrong on the next is penalised for the wrong beat, but not for breaking the count. The aim is a network whose answers already count, so that less has to be repaired after training.
+
+This document specifies two losses that teach these relationships during training, added to the existing ones rather than replacing them:
+
+- **Beat spacing.** The gap between neighbouring predicted beats should match the annotated gap, within annotation jitter. The continuity metrics only accept a beat whose distance to the previous one is within 17.5% of the annotated distance.
+- **Position periodicity.** The positions the head predicts should advance by one at every beat. This term does not care which beat the network calls the 1; the existing position loss already decides that. It only asks that, whatever the network's choice, the choice stays the same from one bar to the next.
+
+The existing losses keep deciding whether a beat is there and which label each beat carries; the new terms decide how beats relate to each other. Both act only during training, the model is unchanged, and both are switched on gradually after the first epochs, once the model has learned to produce peaks. How much of the position head's error the periodicity term can address is the main open question (§9).
 
 ### Technical
 
-This is the companion to `softargmax_periodicity.py`. It defines three auxiliary terms that are added to the Beat This! shift-tolerant BCE (`plans/09` §2.1):
+It targets the baseline beat-phase model: a frame-level network with one beat logit and $G$ position logits per frame, trained by a beat binary cross-entropy plus a position cross-entropy. It defines two auxiliary terms added to that loss:
 
-- $\mathcal{L}_{\text{beat}}$ works at **beat level, on the time axis**. A soft-argmax inside per-beat windows gives sub-frame beat centres. Their inter-beat intervals are compared with the ground-truth intervals in log space.
-- $\mathcal{L}_{\text{anchor}}$ works at **bar level, on the beat-index axis**. It takes a circular soft-argmax of the downbeat logits over the beats of each bar, and pulls each bar's circular mean towards beat 1.
-- $\mathcal{L}_{\text{period}}$ works at **track level, across bars**. It averages the same per-bar circular means over all bars of a track and asks the average to be long, i.e. every bar to point the same way. It is rotation-invariant: it never says which beat is the 1.
+- $\mathcal L_{\text{beat}}$ works on the **beat head, on the time axis**. A soft-argmax inside per-beat windows gives sub-frame beat centres. Their inter-beat intervals are compared with the ground-truth intervals in log space.
+- $\mathcal L_{\text{period}}$ works on the **position head, across beats**. At each annotated beat it measures how far the head's count is shifted from the annotation, the *offset*, and asks all beats of a clip to share one offset, whichever it is. A whole clip shifted by a constant offset costs nothing, which leaves the anchoring to the existing position cross-entropy.
 
-The BCE decides *whether* a peak exists. These three terms decide *where peaks sit relative to each other*.
+The setup is the project's: 43.07 fps (22050 Hz, hop 512), 16 s clips, $G = 4$ positions per bar, annotated positions folded onto $1..G$, and every training track carries bar positions.
 
-The setup is Beat This!'s: 50 fps, 30 s excerpts, and separate beat and downbeat heads whose logits are summed into the beat prediction (the Sum Head, `plans/09` §2.6).
+The evidence behind the overview's number is a one-off measurement on the v7 checkpoint (2026-09-23, 40 val and 39 train tracks, annotated beat frames). The position head is 73% accurate per beat, on train and val alike, and underconfident (best temperature about 0.65).
 
-The sections build on each other. §0 fixes notation and §1 defines the soft-argmax all three terms rely on. §2 builds, from the annotations alone, the sets that soft-argmax runs over: a window of frames per beat, and complete bars. §3 defines the beat term and §4 the two downbeat terms, and §5 adds them to the BCE. §6 derives their gradients, which show what each term can and cannot do to the logits. §7 collects their invariances and their link to the evaluation's tolerances, §8 lists the defaults, and §9 the open questions.
+The sections build on each other. §0 fixes notation and §1 defines the soft-argmax the beat term relies on. §2 builds, from the annotations alone, what both terms read: a window of frames per beat, and each beat's reference position. §3 and §4 define the two terms, and §5 adds them to the existing loss. §6 derives their gradients, which show what each term can and cannot do to the logits. §7 collects their invariances and their link to the evaluation, §8 lists the defaults, and §9 the open questions.
 
 ---
 
@@ -31,30 +38,32 @@ The sections build on each other. §0 fixes notation and §1 defines the soft-ar
 
 Everything below shares this notation. Times are counted in frames, but annotations keep their sub-frame precision, because the beat term measures positions more finely than one frame. The constant $\gamma$ is the evaluation's own tolerance on beat spacing: §3 uses it as the unit of error, so that the loss and the metric agree on what counts as close.
 
-- The frame rate is 50 fps and all times are in frames. Ground-truth positions are real-valued (sub-frame).
-- $\mathrm{sg}[\cdot]$ is stop-gradient, $[x]_+ = \max(x, 0)$, $\mathbb{1}[\cdot]$ is the indicator and $\sigma$ is the logistic sigmoid.
-- $\gamma := \log 1.175 \approx 0.1613$ is the upper bound of mir_eval's continuity tolerance in log space.
-- The sums over beat pairs and over bars run over the **whole batch**. The losses are batch-pooled means, not means of per-item means.
+- The frame rate is $22050 / 512 \approx 43.07$ fps and all times are in frames. Ground-truth positions are real-valued (sub-frame).
+- $\mathrm{sg}[\cdot]$ is **stop-gradient**: $\mathrm{sg}[a]$ has the value of $a$ in the forward pass, but no gradient flows through it in the backward pass, as if $a$ were a constant. It lets a quantity computed from the network's output *weight* a loss without becoming something the network can change to lower that loss.
+- $[x]_+ = \max(x, 0)$, $\mathbb{1}[\cdot]$ is the indicator and $\sigma$ is the logistic sigmoid.
+- $\gamma := \log 1.175 \approx 0.1613$ is the upper bound of the continuity metrics' tolerance in log space.
+- The beat term's sums over beat pairs run over the **whole batch**: it is a batch-pooled mean. The periodicity term is averaged per clip first (§4.2), like the existing position loss.
 
-| Symbol | Meaning | Code | Shape |
-|---|---|---|---|
-| $z^{b}_t,\ z^{d}_t$ | beat / downbeat head logits | — | $(B, T)$ |
-| $z_t = z^{b}_t + z^{d}_t$ | Sum Head beat logits | `beat_logits` | $(B, T)$ |
-| $b_k,\ k = 1..K$ | ground-truth beat (sub-frame) | `t_gt` | $(B, K)$ |
-| $\Delta_k = b_{k+1} - b_k$ | ground-truth inter-beat interval | — | $(B, K-1)$ |
-| $n_k \in \lbrace 1, \dots, N \rbrace$ | ground-truth beat-in-bar number | `beat_numbers` | $(K,)$ per item |
-| $\mathcal{W}_k$ | frame window of beat $k$ | `win_idx`, `win_mask` | $(B, K, W)$ |
-| $\hat b_k$ | soft-argmax beat centre | `t_hat` | $(B, K)$ |
-| $\mathcal{B}_j$ | beat indices of bar $j$ | `bar_beat`, `bar_mask` | $(B, J, N_{\max})$ |
-| $\theta_k$ | angle of beat $k$ in its bar | `bar_theta` | $(B, J, N_{\max})$ |
+| Symbol | Meaning | Shape |
+|---|---|---|
+| $z_t$ | beat head logit | $(B, T)$ |
+| $y_{t,j},\ j = 1..G$ | position head logits | $(B, G, T)$ |
+| $b_k,\ k = 1..K$ | ground-truth beat (sub-frame) | $(B, K)$ |
+| $\Delta_k = b_{k+1} - b_k$ | ground-truth inter-beat interval | $(B, K-1)$ |
+| $n_k \in \lbrace 1, \dots, G \rbrace$ | ground-truth bar position, folded (the reference) | $(B, K)$ |
+| $\mathcal{W}_k$ | frame window of beat $k$ | $(B, K, W)$ |
+| $\hat b_k$ | soft-argmax beat centre | $(B, K)$ |
+| $f_k$ | frame of beat $k$ | $(B, K)$ |
+| $q_{k,j}$ | position probabilities at beat $k$ | $(B, K, G)$ |
+| $\pi_k(o),\ o = 0..G-1$ | probability that beat $k$'s count is shifted by $o$ | $(B, K, G)$ |
 
-For a 30 s excerpt: $T = 1500$, $W = 2H + 1 = 81$, $K \approx 30\text{–}120$, $J \approx 8\text{–}30$.
+For a 16 s clip: $T \approx 689$, $W = 2H + 1 = 69$, $K \approx 15\text{–}51$ (56 to 193 BPM).
 
 ---
 
 ## 1. Shared operator: masked softmax with adaptive temperature
 
-Both terms need to know where a peak is: where the beat peak sits inside its window (§3), and which beat of a bar carries the downbeat peak (§4). A hard argmax answers that but has no gradient. A soft-argmax does: turn the logits into a softmax distribution and take the expected position, which moves smoothly as the logits change. This section defines the softmax both terms use. The index set $\mathcal{I}$ is a window's frames in §3 and a bar's beats in §4 ("masked" because, in code, sets of different sizes are padded to one shape). Its one non-standard part is the temperature, which follows the scale of the logits so that the softmax does not collapse to one-hot on an overconfident network.
+The beat term needs to know where a peak is inside its window (§3). A hard argmax answers that but has no gradient. A soft-argmax does: turn the logits into a softmax distribution and take the expected position, which moves smoothly as the logits change. This section defines that softmax. The index set $\mathcal{I}$ is a window's frames ("masked" because, in code, windows of different sizes are padded to one shape). Its one non-standard part is the temperature, which follows the scale of the logits so that the softmax does not collapse to one-hot on an overconfident beat head. The periodicity term does not need it: it reads the position head's own softmax as it is (§4.2).
 
 Take logits $a_i$ over a finite index set $\mathcal{I}$ and a range parameter $\kappa$:
 
@@ -68,13 +77,13 @@ $$
 \mathrm{softmax}_{\kappa}(a)_i = \frac{\exp\big( (a_i - m)/\tau \big)}{\sum_{i' \in \mathcal{I}} \exp\big( (a_{i'} - m)/\tau \big)}
 $$
 
-**Why adaptive.** Beat This!-style training produces overconfident logits ($|a| \approx 10$). With a fixed $\tau$, the softmax becomes one-hot and the gradients, which are proportional to $p_i$ (see §6), vanish. With the adaptive $\tau$, whenever the floor is inactive the scaled mean logit sits exactly $\kappa$ below the scaled maximum, $(m - \bar a)/\tau = \kappa$, whatever the logit scale. The temperature is detached, so it is never a path for the network to lower the loss. In the code, `kappa=None` gives a fixed $\tau = \tau_{\min}$.
+**Why adaptive.** Peak-sharpening training (shift tolerance in particular) produces overconfident logits ($|a| \approx 10$). With a fixed $\tau$, the softmax becomes one-hot and the gradients, which are proportional to $p_i$ (see §6), vanish. With the adaptive $\tau$, whenever the floor is inactive the scaled mean logit sits exactly $\kappa$ below the scaled maximum, $(m - \bar a)/\tau = \kappa$, whatever the logit scale. The temperature is detached, so it is never a path for the network to lower the loss.
 
 ---
 
 ## 2. Target construction
 
-Before either term can be computed, the annotations have to be turned into the sets the soft-argmax runs over. The beat term needs, for every annotated beat, a window of frames expected to hold that beat's peak and no other (§2.1). The downbeat terms need whole bars: which beats form each bar, and where each beat sits in it as an angle on a circle (§2.2–2.3). All of this depends only on the annotations, not on the network's output.
+Before either term can be computed, the annotations have to be turned into what the terms read. The beat term needs, for every annotated beat, a window of frames expected to hold that beat's peak and no other (§2.1). The periodicity term needs, for every annotated beat, the frame where the position head is read and the position that beat should have (§2.2). All of this depends only on the annotations, not on the network's output.
 
 ### 2.1 Beat windows (Voronoi, capped)
 
@@ -91,39 +100,17 @@ $$
 
 The windows are disjoint and ordered, so every frame belongs to at most one window.
 
-A beat is **valid** if its window was not cut by the excerpt edge and has at least 3 frames. A cut window would bias its soft-argmax towards the inside of the excerpt, and fewer than 3 frames are too few to locate a peak:
+A beat is **valid** if its window was not cut by the clip edge and has at least 3 frames. A cut window would bias its soft-argmax towards the inside of the clip, and fewer than 3 frames are too few to locate a peak:
 
 $$
 v_k = \mathbb{1}[\ell_k \ge 0]\ \mathbb{1}[r_k \le T]\ \mathbb{1}\big[ |\mathcal{W}_k| \ge 3 \big]
 $$
 
-### 2.2 Bar lengths (on the full song, before cropping)
+### 2.2 Read frames and reference positions
 
-Placing a beat on the circle needs the length of its bar: beat 2 is a quarter of the way round in 4/4 but a third in 3/4. Lengths are computed on the whole song, before cropping to an excerpt, because the excerpt usually cuts its first and last bars and their length cannot be read from what remains.
+The position head is read once per annotated beat, at its nearest frame, $f_k = \mathrm{clip}\big( \mathrm{round}(b_k),\ 0,\ T - 1 \big)$, which is where the position cross-entropy is centred.
 
-Let $s_1 < \dots < s_M$ be the downbeat indices ($n_{s_m} = 1$). Bar $m$ covers beats $[s_m, s_{m+1})$ and has length
-
-$$
-N_m = \max\negthinspace\Big( s_{m+1} - s_m,\ \max_{s_m \le k < s_{m+1}} n_k \Big)
-$$
-
-Taking the larger of the beat count and the highest beat number means a bar whose annotation skips a beat still gets its full length. Pickup beats ($k < s_1$) take $N_1$. The final bar takes $\max(N_M, N_{M-1})$, because songs and annotations often end mid-bar. In the code this is `bar_lengths_from_numbers`.
-
-### 2.3 Complete bars inside the excerpt
-
-The downbeat terms work one bar at a time, so they keep only the bars the excerpt contains whole. Each beat of a kept bar becomes an angle: the downbeat at 0, the other beats evenly spaced around the circle. A circle rather than a line from 1 to $N$ encodes that the bar repeats: the last beat is as close to the next downbeat as beat 2 is to this one, and the middle of the bar is the furthest from beat 1.
-
-Bar $j$ is kept only if it is complete and consecutively numbered:
-
-$$
-\mathcal{B}_j = \lbrace k_j, \dots, k_j + N_j - 1 \rbrace, \qquad n_{k_j + i} = i + 1 \ \ (i = 0, \dots, N_j - 1), \qquad N_j \ge 2
-$$
-
-$$
-\theta_k = \frac{2\pi\thinspace (n_k - 1)}{N_j}, \qquad k \in \mathcal{B}_j
-$$
-
-Bars cut by the excerpt edge are dropped, because a partial bar would bias the circular mean. One-beat bars are dropped too ($N_j \ge 2$): a single beat has no phase to get wrong.
+The periodicity term compares the head's answer at each beat with the position that beat should have, its **reference position** $n_k$, the folded annotated position. A pickup, a missing annotated beat or a short bar is then harmless, because the reference follows the annotation rather than a counter.
 
 ---
 
@@ -153,11 +140,26 @@ Because the windows are disjoint and ordered, $\hat b_{k+1} > \hat b_k$ always h
 
 **Excess beyond the deadzone, in tolerance units**
 
-Residuals below $\varepsilon$, about 5%, are within annotation jitter and cost nothing. What exceeds it is divided by $\gamma$, so $x_k = 1$ means one full metric tolerance beyond the deadzone.
+$\rho_k$ says how wrong a gap is, but it is not yet the thing to penalise. Two adjustments come first: ignore errors that are only annotation noise, and measure the rest in a unit the evaluation gives meaning to. Both happen in one line:
 
 $$
 x_k = \frac{\big[\thinspace |\rho_k| - \varepsilon \thinspace\big]_+}{\gamma}
 $$
+
+- **The deadzone $\varepsilon$ (default 0.05, about 5%).** The annotated gaps are themselves noisy, because each annotated beat is placed by a person, or by a tapping device, with some error. A gap inherits the error of both its ends. If each beat is off by about 15 ms, a gap is off by about $\sqrt{2} \times 15 \approx 21$ ms, which is 4% of a gap at 120 BPM. Penalising differences that small would train the network to reproduce the annotator's noise instead of the music's beat, so the first $\varepsilon$ of every residual is subtracted and costs nothing. The value 0.05 is a judgement, not a measurement (§9). Because it is relative, it is also tempo-dependent in milliseconds: 5% of a gap is 50 ms at 60 BPM but 17 ms at 180 BPM, whereas annotation noise is probably closer to constant in milliseconds.
+- **The unit $\gamma$ (default $\log 1.175 \approx 0.161$).** The continuity metrics reject a beat whose gap to the previous one is more than 17.5% off the annotated gap. In log terms that limit is $\gamma$. Dividing by $\gamma$ expresses what is left after the deadzone in multiples of that tolerance, so $x_k$ reads directly as "how far past the deadzone, in metric tolerances". It also fixes where the penalty changes shape in the next step, $x_k = 1$, from the evaluation instead of from a free constant.
+
+What this gives for a gap that is too long by a given amount (too short behaves the same, up to the small log asymmetry):
+
+| Predicted gap vs annotated | $\rho_k$ | $x_k$ | Penalty $h(x_k)$ | Pull $h'(x_k)$ |
+|---|---|---|---|---|
+| 3% too long | 0.030 | 0 (inside the deadzone) | 0 | 0 |
+| 10% too long | 0.095 | 0.28 | 0.04 | 0.28 |
+| 17.5% too long (the metric's limit) | 0.161 | 0.69 | 0.24 | 0.69 |
+| 23.5% too long | 0.211 | 1 | 0.5 | 1 |
+| doubled or halved (octave error) | ±0.693 | 3.99 | 3.49 | 1 |
+
+The metric's own limit lands at $x_k = 0.69$, not at 1, because the deadzone is subtracted first. Dividing by $\gamma - \varepsilon$ instead would put it exactly at 1; which normalisation to use is open (§9).
 
 **Penalty, gate and loss**
 
@@ -175,150 +177,130 @@ $$
 \boxed{\ \mathcal{L}_{\text{beat}} = \frac{1}{|\mathcal{P}|} \sum_{k \in \mathcal{P}} g_k\ h(x_k)\ }
 $$
 
-- $h$ is the Huber function with threshold 1. It is quadratic for small errors, and for gross errors (octave jumps, missed beats) it grows linearly, so the gradient is bounded: $|h'| \le 1$.
-- The gate removes pairs where either window has no confident peak, so soft-argmax does not chase noise in empty windows. Missing peaks are the BCE's job.
+- $h$ is the Huber function with threshold 1: quadratic up to $x_k = 1$, linear beyond. What matters for training is its slope, the pull $h'(x) = \min(x, 1)$ in the table above, which is capped at 1. Below the cap, the pull grows with the error, so a gap that is a little off gets a little push and a gap that is badly off a bigger one. Above it, every gross error (an octave jump, or a window whose soft-argmax lands far off because of a missed or extra peak) pulls equally hard. Without the cap, an octave error would pull 14 times harder than a 10% error, against 3.6 times with it; a handful of such pairs would then dominate the gradient, although they are mostly not fixable by moving a peak inside its window and are the BCE's job.
+- **The gate $g_k$ decides how much pair $k$ counts.** $m_k$ is the largest beat logit in window $k$, so $\sigma(m_k)$ is the beat head's probability at its most confident frame there: roughly, "is there a peak in this window at all?". The product $\sigma(m_k)\thinspace \sigma(m_{k+1})$ is close to 1 only when both windows hold a confident peak, and close to 0 as soon as either is empty. A soft-argmax over a window with no peak returns the window's centre of mass over background noise, and the interval it implies says nothing about the music, so such pairs are faded out instead of being trained on. Missing peaks are the BCE's job.
+
+  | Largest logits $(m_k, m_{k+1})$ | Probabilities | $g_k$ | Meaning |
+  |---|---|---|---|
+  | (10, 10) | 1.00, 1.00 | 1.00 | two sharp peaks: counts fully |
+  | (4, 4) | 0.98, 0.98 | 0.96 | two clear peaks |
+  | (2, 2) | 0.88, 0.88 | 0.78 | two moderate peaks |
+  | (0, 0) | 0.50, 0.50 | 0.25 | two undecided windows: counts a quarter |
+  | (4, −4) | 0.98, 0.02 | 0.02 | one window empty: almost ignored |
+
+  **Why the gate is detached.** Without $\mathrm{sg}$, the gate would be a second way to lower $\mathcal L_{\text{beat}}$: whenever a pair is badly spaced, the network could shrink $g_k$ by *lowering its beat peaks*, since the gradient on $m_k$ would be $h(x_k)\thinspace \sigma'(m_k)\thinspace \sigma(m_{k+1}) > 0$. A spacing loss would then teach the beat head to hide beats, against the BCE. Detached, the gate only reads how confident the peaks are; the network can lower the loss only by moving its peaks. The temperature $\tau$ in §1 is detached for the same reason.
 - $\mathcal{P}$ keeps the pairs whose two windows are both valid (§2.1).
 - The loss is normalised by $|\mathcal{P}|$ rather than by $\sum g_k$, so gated pairs reduce the loss instead of reweighting the remaining pairs.
 
 ---
 
-## 4. Downbeat terms
+## 4. Position terms
 
-Timing is the beat term's job, so both downbeat terms read a single downbeat logit at each annotated beat and only ask *which* beat carries the downbeat. A soft-argmax over a bar's beats, taken on the circle from §2.3, turns that into one arrow per bar: its direction is where the model puts the downbeat, its length how decided it is. The two terms then ask different things of these arrows:
+The position head answers, for each beat, "which position of the bar are you?". Two different things can be asked of those answers:
 
-- the **anchor term** (§4.1) pulls every arrow towards beat 1. It is supervised, one bar at a time;
-- the **periodicity term** (§4.2) asks all arrows of a track to point the same way, wherever that is. It links the bars to each other, which is what "after 1, 2, 3, 4 comes 1 again" means.
+- the **anchor**: each beat should carry its annotated position (§4.1). This is the existing position cross-entropy, one beat at a time;
+- the **periodicity**: the positions should advance by one at every beat, wherever the count starts (§4.2). This links the beats to each other, which is what "after 1, 2, 3, 4 comes 1 again" means.
 
-Neither implies the other during training. The anchor scores bars independently, so a flipping prediction can score better than a consistent but shifted one; the periodicity term is blind to which beat is the 1. Together they are minimised only by a downbeat that is on beat 1 *and* stays there.
+Neither implies the other during training. The cross-entropy scores beats independently, so it says nothing about whether the errors that remain are scattered or form a consistent shift. The periodicity term is blind to which beat is the 1. Together they are minimised only by a count that starts on the right beat *and* keeps counting.
 
-### 4.1 Anchor term
+### 4.1 Anchor: the existing position cross-entropy
 
-The anchor term checks where the network puts the downbeat within each bar. The loss is the distance of the bar's arrow from beat 1, with a small hinge so that a nearly right bar costs nothing.
-
-**Downbeat logits sampled at the ground-truth beats** (max-pooling over $\pm 3$ frames, as in the shift-tolerant BCE, with $-\infty$ padding):
-
-$$
-\tilde z^{d}_t = \max_{|s| \le 3} z^{d}_{t+s}, \qquad
-u_k = \tilde z^{d}_{f_k}, \qquad
-f_k = \mathrm{clip}\big( \mathrm{round}(b_k),\ 0,\ T - 1 \big)
-$$
-
-Pooling means a downbeat peak up to 3 frames from the annotated beat still counts, as it does for the BCE.
-
-**Circular soft-argmax over each bar**
-
-The softmax says how strongly each beat of the bar claims the downbeat. $(C_j, S_j)$ is the resulting mean of the beats' angles, a point inside the unit circle. Beat 1 sits at $(1, 0)$, so $C_j$ approaches 1 as the mass concentrates on beat 1, and the loss is a hinge on how far it falls short.
-
-$$
-q_{j,\cdot} = \mathrm{softmax}_{\kappa_\phi}\big( u_k \big)_{k \in \mathcal{B}_j}, \qquad
-C_j = \sum_{k \in \mathcal{B}_j} q_{j,k} \cos \theta_k, \qquad
-S_j = \sum_{k \in \mathcal{B}_j} q_{j,k} \sin \theta_k
-$$
-
-$$
-\boxed{\ \mathcal{L}_{\text{anchor}} = \frac{1}{J} \sum_{j=1}^{J} \big[\thinspace 1 - C_j - \delta \thinspace\big]_+\ }
-$$
-
-Here $J$ is the number of complete bars in the batch. Datasets without downbeat annotations give $J = 0$, and then $\mathcal{L}_{\text{anchor}} = 0$.
-
-**Interpretation.** $1 - C_j$ is the expected circular distance from beat 1:
-
-$$
-1 - C_j = \sum_{k \in \mathcal{B}_j} q_{j,k}\thinspace \big( 1 - \cos \theta_k \big) \in [0, 2]
-$$
-
-| Downbeat mass on | 4/4: $1 - C$ | 3/4: $1 - C$ | $R$ |
-|---|---|---|---|
-| beat 1 | 0 | 0 | 1 |
-| beat 2 | 1 | 1.5 | 1 |
-| beat 3 | 2 | 1.5 | 1 |
-| beat 4 | 1 | — | 1 |
-| beats 1 and 3 equally | 1 | — | 0 |
-| uniform (no downbeat peak) | 1 | 1 | 0 |
-
-For small errors $1 - \cos\varphi \approx \varphi^2/2$. The hinge $\delta = 0.05$ corresponds to $|\varphi| \le \arccos(0.95) \approx 18.2°$, which is about 0.2 beat in 4/4.
-
-**Diagnostics (no gradient)**
-
-The loss reads only $C_j$, so it scores a bar confidently on beat 2 and a bar with no downbeat peak the same (both 1 in the table). Two quantities that are not trained on tell them apart:
-
-$$
-\hat\varphi_j = \mathrm{atan2}(S_j, C_j), \qquad
-R_j = \sqrt{C_j^2 + S_j^2}, \qquad
-\text{err}_j = \frac{|\hat\varphi_j|}{2\pi} \ \ \text{(fraction of a bar)}
-$$
-
-$R_j \approx 1$ means the mass is concentrated (confidently placed), and $R_j \approx 0$ means it is split or absent. Together, $(\hat\varphi_j, R_j)$ separate "confidently on the wrong beat" from "undecided".
+$\mathcal L_{\text{pos}}$ is the existing position term: a soft-target cross-entropy between the softmax over $y_{t,\cdot}$ and the annotated position, restricted to the frames at and around annotated beats (the beat mask) and averaged per clip. It is unchanged by this plan. It treats every wrong position as equally wrong; whether a cost that grows with the distance between labels would be better is a separate question (§9).
 
 ### 4.2 Periodicity term
 
-The anchor term looks at one bar at a time, so it never asks whether the downbeat *recurs*. The periodicity term does. It reuses the per-bar arrows of §4.1 and averages them over all bars of a track. If every bar puts its downbeat at the same position, the arrows line up and their average is as long as they are. If the downbeat wanders from bar to bar, the arrows point different ways and partly cancel. The loss is how far that average falls short of length 1.
+**The idea in three steps.**
 
-**Chunks.** The term needs groups of beats that should each contain one downbeat, and an angle for each beat within its group:
+1. **Compare each beat's label with the annotation.** The difference, counted around the bar, is the beat's *offset*: how far the head's count is shifted at that beat. Calling a 1 "1" is offset 0; calling a 1 "3", a 2 "4", and so on, is offset 2.
+2. **A head that counts keeps the same offset at every beat.** The offset is 0 if the count starts on the right beat and something else if the count is consistently shifted, but either way it does not change within the clip. A slip, a restart or a guess changes it.
+3. **Score the clip by how often its beats disagree.** Pick two beats of the clip at random (the same beat may be picked twice): the loss is the probability that their offsets differ. It is 0 for a head that keeps one offset, whatever that offset is, and grows the more the offset changes from beat to beat.
 
-- On tracks **with downbeat annotations**, the chunks are the complete bars $\mathcal{B}_j$ of §2.3, with the angles $\theta_k$ from the annotated beat numbers. A meter change is harmless: every bar has its downbeat at angle 0, whatever its length.
-- On tracks **with beats but no downbeats**, the chunks are consecutive groups of $N$ beats starting at the first beat in the excerpt, and beat $i$ of a group gets $\theta = 2\pi i / N$. Because the term is rotation-invariant, it does not matter that the groups start on an arbitrary beat: a periodic prediction lines up its arrows whatever the offset. This needs a bar length $N$, which these tracks do not annotate (§9).
+The term never asks *which* offset; that is the cross-entropy's job (§4.1). It only asks that there be one.
 
-Each chunk $j$ gets its arrow $(C_j, S_j)$ exactly as in §4.1, from its own softmax $q_{j,\cdot}$. Write $\mathcal{J}_b$ for the chunks of track $b$, and keep the tracks with at least two of them, $\mathcal{T} = \lbrace b : |\mathcal{J}_b| \ge 2 \rbrace$:
+**Worked example.** On a clip annotated 1 2 3 4 1 2 3 4, a head that predicts 1 2 3 4 3 4 1 2 has offsets 0 0 0 0 2 2 2 2. Two random beats have the same offset half the time, so the loss is 0.5. The cross-entropy sees four wrong beats, but not that they are all wrong *in the same way*; the periodicity term sees exactly that, a count that slipped once.
+
+**How it ranks predictions** on an annotated 4/4 clip whose positions run 1, 2, 3, 4, 1, …, with each beat's probability entirely on one position:
+
+| Positions the head predicts | Offsets | $\mathcal L_{\text{pos}}$ (cross-entropy) | $\mathcal L_{\text{period}}$ |
+|---|---|---|---|
+| 1 2 3 4 1 2 3 4 (correct) | 0 0 0 0 0 0 0 0 | low | 0 |
+| 3 4 1 2 3 4 1 2 (counting, but shifted) | 2 2 2 2 2 2 2 2 | high | 0 |
+| 1 2 3 4 3 4 1 2 (count slips by two mid-clip) | 0 0 0 0 2 2 2 2 | high on half the beats | 0.5 |
+| 1 2 3 4 2 3 4 1 (count slips by one mid-clip) | 0 0 0 0 1 1 1 1 | high on half the beats | 0.5 |
+| 1 2 1 2 1 2 1 2 (count restarts every two beats) | 0 0 2 2 0 0 2 2 | high on half the beats | 0.5 |
+| uniform (no opinion) | — | medium | 0.75 |
+
+The two terms disagree on the shifted and the slipping predictions, which is the point: each catches the failure the other is blind to. In terms of evaluation, the anchor targets whole-track offsets and the periodicity term targets mid-track slips.
+
+**Computing it from probabilities.** The model gives each beat a probability for every position, not a single answer, so the loss works with those probabilities, in three steps.
+
+**Step 1: reorder each beat's probabilities so that each slot means the same kind of mistake at every beat.** Probabilities over positions cannot be compared across beats: position 3 is a correct answer at a beat whose true position is 3, but a +2 mistake at a beat whose true position is 1. Reordering them to start from the beat's reference position $n_k$ turns them into probabilities over offsets, where slot 0 is always "ok", slot 1 always "+1", and so on:
 
 $$
-\bar C_b = \frac{1}{|\mathcal{J}_b|} \sum_{j \in \mathcal{J}_b} C_j, \qquad
-\bar S_b = \frac{1}{|\mathcal{J}_b|} \sum_{j \in \mathcal{J}_b} S_j, \qquad
-\bar R_b = \sqrt{\bar C_b^2 + \bar S_b^2}
+q_{k,j} = \mathrm{softmax}_j\big( y_{f_k, j} \big), \qquad
+\pi_k(o) = q_{k,\thinspace 1 + (n_k - 1 + o) \bmod G}, \qquad o = 0, \dots, G - 1
 $$
 
+| Beat | True position $n_k$ | Probabilities over positions 1, 2, 3, 4 | Reordered, over ok, +1, +2, +3 |
+|---|---|---|---|
+| first | 1 | 0.7, 0.1, 0.1, 0.1 | 0.7, 0.1, 0.1, 0.1 |
+| second | 2 | 0.1, 0.7, 0.1, 0.1 | 0.7, 0.1, 0.1, 0.1 |
+
+The two beats put their confidence on different positions, but on the same kind of mistake. Only the reordered numbers show it.
+
+**Step 2: average the reordered probabilities over the clip.** Write $\mathcal{K}_b$ for the annotated beats of clip $b$, and keep the clips with at least two bars' worth of them, $\mathcal{T} = \lbrace b : |\mathcal{K}_b| \ge 2G \rbrace$. The average says how the clip's confidence is spread over the $G$ kinds of mistake:
+
 $$
-\boxed{\ \mathcal{L}_{\text{period}} = \frac{1}{|\mathcal{T}|} \sum_{b \in \mathcal{T}} \big( 1 - \bar R_b \big)\ }
+\bar\pi_b(o) = \frac{1}{|\mathcal{K}_b|} \sum_{k \in \mathcal{K}_b} \pi_k(o)
 $$
 
-In code the square root takes a small $\epsilon$ inside, since its gradient is undefined at $\bar R_b = 0$.
+**Step 3: measure how concentrated that average is, with its sum of squares.** The sum is 1 if all the confidence sits on one kind of mistake and $1/G$ if it is spread evenly. The loss is 1 minus it, averaged over clips:
 
-- **Averaged per track, not over the batch.** Unlike every other term (§0), the arrows are averaged within a track first. An arrow's angle only means something relative to the other bars of the same track, so pooling bars across tracks would compare unrelated phases.
-- **One isolated downbeat cannot fake periodicity.** Each chunk has its own softmax, so every chunk has to vote. Pooling raw downbeat probabilities over the whole track instead would let a single peak look perfectly periodic.
-- **It rewards confidence as well as agreement.** $\bar R_b$ is at most the mean of the chunks' own lengths $R_j$, so the term can only reach 0 if every chunk is concentrated *and* they agree (§9).
+$$
+\boxed{\ \mathcal{L}_{\text{period}} = \frac{1}{|\mathcal{T}|} \sum_{b \in \mathcal{T}} \Big( 1 - \sum_{o=0}^{G-1} \bar\pi_b(o)^2 \Big)\ }
+$$
 
-How it ranks the predictions the anchor term gets wrong, in 4/4, with each bar's votes entirely on one beat (anchor values include the hinge $\delta$):
+If the beats agree on the kind of mistake, the average stays concentrated and the loss is low; if they disagree, it spreads out and the loss is high:
 
-| Downbeat prediction over the bars | $\mathcal{L}_{\text{anchor}}$ | $\mathcal{L}_{\text{period}}$ |
-|---|---|---|
-| always on beat 1 | 0 | 0 |
-| always on beat 3 (consistently shifted) | 1.95 | 0 |
-| alternating beat 1, beat 3 (flips) | 0.975 | 1 |
-| uniform (no downbeat peak) | 0.95 | 1 |
+| Clip | Average over ok, +1, +2, +3 | Sum of squares | Loss |
+|---|---|---|---|
+| the two beats above, agreeing on "ok" | 0.7, 0.1, 0.1, 0.1 | 0.52 | 0.48 |
+| one beat 70% "ok", one 70% "+2" | 0.4, 0.1, 0.4, 0.1 | 0.34 | 0.66 |
+| the worked example: half the beats sure of "ok", half of "+2" | 0.5, 0, 0.5, 0 | 0.5 | 0.5 |
 
-The two rankings disagree on the shifted and the flipping predictions, which is the point: each term catches the failure the other is blind to. In terms of the project's metrics, the anchor targets whole-track offsets (`anchor_error`) and the periodicity term targets mid-track flips (`position_acc_best_offset`).
+The first row costs 0.48 although the beats agree, because each is only 70% sure: the loss rewards confidence as well as agreement (§9). The sum of squares is also the probability that two beats drawn at random from the clip, each drawing its kind of mistake from its own probabilities, land on the same one: step 3 of the idea above. The same beat may be drawn twice, and that is where the confidence reward comes from: a beat 70% sure of "ok" agrees with itself only $0.7^2 + 3 \times 0.1^2 = 0.52$ of the time. The loss ranges from 0 to $1 - 1/G$ (0.75 for $G = 4$).
 
-**Diagnostics (no gradient).** The track's consensus phase $\bar\Phi_b = \mathrm{atan2}(\bar S_b, \bar C_b)$ is where the model thinks the downbeat is; on annotated tracks it should approach 0. Comparing $\bar R_b$ with the mean of the chunks' $R_j$ separates disagreement between bars from indecision within them.
+**Design choices.**
+
+- **Averaged per clip, not over the batch.** An offset is the head's shift *within one clip*; offsets of different clips are unrelated, so pooling them would compare nothing. Per-clip averaging also matches how the existing position loss is averaged.
+- **It rewards confidence as well as agreement.** $\sum_o \bar\pi_b(o)^2$ is at most the beats' average $\sum_o \pi_k(o)^2$, so the term only reaches 0 if every beat is confident *and* the beats agree. The head is underconfident by design, and sharpening it is not the lever, so a pure-agreement variant may be the better default (§9).
+- **Every slip costs the same.** Offsets are categories, not distances: a count that slips by one position costs as much as one that slips by two. Periodicity is about whether the count slipped, not how far.
+
+**Diagnostics (no gradient).** The clip's most likely offset, $\hat o_b = \arg\max_o \bar\pi_b(o)$, is how far the head's count is shifted from the annotation, and $\bar\pi_b(0)$ is the clip's average probability of the correct label, the quantity the anchor raises. Comparing $\sum_o \bar\pi_b(o)^2$ with the beats' average $\sum_o \pi_k(o)^2$ separates disagreement between beats from indecision at each beat.
 
 ---
 
 ## 5. Total objective
 
-The periodicity terms are added to the existing objective rather than replacing it. The shift-tolerant BCE stays on both heads and keeps deciding whether a beat or downbeat is present at all. The three new terms come in with their own weights, which ramp up from zero over the early epochs.
-
-The Beat This! shift-tolerant weighted BCE, with $m_k(\cdot)$ denoting max-pooling over $k$ frames, is
+The new terms are added to the existing objective rather than replacing it. The existing loss stays as it is: its beat term keeps deciding whether a beat is present, and its position cross-entropy which label each beat carries. The two new terms come in with their own weights, which ramp up from zero over the early epochs.
 
 $$
-\mathcal{L}_{\text{st}}(y, \hat y, w) = -\sum_t \Big[\thinspace w\thinspace y_t \log m_7(\hat y)_t + \big( 1 - m_{13}(y)_t \big) \log\big( 1 - m_7(\hat y)_t \big) \Big]
+\mathcal{L} = \mathcal{L}_{\text{bce}} + \mathcal{L}_{\text{pos}} + \lambda_b(e)\thinspace \mathcal{L}_{\text{beat}} + \lambda_p(e)\thinspace \mathcal{L}_{\text{period}}
 $$
 
-Here $w$ is the ratio of negative to positive frames over the training set. With the Sum Head, $\hat y^{\text{beat}} = \sigma(z)$ and $\hat y^{\text{down}} = \sigma(z^{d})$.
-
-$$
-\mathcal{L} = \mathcal{L}_{\text{st}}\big( y^{\text{beat}}, \hat y^{\text{beat}}, w_b \big) + \mathcal{L}_{\text{st}}\big( y^{\text{down}}, \hat y^{\text{down}}, w_d \big) + \lambda_b(e)\thinspace \mathcal{L}_{\text{beat}} + \lambda_a(e)\thinspace \mathcal{L}_{\text{anchor}} + \lambda_p(e)\thinspace \mathcal{L}_{\text{period}}
-$$
+$\mathcal L_{\text{bce}} + \mathcal L_{\text{pos}}$ is the existing loss as it stands: the beat head's weighted binary cross-entropy, plain or shift-tolerant, plus the position cross-entropy of §4.1.
 
 $$
 \lambda(e) = \lambda \cdot \mathrm{clip}\negthinspace\left( \frac{e - e_0}{e_1 - e_0},\ 0,\ 1 \right)
 $$
 
-The ramp over the epoch index $e$ switches the periodicity terms on only after peaks have formed. On a flat, untrained output the soft-argmax is noise.
+The ramp over the epoch index $e$ switches the new terms on only after peaks have formed. On a flat, untrained output the soft-argmax is noise, and the position head has no count yet to make consistent.
 
 ---
 
 ## 6. Gradients
 
-This section checks that each term pushes only where it should. The beat term moves logit mass around inside each beat's window but cannot add or remove it, so missing beats stay the BCE's job. The downbeat terms touch only the downbeat logits, at the annotated beats. The derivation also shows why §1's adaptive temperature matters: each frame's gradient is proportional to its softmax weight, so a collapsed softmax would leave all but the peak frame with none.
+This section checks that each term pushes only where it should. The beat term moves logit mass around inside each beat's window but cannot add or remove it, so missing beats stay the BCE's job. The periodicity term touches only the position logits, and only at the annotated beats' frames. The derivation also shows why §1's adaptive temperature matters for the beat term: each frame's gradient is proportional to its softmax weight, so a collapsed softmax would leave all but the peak frame with none.
 
 The temperatures $\tau$ and the gates $g_k$ are detached, so they contribute no gradient.
 
@@ -349,28 +331,15 @@ Frames on the side of $\hat b_k$ that reduces $|\rho|$ are pushed up, and frames
 
 **Temperature leverage.** The gradient scales as $p_{k,t}/\tau_k$. With a fixed $\tau$ and $|z| \approx 10$, off-peak frames have $p \lesssim e^{-8}$. With the adaptive $\tau_k$, the relative logits of background frames are set by $\kappa_b$, not by the logit scale.
 
-**Sum Head.** $\partial \mathcal L_{\text{beat}} / \partial z^b_t = \partial \mathcal L_{\text{beat}} / \partial z^d_t = \partial \mathcal L_{\text{beat}} / \partial z_t$, so the beat term also shapes the downbeat head.
+### 6.2 Periodicity term
 
-### 6.2 Anchor term
-
-The same covariance form as in §6.1, over a bar's beats instead of a window's frames:
+For beat $k$ of clip $b$, write $o_{k,j} = (j - n_k) \bmod G$ for the offset that position $j$ stands for at that beat, and $A_k = \sum_o \bar\pi_b(o)\thinspace \pi_k(o)$ for how much beat $k$ agrees with the clip on average. Differentiating through the position softmax gives, at the beat's frame $f_k$,
 
 $$
-\frac{\partial C_j}{\partial u_k} = \frac{1}{\tau_j}\thinspace q_{j,k}\thinspace \big( \cos\theta_k - C_j \big), \qquad
-\frac{\partial \mathcal{L}_{\text{anchor}}}{\partial u_k} = -\frac{1}{J}\thinspace \mathbb{1}\big[ 1 - C_j > \delta \big]\thinspace \frac{\partial C_j}{\partial u_k}
+\frac{\partial \mathcal{L}_{\text{period}}}{\partial y_{f_k, j}} = -\frac{2}{|\mathcal{T}|\thinspace |\mathcal{K}_b|}\thinspace q_{k,j}\thinspace \Big( \bar\pi_b\big( o_{k,j} \big) - A_k \Big)
 $$
 
-This raises every beat whose angle is closer to beat 1 than the current mean, and lowers the others. Through the max-pool, $\partial u_k / \partial z^d_t = 1$ only at $t = f_k + \arg\max_{|s| \le 3} z^d_{f_k + s}$ and is 0 elsewhere. $\mathcal{L}_{\text{anchor}}$ touches only $z^{d}$.
-
-### 6.3 Periodicity term
-
-For beat $k$ in chunk $j$ of track $b$, write $\bar\Phi_b$ for the consensus phase (§4.2) and $P_j = C_j \cos\bar\Phi_b + S_j \sin\bar\Phi_b$ for the length of chunk $j$'s arrow along the consensus direction. Differentiating $\bar R_b$ through $\bar C_b$ and $\bar S_b$ gives
-
-$$
-\frac{\partial \mathcal{L}_{\text{period}}}{\partial u_k} = -\frac{1}{|\mathcal{T}|\thinspace |\mathcal{J}_b|\thinspace \tau_j}\thinspace q_{j,k}\thinspace \Big( \cos\big( \theta_k - \bar\Phi_b \big) - P_j \Big)
-$$
-
-This is the anchor's gradient (§6.2) with beat 1 replaced by the track's own consensus: each bar is pulled towards wherever the other bars put the downbeat, raising the beats closer to that consensus than the bar's current arrow and lowering the others. The consensus itself is set by the majority of bars. When most bars are right, this pulls the stray ones back into line; when most bars are wrong, it pulls the right ones towards the wrong consensus, and only the anchor term pushes back (§9). Like the anchor, it touches only $z^{d}$, at the annotated beats.
+and zero at every other frame. It has the covariance form of §6.1 again. Each beat is pulled towards the offsets that are popular in its clip: a position is raised if the offset it stands for is more common in the clip than the beat's current agreement, and lowered otherwise. The majority of beats sets what is popular. When most beats are right, this pulls the stray ones into line; when most are wrong, it pulls the right ones towards the wrong count, and only the cross-entropy pushes back (§9). The beat head gets no gradient from this term.
 
 ---
 
@@ -380,39 +349,35 @@ This section collects what the terms ignore on purpose, what they deliberately d
 
 All of these follow directly from the definitions above.
 
-- **Offset invariance (beat).** $\hat b_k \to \hat b_k + c$ leaves $\rho_k$ unchanged, which absorbs constant annotator or tapping latency.
+- **Latency invariance (beat).** $\hat b_k \to \hat b_k + c$ leaves $\rho_k$ unchanged, which absorbs constant annotator or tapping latency.
 - **Tempo-scale invariance.** $(\hat b_k, b_k) \to (s \hat b_k, s b_k)$ leaves $\rho_k$ unchanged, which covers tempo augmentation and comparisons across pieces.
 - **Octave symmetry.** Doubling or halving the predicted interval gives $\rho = \mp \log 2$, so both are penalised equally.
 - **Tempo curves.** The term is anchored to the ground-truth $\Delta_k$, so a ritardando that is in the annotation costs nothing.
-- **Link to the metric's tolerance.** mir_eval's continuity condition $|\hat\Delta/\Delta - 1| < 0.175$ becomes, in log space, $\rho \in (\log 0.825,\ \log 1.175) = (-0.192,\ 0.161)$; using the symmetric bound $\gamma = 0.161$ is slightly stricter on the short side. In terms of the loss:
+- **Link to the metric's tolerance.** The continuity metrics' condition $|\hat\Delta/\Delta - 1| < 0.175$ becomes, in log space, $\rho \in (\log 0.825,\ \log 1.175) = (-0.192,\ 0.161)$; using the symmetric bound $\gamma = 0.161$ is slightly stricter on the short side. In terms of the loss:
   - the penalty starts at $|\rho| = \varepsilon$, about 5%;
   - the metric boundary $|\rho| = \gamma$ sits at $x = 1 - \varepsilon/\gamma \approx 0.69$;
   - the Huber penalty turns linear at $|\rho| = \varepsilon + \gamma \approx 0.211$, about 23.5%.
-- **The anchor is deliberately not offset-invariant.** A consistent 2-beat shift in 4/4 gives $C_j = -1$, which is the maximal penalty $2 - \delta$.
-- **Periodicity is deliberately offset-invariant.** Shifting the downbeat by the same number of beats in every bar rotates all arrows of a track together and leaves $\bar R_b$ unchanged. It is the anchor's complement: the anchor fixes which beat is the 1, the periodicity term that it stays the same beat.
-- **Bounds.** $0 \le \mathcal L_{\text{anchor}} \le 2 - \delta$, $0 \le \mathcal L_{\text{period}} \le 1$, and $\mathcal L_{\text{beat}} \ge 0$ with bounded gradient.
+- **Periodicity is deliberately offset-invariant.** Shifting the head's count by the same number of positions on every beat relabels the offsets of a clip and leaves $\sum_o \bar\pi_b(o)^2$ unchanged. Fixing the offset is the cross-entropy's job; the periodicity term only asks that the offset stay the same.
+- **Bounds.** $0 \le \mathcal L_{\text{period}} \le 1 - 1/G$, and $\mathcal L_{\text{beat}} \ge 0$ with bounded gradient.
 
 ---
 
 ## 8. Defaults
 
-Every parameter above, with the code argument that sets it and its default. Frame counts assume 50 fps.
+Every parameter above with its default. Frame counts assume 43.07 fps.
 
-| Symbol | Code argument | Default | Meaning |
-|---|---|---|---|
-| $H$ | `max_half` | 40 frames (0.8 s) | half-window cap; a full Voronoi window needs $\Delta \le 2H$, i.e. tempo $\ge 37.5$ BPM |
-| $\kappa_b$ | `kappa_beat` | 8 | softmax range inside a beat window |
-| $\kappa_\phi$ | `kappa_bar` | 4 | softmax range inside a bar (few slots) |
-| $\tau_{\min}$ | `tau_min` | 0.5 | temperature floor |
-| $\varepsilon$ | `eps_ibi` | 0.05 | log-interval deadzone, about annotation jitter |
-| $\gamma$ | `ibi_tol` | $\log 1.175$ | residual unit |
-| $\delta$ | `anchor_hinge` | 0.05 | anchor hinge, $\approx 18°$ |
-| — | `pool` | 7 ($\pm 3$ frames) | downbeat sampling pool |
-| — | `gate` | `True` | presence gate $g_k$ |
-| $\lambda_b,\ \lambda_a,\ \lambda_p$ | — | $\approx 1$ (untuned) | loss weights |
-| $e_0,\ e_1$ | — | 5, 15 | ramp start / end epoch, shared by all three terms (§9) |
-| — | `period_min_chunks` | 2 | chunks a track needs to enter $\mathcal{L}_{\text{period}}$ |
-| $N$ | — | annotated tracks only | bar length for tracks without downbeats (§9) |
+| Symbol | Default | Meaning |
+|---|---|---|
+| $H$ | 34 frames (0.79 s) | half-window cap; a full Voronoi window needs $\Delta \le 2H$, i.e. tempo $\ge 38$ BPM |
+| $\kappa_b$ | 8 | softmax range inside a beat window |
+| $\tau_{\min}$ | 0.5 | temperature floor |
+| $\varepsilon$ | 0.05 | log-interval deadzone, about annotation jitter |
+| $\gamma$ | $\log 1.175$ | residual unit |
+| $g_k$ | on | presence gate (§3) |
+| $G$ | 4 | positions per bar, shared with the position head |
+| $\min_b \lvert \mathcal{K}_b \rvert$ | $2G = 8$ | annotated beats a clip needs to enter $\mathcal L_{\text{period}}$ |
+| $\lambda_b,\ \lambda_p$ | $\approx 1$ (untuned) | loss weights |
+| $e_0,\ e_1$ | 5, 15 | ramp start / end epoch, shared by both terms (§9) |
 
 ---
 
@@ -420,9 +385,33 @@ Every parameter above, with the code argument that sets it and its default. Fram
 
 The periodicity term (§4.2) is a proposal; these need settling before or while it is implemented.
 
-1. **Bar length on tracks without downbeat annotations.** The chunks there need an $N$ that nothing annotates. Options: take the smaller loss over $N \in \lbrace 3, 4 \rbrace$ (the model is periodic with *some* common bar length); assume one meter per corpus; or apply the term only to annotated tracks, where it duplicates part of what the anchor already supervises. The last is the default in §8 until this is decided.
-2. **Meter changes and the pooling span.** On annotated tracks a meter change is harmless (each bar has its own angles). On unannotated tracks it misaligns every later chunk, and pooling over the whole 30 s excerpt then penalises a correct prediction. Pooling over a sliding window of a few bars instead would limit the damage, at the cost of a weaker signal.
-3. **Agreement or agreement plus confidence.** $\bar R_b$ also rewards each bar being concentrated, which adds pressure towards overconfidence on top of the anchor's. A pure agreement measure would divide by the mean chunk length $R_j$, and a hinge like the anchor's $\delta$ would stop the push towards one-hot. Which one to use is open.
-4. **When the majority of bars is wrong.** The gradient pulls every bar towards the track's consensus (§6.3). If most bars are on beat 3, it pulls the correct bars towards beat 3, against the anchor. On annotated tracks the anchor has to outweigh it, which bears on the next question.
-5. **Weight and schedule.** Should $\lambda_p$ ramp in later than $\lambda_a$, so that the anchor has set the consensus before the bars are pulled towards it? Is it per-track mean or a mean weighted by the number of chunks? Both are untuned.
-6. **Does the anchor's blind spot matter in practice?** The anchor prefers flipping to a consistent shift only in principle. Before building the term, measure on current checkpoints how much of the bar-position error is mid-track flips: the gap between `position_acc_best_offset` and 1. If it is small, the periodicity term mainly earns its place on tracks without downbeat annotations.
+| # | Question | Term | Settled by | Default until then | Alternative |
+|---|---|---|---|---|---|
+| 1 | How much of the error is slips? | periodicity | measuring current checkpoints, before building | — | — |
+| 2 | Push for confidence? | periodicity | comparing the two variants in training | agreement only: $1 - \sum_o \bar\pi_b(o)^2 \big/ \overline{\textstyle\sum_o \pi_k(o)^2}$, the bar a mean over the clip's beats | §4.2 as written, $1 - \sum_o \bar\pi_b(o)^2$, or a hinge on it, $[\mathcal L_{\text{period}} - \delta]_+$ |
+| 3 | Where to read the head | periodicity | experiment | annotated frame $f_k$ | average over the tolerance window: $\bar q_{k,j} = \frac{1}{2r+1} \sum_{\lvert t - f_k \rvert \le r} q_{t,j}$, with $q_{t,j}$ the position softmax at frame $t$ |
+| 4 | Weight and schedule | both | sweep | $\lambda \approx 1$, ramp over epochs 5–15 | ramp periodicity in later than the beat term: $e_0^p > e_0^b$ |
+| 5 | Distance-aware anchor | anchor | separate experiment | plain cross-entropy | expected distance around the bar: $\sum_j q_{k,j}\thinspace d(j, n_k)$ with $d(j, n) = \min(\lvert j - n \rvert,\ G - \lvert j - n \rvert)$ |
+| 6 | Deadzone value | beat | measuring annotation noise | $\varepsilon = 0.05$, relative | constant in time: $\varepsilon_k = d / \Delta_k$, with $d$ a fixed number of frames |
+| 7 | Where the penalty bends | beat | experiment | divide by $\gamma$ | $x_k = [\thinspace\lvert \rho_k \rvert - \varepsilon\thinspace]_+ / (\gamma - \varepsilon)$ |
+| 8 | Gate on correct beats | beat | measuring gate values on v7 | soft gate $g_k = \mathrm{sg}[\sigma(m_k)\thinspace\sigma(m_{k+1})]$ | hard gate: $g_k = \mathbb{1}[\sigma(m_k) > \theta]\ \mathbb{1}[\sigma(m_{k+1}) > \theta]$ |
+| 9 | Adaptive temperature? | beat | experiment; matters only with shift tolerance | adaptive $\tau$, $\kappa_b = 8$ (§1) | fixed temperature: $p_{k,t} \propto \exp(z_t / \tau_{\min})$ |
+| 10 | Cap the penalty? | beat | experiment | Huber $h$, slope capped at 1 (§3) | quadratic, $h(x) = \tfrac{1}{2} x^2$, or dropping gross errors, $\tfrac{1}{2} x^2\thinspace \mathbb{1}[x \le x_{\max}]$ |
+| 11 | Normalise by pairs or by gate? | beat | decided with #8 | $1 / \lvert \mathcal P \rvert$ (§3) | $\mathcal L_{\text{beat}} = \sum_{k \in \mathcal P} g_k h(x_k) \big/ \sum_{k \in \mathcal P} g_k$ |
+| 12 | Pool the beat term per clip? | beat | experiment | pooled over the batch (§0); fast clips have more pairs and weigh more | per clip, like periodicity: $\frac{1}{B} \sum_b \frac{1}{\lvert \mathcal P_b \rvert} \sum_{k \in \mathcal P_b} g_k h(x_k)$ |
+| 13 | Minimum beats per clip | periodicity | experiment | $\lvert \mathcal K_b \rvert \ge 2G$ (§4.2) | weight clips by beat count: $\sum_b \lvert \mathcal K_b \rvert \big( 1 - \sum_o \bar\pi_b(o)^2 \big) \big/ \sum_b \lvert \mathcal K_b \rvert$ |
+
+Rows 9–13 are design choices explained where they are defined, so they have no entry below.
+
+1. **How much of the error is slips?** The term can only fix beats whose label disagrees with the rest of their clip. Before building it, measure on current checkpoints, from the head's own answers at the annotated beats, how much of the per-beat error is mid-clip slips (beats off the clip's most common offset) and how much is a whole-clip shift (the most common offset itself being wrong). The periodicity term cannot fix the second kind, and on those clips (§6.2) it pulls against the cross-entropy.
+2. **Should the term also push for confidence?** As defined, the loss is 0 only when the beats agree *and* each beat is fully sure of its answer. Two beats that agree on "ok" but are each 70% sure still cost 0.48 (§4.2). So besides making the beats consistent, the term pushes every beat towards one-hot. The v7 measurement suggests that push is not wanted: the head is underconfident, but what holds it back is per-beat accuracy, not sharpness. Two ways to remove it:
+   - **Measure agreement only.** Divide $\sum_o \bar\pi_b(o)^2$ by the average over the clip's beats of $\sum_o \pi_k(o)^2$, and take 1 minus the ratio as the loss. The ratio is at most 1, and exactly 1 when every beat has the same probabilities, however unsure. The two 70%-sure beats above then cost 0 if they agree and 0.35 if they disagree.
+   - **Stop pushing once the loss is small**, with a hinge $[\mathcal L_{\text{period}} - \delta]_+$. This leaves some indecision unpunished, but still mixes agreement and confidence.
+
+   Measuring agreement only is the likely default.
+3. **Where to read the head.** §2.2 reads it at the annotated frame. With shift tolerance on, the cross-entropy is supervised over a window $\pm r$ frames wide, and at inference the head is read at the detected beat, which may sit up to $r$ frames away. Averaging the position probabilities over that window would match inference better, at the cost of mixing in frames where the head is near-uniform.
+4. **Weight and schedule.** Should $\lambda_p$ ramp in later than the cross-entropy has settled, so that the consensus it pulls towards is mostly right? Both weights are untuned.
+5. **A distance-aware anchor.** The cross-entropy treats a beat labelled 3 instead of 1 as wrong in the same way as one labelled 2. A cost that grows with how far the predicted label is from the annotated one around the bar (2 and 4 are one position from 1, 3 is two) would weight errors by that distance. This is independent of the periodicity term and could be tried on its own.
+6. **Measure the deadzone instead of guessing it.** $\varepsilon = 0.05$ stands for annotation noise, which our own annotations can measure: on steady stretches of a track, how much do consecutive annotated gaps differ, $|\log(\Delta_{k+1}/\Delta_k)|$? That distribution, per corpus, would give $\varepsilon$ a value, and would show whether the noise is closer to constant in milliseconds (then the deadzone should be in milliseconds, not relative) or in percent.
+7. **Where the penalty changes shape.** Dividing by $\gamma$ puts the switch from quadratic to linear one full tolerance past the deadzone, at a 23.5% error, and the metric's limit at $x_k = 0.69$. Dividing by $\gamma - \varepsilon$ would put the switch exactly at the metric's limit, 17.5%, so errors the metric still accepts are penalised quadratically and errors it rejects linearly.
+8. **Does the gate silence correct beats?** The gate (§3) weights each pair of beats by how confident the beat head is at both: two sure peaks count fully, two hesitant ones count little. That assumes a correctly placed beat comes with a confident peak, and on v7 it often does not. At annotated beats, the beat head's probability averaged 0.44, so a typical correct pair would get a gate of about $0.44^2 \approx 0.2$ (somewhat more in practice, since the gate reads the highest value in each window). The term would then be several times weaker than $\lambda_b$ suggests, and it would train mostly on tracks where the beat head is already confident, the ones that need it least. Measure the gate's values on correctly placed pairs before choosing $\lambda_b$. If they are low, the alternative is a hard threshold: a pair counts fully when both peaks clear a fixed probability, and not at all otherwise.
