@@ -8,6 +8,8 @@ Fixture tracks are exactly DURATION long by default, so the crop window
 starts at 0 and annotation times land on the frames the assertions expect.
 """
 
+from unittest.mock import patch
+
 import numpy as np
 import soundfile as sf
 import torch
@@ -615,3 +617,141 @@ class TestLongerBarsInTheDataset:
 
         assert has_positions
         assert list(stored) == positions
+
+
+class TestReturnBeats:
+    """``return_beats=True`` adds a ``(2, MAX_BEATS)`` list of the clip's beats."""
+
+    def _item(self, tmp_path, beat_times, positions, **kwargs):
+        dataset_dir = tmp_path / "ballroom"
+        _write_track(dataset_dir, "t1", beat_times=beat_times, positions=positions)
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+            return_beats=True,
+            **kwargs,
+        )
+
+        return ds[0]
+
+    def test_agrees_with_the_target(self, tmp_path):
+        """Rounded beat times are the beat channel's spikes, and each beat's
+        position is the position block's argmax at its frame. The last beat
+        falls past the clip and is in neither."""
+        beat_times = [0.31, 0.83, 1.37, 1.9, 2.44, 2.97, 3.5, 4.02, 6.0]
+        positions = [1, 2, 3, 4, 1, 2, 3, 4, 1]
+
+        _, target, beats = self._item(
+            tmp_path,
+            beat_times,
+            positions,
+            sigma_frames=0,
+            target_layout="positions",
+        )
+
+        valid = beats[0] >= 0
+        frames = beats[0, valid].round().long()
+
+        assert valid.sum() == 8
+        assert torch.equal(frames, torch.nonzero(target[BEAT]).squeeze(1))
+        assert torch.equal(
+            beats[1, valid].long(), target[1:-1, frames].argmax(dim=0) + 1
+        )
+
+    def test_times_are_sub_frame(self, tmp_path):
+        _, _, beats = self._item(tmp_path, [0.5], [1])
+
+        assert beats[0, 0].item() == pytest.approx(0.5 * SAMPLE_RATE / HOP_LENGTH)
+
+    def test_beat_just_before_the_clip_start_is_kept_at_zero(self, tmp_path):
+        """A beat 0.3 frames before the crop start rounds into frame 0. Its
+        time is clamped to 0, so it is not mistaken for padding."""
+        dataset_dir = tmp_path / "ballroom"
+        _write_track(
+            dataset_dir, "t1", beat_times=[0.5, 1.0], positions=[1, 2], duration=10.0
+        )
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        ds = BeatDataset(
+            name="ballroom",
+            data_home=dataset_dir,
+            sample_rate=SAMPLE_RATE,
+            duration=DURATION,
+            hop_length=HOP_LENGTH,
+            return_beats=True,
+        )
+        ds.samples[0] = (ds.samples[0][0], np.array([2.5]), np.array([1]), True)
+
+        start_seconds = 2.5 + 0.3 * HOP_LENGTH / SAMPLE_RATE
+        with patch(
+            "musicality.loaders.beat_dataset.load_crop",
+            return_value=(torch.zeros(1, N_SAMPLES), start_seconds),
+        ):
+            _, target, beats = ds[0]
+
+        assert beats[0, 0].item() == 0.0
+        assert beats[1, 0].item() == 1
+        assert target[BEAT, 0].item() == pytest.approx(1.0)
+
+    def test_positions_are_folded(self, tmp_path):
+        _, _, beats = self._item(
+            tmp_path, [0.5 * i for i in range(1, 9)], [1, 2, 3, 4, 5, 6, 7, 8]
+        )
+
+        assert beats[1, :8].tolist() == [1, 2, 3, 4, 1, 2, 3, 4]
+
+    def test_clip_without_beats_is_all_padding(self, tmp_path):
+        from musicality.loaders.beat_dataset import MAX_BEATS, PAD_TIME
+
+        _, _, beats = self._item(tmp_path, [7.0, 8.0], [1, 2])
+
+        assert beats.shape == (2, MAX_BEATS)
+        assert torch.all(beats[0] == PAD_TIME)
+        assert torch.all(beats[1] == 0)
+
+    def test_track_without_positions_has_zero_positions(self, tmp_path):
+        _, _, beats = self._item(tmp_path, [0.5, 1.0], None)
+
+        assert torch.all(beats[0, :2] >= 0)
+        assert torch.all(beats[1] == 0)
+
+    def test_more_than_max_beats_raises(self, tmp_path):
+        from musicality.loaders.beat_dataset import MAX_BEATS
+
+        n = MAX_BEATS + 1
+        beat_times = [i * DURATION / (n + 1) for i in range(1, n + 1)]
+
+        with pytest.raises(ValueError, match="MAX_BEATS"):
+            self._item(tmp_path, beat_times, None, sigma_frames=0)
+
+    def test_flag_off_returns_a_pair(self, tmp_path):
+        dataset_dir = tmp_path / "ballroom"
+        _write_track(dataset_dir, "t1", beat_times=[0.5], positions=[1])
+        from musicality.loaders.beat_dataset import BeatDataset
+
+        ds = BeatDataset(name="ballroom", data_home=dataset_dir, duration=DURATION)
+
+        assert len(ds[0]) == 2
+
+    def test_batches_with_the_default_collate(self, tmp_path):
+        from torch.utils.data import DataLoader
+
+        from musicality.loaders.beat_dataset import MAX_BEATS, BeatDataset
+
+        dataset_dir = tmp_path / "ballroom"
+        for i in range(2):
+            _write_track(
+                dataset_dir, f"t{i}", beat_times=[0.5 * (i + 1)], positions=[1]
+            )
+
+        ds = BeatDataset(
+            name="ballroom", data_home=dataset_dir, duration=DURATION, return_beats=True
+        )
+        _, _, beats = next(iter(DataLoader(ds, batch_size=2)))
+
+        assert beats.shape == (2, 2, MAX_BEATS)

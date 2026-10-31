@@ -14,6 +14,8 @@ import torch.nn.functional as F
 from omegaconf import DictConfig
 from torch.utils.data import Dataset
 
+from musicality.loaders.beat_dataset import PAD_TIME
+
 
 # ---------------------------------------------------------------------------
 # Individual augmentations
@@ -217,6 +219,14 @@ class FrameTimeStretch:
     constant hop length, so using one shared ``rate`` for both is what keeps
     them in sync.
 
+    Optional ``beats`` (see :class:`~musicality.loaders.beat_dataset.BeatDataset`'s
+    ``return_beats``) are moved by the same mapping as the target. Output frame
+    ``i`` reads input position ``(i + 0.5) * T / T' - 0.5``, so a beat at ``b``
+    lands at ``(b + 0.5) * T' / T - 0.5`` — using the actual ratio ``T' / T``
+    rather than ``rate``, so the beats follow the target's peaks exactly. A beat
+    at frame 0 lands just below 0 and is clamped back, since ``time < 0`` means
+    padding.
+
     :param min_rate: Minimum speed multiplier (< 1 = slower, lower tempo).
     :param max_rate: Maximum speed multiplier (> 1 = faster, higher tempo).
     """
@@ -226,8 +236,12 @@ class FrameTimeStretch:
         self.max_rate = max_rate
 
     def __call__(
-        self, wav: torch.Tensor, target: torch.Tensor, sr: int
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        self,
+        wav: torch.Tensor,
+        target: torch.Tensor,
+        sr: int,
+        beats: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         rate = random.uniform(self.min_rate, self.max_rate)
 
         new_wav_len = int(wav.shape[-1] / rate)
@@ -240,7 +254,30 @@ class FrameTimeStretch:
             target.unsqueeze(0), size=new_n_frames, mode="linear", align_corners=False
         ).squeeze(0)
 
-        return stretched_wav, stretched_target
+        if beats is not None:
+            valid = beats[0] >= 0
+            moved = (beats[0] + 0.5) * new_n_frames / target.shape[-1] - 0.5
+
+            beats = beats.clone()
+            beats[0] = torch.where(valid, moved.clamp(min=0.0), beats[0])
+
+        return stretched_wav, stretched_target, beats
+
+
+def drop_beats_past(beats: torch.Tensor, n_frames: int) -> torch.Tensor:
+    """Turn beats whose rounded frame is past the clip's end into padding.
+
+    Beats are in time order, so the ones dropped are the last valid slots and
+    the padding stays contiguous at the end.
+    """
+
+    past = beats[0].round() >= n_frames
+
+    beats = beats.clone()
+    beats[0, past] = PAD_TIME
+    beats[1, past] = 0.0
+
+    return beats
 
 
 class BeatPhaseAugmenter:
@@ -249,7 +286,8 @@ class BeatPhaseAugmenter:
     Applied in order:
 
     1. :class:`FrameTimeStretch` — changes length; re-crops/pads both the
-       waveform and the target back to their expected fixed lengths.
+       waveform and the target back to their expected fixed lengths, and
+       turns optional ``beats`` stretched past the end into padding.
     2. :class:`RandomGain`
     3. :class:`AddNoise`
     """
@@ -271,9 +309,10 @@ class BeatPhaseAugmenter:
         sr: int,
         n_samples: int,
         n_frames: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+        beats: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
         if self.time_stretch is not None:
-            wav, target = self.time_stretch(wav, target, sr)
+            wav, target, beats = self.time_stretch(wav, target, sr, beats)
 
             if wav.shape[-1] >= n_samples:
                 wav = wav[..., :n_samples]
@@ -285,13 +324,16 @@ class BeatPhaseAugmenter:
             else:
                 target = F.pad(target, (0, n_frames - target.shape[-1]))
 
+            if beats is not None:
+                beats = drop_beats_past(beats, n_frames)
+
         if self.gain is not None:
             wav = self.gain(wav)
 
         if self.noise is not None:
             wav = self.noise(wav)
 
-        return wav, target
+        return wav, target, beats
 
 
 class AugmentedBeatDataset(Dataset):
@@ -304,6 +346,8 @@ class AugmentedBeatDataset(Dataset):
     one has no effect on the other.
 
     :param subset: A ``BeatDataset`` (or ``torch.utils.data.Subset`` of one).
+        If it yields ``(wav, target, beats)``, the beats are moved with the
+        target and forwarded as a third element.
     :param augmenter: The augmenter to apply.
     :param sample_rate: Sample rate of the audio (passed to the augmenter).
     :param n_samples: Fixed clip length in samples (passed to the augmenter).
@@ -328,11 +372,14 @@ class AugmentedBeatDataset(Dataset):
         return len(self.subset)
 
     def __getitem__(self, idx: int):
-        wav, target = self.subset[idx]
-        wav, target = self.augmenter(
-            wav, target, self.sample_rate, self.n_samples, self.n_frames
+        wav, target, *rest = self.subset[idx]
+        beats = rest[0] if rest else None
+
+        wav, target, beats = self.augmenter(
+            wav, target, self.sample_rate, self.n_samples, self.n_frames, beats
         )
-        return wav, target
+
+        return (wav, target) if beats is None else (wav, target, beats)
 
 
 def build_beat_phase_augmenter(cfg: DictConfig) -> BeatPhaseAugmenter | None:

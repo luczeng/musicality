@@ -220,7 +220,9 @@ class BeatPhaseModule(L.LightningModule):
 
     def _step(self, batch, stage: str):
 
-        wav, target = batch
+        # `_extra` holds the clip's beats (BeatDataset's `return_beats`), unused
+        # until the beat-level losses of plans 11 and 12 read them.
+        wav, target, *_extra = batch
         logits = self(wav)
         logits, target = align_time(logits, target)
 
