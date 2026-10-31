@@ -39,3 +39,7 @@ leaderboards/
 # Claude Code
 .claude/
 AGENTS.md
+
+
+# Local-only design notes
+plans/
