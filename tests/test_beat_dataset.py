@@ -6,8 +6,16 @@ since the loader reads crops straight off disk through soundfile.
 
 Fixture tracks are exactly DURATION long by default, so the crop window
 starts at 0 and annotation times land on the frames the assertions expect.
+
+Expected values are written out as literals. At 22050 Hz and hop 512 there are
+43.066 frames per second, a 5 s clip is 215 frames, and a beat at t seconds
+sits on frame round(43.066 * t):
+
+    t      0.5  1.0  1.5  2.0  2.5  3.0  3.5  4.0  4.5
+    frame   22   43   65   86  108  129  151  172  194
 """
 
+from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
@@ -19,9 +27,14 @@ SAMPLE_RATE = 22050
 DURATION = 5.0
 HOP_LENGTH = 512
 N_SAMPLES = int(SAMPLE_RATE * DURATION)
-N_FRAMES = N_SAMPLES // HOP_LENGTH
 
 BEAT, ONE, LAST, MASK = range(4)
+
+
+def _peak_frames(channel: torch.Tensor) -> list[int]:
+    """Frames where *channel* is exactly 1.0 — the centre of each target bump."""
+
+    return torch.nonzero(channel == 1.0).flatten().tolist()
 
 
 def _write_track(
@@ -93,8 +106,8 @@ class TestBeatDataset:
     def test_output_shapes(self, tmp_path):
         """Each item is a (waveform, target) pair with the expected fixed shapes.
 
-        The waveform is (1, N_SAMPLES) — mono, fixed length.
-        The target is (4, N_FRAMES) — beat/one/last/mask channels, one value
+        The waveform is (1, 110250) — mono, 5 s at 22050 Hz.
+        The target is (4, 215) — beat/one/last/mask channels, one value
         per hop-length frame.
         """
         dataset_dir = tmp_path / "ballroom"
@@ -110,17 +123,13 @@ class TestBeatDataset:
         )
         wav, target = ds[0]
 
-        assert wav.shape == (1, N_SAMPLES)
-        assert target.shape == (4, N_FRAMES)
+        assert wav.shape == (1, 110250)
+        assert target.shape == (4, 215)
 
     def test_beat_frames_are_set(self, tmp_path):
-        """The beat-channel frame corresponding to each beat timestamp must peak at 1.0.
-
-        Beat time t maps to frame index round(t * sample_rate / hop_length).
-        """
-        beat_times = [0.5, 1.0]
+        """The beat channel peaks at 1.0 on each beat's frame, and nowhere else."""
         dataset_dir = tmp_path / "ballroom"
-        _write_track(dataset_dir, "t1", beat_times=beat_times)
+        _write_track(dataset_dir, "t1", beat_times=[0.5, 1.0])
         from musicality.loaders.beat_dataset import BeatDataset
 
         ds = BeatDataset(
@@ -132,9 +141,7 @@ class TestBeatDataset:
         )
         _, target = ds[0]
 
-        for t in beat_times:
-            frame = round(t * SAMPLE_RATE / HOP_LENGTH)
-            assert target[BEAT, frame].item() == pytest.approx(1.0)
+        assert _peak_frames(target[BEAT]) == [22, 43]
 
     def test_target_in_unit_range(self, tmp_path):
         """Every value in the smeared target tensor lies in [0, 1]."""
@@ -176,10 +183,13 @@ class TestBeatDataset:
 
     def test_one_and_last_channels_from_positions(self, tmp_path):
         """Bar positions 1 and 4 populate the one/last channels at the right frames."""
-        beat_times = [0.5, 1.0, 1.5, 2.0, 2.5]
-        positions = [1, 2, 3, 4, 1]
         dataset_dir = tmp_path / "ballroom"
-        _write_track(dataset_dir, "t1", beat_times=beat_times, positions=positions)
+        _write_track(
+            dataset_dir,
+            "t1",
+            beat_times=[0.5, 1.0, 1.5, 2.0, 2.5],
+            positions=[1, 2, 3, 4, 1],
+        )
         from musicality.loaders.beat_dataset import BeatDataset
 
         ds = BeatDataset(
@@ -191,33 +201,22 @@ class TestBeatDataset:
         )
         _, target = ds[0]
 
-        one_frames = [
-            round(t * SAMPLE_RATE / HOP_LENGTH)
-            for t, p in zip(beat_times, positions)
-            if p == 1
-        ]
-        last_frames = [
-            round(t * SAMPLE_RATE / HOP_LENGTH)
-            for t, p in zip(beat_times, positions)
-            if p == 4
-        ]
+        assert _peak_frames(target[ONE]) == [22, 108]  # 0.5 s, 2.5 s
+        assert _peak_frames(target[LAST]) == [86]  # 2.0 s
 
-        for frame in one_frames:
-            assert target[ONE, frame].item() == pytest.approx(1.0)
-        for frame in last_frames:
-            assert target[LAST, frame].item() == pytest.approx(1.0)
-
-        # Frame at beat position 2 (1.0s) must not register in either channel.
-        mid_frame = round(1.0 * SAMPLE_RATE / HOP_LENGTH)
-        assert target[ONE, mid_frame].item() == pytest.approx(0.0)
-        assert target[LAST, mid_frame].item() == pytest.approx(0.0)
+        # Frame 43 is beat position 2 (1.0 s): in neither channel.
+        assert target[ONE, 43].item() == 0.0
+        assert target[LAST, 43].item() == 0.0
 
     def test_group_size_8_reads_phrase_position_from_positions(self, tmp_path):
         """With group_size=8, `last` is populated from position==8, not position==4."""
-        beat_times = [0.5 * i for i in range(1, 9)]
-        positions = list(range(1, 9))  # a single 8-beat phrase, positions 1-8
         dataset_dir = tmp_path / "my_phrase_dataset"
-        _write_track(dataset_dir, "t1", beat_times=beat_times, positions=positions)
+        _write_track(
+            dataset_dir,
+            "t1",
+            beat_times=[0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0],
+            positions=[1, 2, 3, 4, 5, 6, 7, 8],  # a single 8-beat phrase
+        )
         from musicality.loaders.beat_dataset import BeatDataset
 
         ds = BeatDataset(
@@ -230,11 +229,8 @@ class TestBeatDataset:
         )
         _, target = ds[0]
 
-        frame_at_pos4 = round(beat_times[3] * SAMPLE_RATE / HOP_LENGTH)
-        frame_at_pos8 = round(beat_times[7] * SAMPLE_RATE / HOP_LENGTH)
-
-        assert target[LAST, frame_at_pos4].item() == pytest.approx(0.0)
-        assert target[LAST, frame_at_pos8].item() == pytest.approx(1.0)
+        assert _peak_frames(target[LAST]) == [172]  # position 8, at 4.0 s
+        assert target[LAST, 86].item() == 0.0  # position 4, at 2.0 s
 
     def test_mask_set_when_positions_present(self, tmp_path):
         """The mask channel is constant 1.0 when the track has bar-position annotations."""
@@ -288,10 +284,9 @@ class TestRefsConstruction:
 
         ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
 
-        assert len(ds) == 2
-        audio_paths = {sample[0] for sample in ds.samples}
-        assert any("ballroom" in p for p in audio_paths)
-        assert any("brid" in p for p in audio_paths)
+        audio_paths = [Path(sample[0]).relative_to(tmp_path) for sample in ds.samples]
+
+        assert audio_paths == [Path("ballroom/tracks/a.wav"), Path("brid/tracks/b.wav")]
 
     def test_skips_unresolvable_audio_across_sources(self, tmp_path):
         _write_track(tmp_path / "ballroom", "a", beat_times=[0.5, 1.0])
@@ -322,8 +317,8 @@ class TestRefsConstruction:
 
         ds = BeatDataset(refs=refs, sample_rate=SAMPLE_RATE, duration=DURATION)
 
-        assert len(ds.refs) == len(ds.samples) == 1
-        assert ds.refs[0].dataset_name == "ballroom"
+        assert len(ds.samples) == 1
+        assert [ref.dataset_name for ref in ds.refs] == ["ballroom"]
 
     def test_requires_name_or_refs(self):
         from musicality.loaders.beat_dataset import BeatDataset
@@ -350,8 +345,9 @@ class TestGaussianSmear:
         spike[25] = 1.0
         smeared = gaussian_smear(spike, sigma=1.5)
 
-        assert 0.0 < smeared[24] < 1.0
-        assert 0.0 < smeared[26] < 1.0
+        # exp(-0.5 * (1 / 1.5) ** 2): one frame from the centre, sigma 1.5.
+        assert smeared[24] == pytest.approx(0.8007, abs=1e-4)
+        assert smeared[26] == pytest.approx(0.8007, abs=1e-4)
 
     def test_no_spike_is_all_zero(self):
         from musicality.loaders.beat_dataset import gaussian_smear
@@ -396,8 +392,8 @@ class TestDataLoader:
         loader = DataLoader(ds, batch_size=4, shuffle=False)
         wav, target = next(iter(loader))
 
-        assert wav.shape == (4, 1, N_SAMPLES)
-        assert target.shape == (4, 4, N_FRAMES)
+        assert wav.shape == (4, 1, 110250)
+        assert target.shape == (4, 4, 215)
 
 
 class TestCropWindow:
@@ -422,18 +418,23 @@ class TestCropWindow:
         )
 
     def test_fixed_crop_shifts_beat_times_to_middle_window(self, tmp_path):
-        """A 20 s track cropped to 5 s starts at 7.5 s, so the beat at 8.0 s
-        must land on the frame for 0.5 s into the clip."""
+        """A 20 s track cropped to 5 s starts at 7.5 s, so its beats at
+        7.5 .. 12.0 s land 0.0 .. 4.5 s into the clip."""
         ds = self._dataset(tmp_path, random_crop=False)
         _, target = ds[0]
 
-        start = (20.0 - DURATION) / 2
-        for t in self.BEAT_TIMES:
-            rel = t - start
-            if 0.0 <= rel < DURATION:
-                frame = round(rel * SAMPLE_RATE / HOP_LENGTH)
-                if frame < N_FRAMES:
-                    assert target[BEAT, frame].item() == pytest.approx(1.0)
+        assert _peak_frames(target[BEAT]) == [
+            0,
+            22,
+            43,
+            65,
+            86,
+            108,
+            129,
+            151,
+            172,
+            194,
+        ]
 
     def test_fixed_crop_is_deterministic(self, tmp_path):
         ds = self._dataset(tmp_path, random_crop=False)
@@ -453,12 +454,6 @@ class TestCropWindow:
         # 5 s of beats spaced 0.5 s apart: every window sees ~10 of them.
         for t in targets:
             assert t[BEAT].max().item() == pytest.approx(1.0)
-
-
-def _frame(t):
-    """Frame index for an annotation time — mirrors BeatDataset._times_to_spike."""
-
-    return int(round(t * SAMPLE_RATE / HOP_LENGTH))
 
 
 class TestFoldPositions:
@@ -561,13 +556,11 @@ class TestLongerBarsInTheDataset:
         ds = self._dataset(tmp_path, positions=list(range(1, 9)))
 
         _, target = ds[0]
-        block = target[1:-1]
+        columns = target[1:-1, [22, 43, 65, 86, 108, 129, 151, 172]]
 
-        for t in self.BEATS:
-            column = block[:, _frame(t)]
-            assert column.max().item() == pytest.approx(1.0)
-            # 1/group_size in every channel is the fallback's signature.
-            assert column.min().item() == pytest.approx(0.0)
+        # 1/group_size = 0.25 in every channel is the fallback's signature.
+        assert columns.max(dim=0).values.tolist() == [1.0] * 8
+        assert columns.min(dim=0).values.tolist() == [0.0] * 8
 
     def test_folded_positions_are_the_ground_truth_for_eval_too(self, tmp_path):
         """evaluation.py reads reference positions straight out of
@@ -587,10 +580,8 @@ class TestLongerBarsInTheDataset:
 
         _, target = ds[0]
 
-        assert target[ONE, _frame(0.5)].item() == pytest.approx(1.0)
-        assert target[ONE, _frame(2.5)].item() == pytest.approx(1.0)
-        assert target[LAST, _frame(2.0)].item() == pytest.approx(1.0)
-        assert target[LAST, _frame(4.0)].item() == pytest.approx(1.0)
+        assert _peak_frames(target[ONE]) == [22, 108]  # 0.5 s, 2.5 s
+        assert _peak_frames(target[LAST]) == [86, 172]  # 2.0 s, 4.0 s
 
     def test_six_beat_track_keeps_its_beats_but_masks_positions(self, tmp_path):
         """6 cannot fold onto 4. Masking is strictly better than the uniform
@@ -640,33 +631,27 @@ class TestReturnBeats:
         return ds[0]
 
     def test_agrees_with_the_target(self, tmp_path):
-        """Rounded beat times are the beat channel's spikes, and each beat's
-        position is the position block's argmax at its frame. The last beat
-        falls past the clip and is in neither."""
-        beat_times = [0.31, 0.83, 1.37, 1.9, 2.44, 2.97, 3.5, 4.02, 6.0]
-        positions = [1, 2, 3, 4, 1, 2, 3, 4, 1]
-
+        """The list and the target hold the same beats on the same frames, with
+        the same positions. The beat at 6.0 s is past the clip and in neither."""
         _, target, beats = self._item(
             tmp_path,
-            beat_times,
-            positions,
+            [0.31, 0.83, 1.37, 1.9, 2.44, 2.97, 3.5, 4.02, 6.0],
+            [1, 2, 3, 4, 1, 2, 3, 4, 1],
             sigma_frames=0,
             target_layout="positions",
         )
+        frames = [13, 36, 59, 82, 105, 128, 151, 173]
 
-        valid = beats[0] >= 0
-        frames = beats[0, valid].round().long()
+        assert beats[0, :9].round().tolist() == [*frames, -1]
+        assert beats[1, :9].tolist() == [1, 2, 3, 4, 1, 2, 3, 4, 0]
 
-        assert valid.sum() == 8
-        assert torch.equal(frames, torch.nonzero(target[BEAT]).squeeze(1))
-        assert torch.equal(
-            beats[1, valid].long(), target[1:-1, frames].argmax(dim=0) + 1
-        )
+        assert _peak_frames(target[BEAT]) == frames
+        assert target[1:-1, frames].argmax(dim=0).tolist() == [0, 1, 2, 3, 0, 1, 2, 3]
 
     def test_times_are_sub_frame(self, tmp_path):
         _, _, beats = self._item(tmp_path, [0.5], [1])
 
-        assert beats[0, 0].item() == pytest.approx(0.5 * SAMPLE_RATE / HOP_LENGTH)
+        assert beats[0, 0].item() == pytest.approx(21.5332, abs=1e-4)  # 0.5 s
 
     def test_beat_just_before_the_clip_start_is_kept_at_zero(self, tmp_path):
         """A beat 0.3 frames before the crop start rounds into frame 0. Its
@@ -706,25 +691,23 @@ class TestReturnBeats:
         assert beats[1, :8].tolist() == [1, 2, 3, 4, 1, 2, 3, 4]
 
     def test_clip_without_beats_is_all_padding(self, tmp_path):
-        from musicality.loaders.beat_dataset import MAX_BEATS, PAD_TIME
-
         _, _, beats = self._item(tmp_path, [7.0, 8.0], [1, 2])
 
-        assert beats.shape == (2, MAX_BEATS)
-        assert torch.all(beats[0] == PAD_TIME)
-        assert torch.all(beats[1] == 0)
+        assert beats.shape == (2, 128)
+        assert torch.all(beats[0] == -1.0)
+        assert torch.all(beats[1] == 0.0)
 
     def test_track_without_positions_has_zero_positions(self, tmp_path):
         _, _, beats = self._item(tmp_path, [0.5, 1.0], None)
 
-        assert torch.all(beats[0, :2] >= 0)
-        assert torch.all(beats[1] == 0)
+        assert beats[0, :3].tolist() == pytest.approx(
+            [21.5332, 43.0664, -1.0], abs=1e-4
+        )
+        assert torch.all(beats[1] == 0.0)
 
     def test_more_than_max_beats_raises(self, tmp_path):
-        from musicality.loaders.beat_dataset import MAX_BEATS
-
-        n = MAX_BEATS + 1
-        beat_times = [i * DURATION / (n + 1) for i in range(1, n + 1)]
+        """129 beats in 5 s, one more than MAX_BEATS = 128."""
+        beat_times = [i * DURATION / 130 for i in range(1, 130)]
 
         with pytest.raises(ValueError, match="MAX_BEATS"):
             self._item(tmp_path, beat_times, None, sigma_frames=0)
@@ -741,7 +724,7 @@ class TestReturnBeats:
     def test_batches_with_the_default_collate(self, tmp_path):
         from torch.utils.data import DataLoader
 
-        from musicality.loaders.beat_dataset import MAX_BEATS, BeatDataset
+        from musicality.loaders.beat_dataset import BeatDataset
 
         dataset_dir = tmp_path / "ballroom"
         for i in range(2):
@@ -754,4 +737,4 @@ class TestReturnBeats:
         )
         _, _, beats = next(iter(DataLoader(ds, batch_size=2)))
 
-        assert beats.shape == (2, 2, MAX_BEATS)
+        assert beats.shape == (2, 2, 128)
