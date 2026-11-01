@@ -65,7 +65,9 @@ def train(cfg: DictConfig) -> None:
 
     L.seed_everything(42)
 
-    train_loader, val_loader, n_train, n_val = build_beat_dataloaders(cfg)
+    train_loader, val_loader, n_train, n_val = build_beat_dataloaders(
+        cfg, return_beats=True
+    )
 
     module = build_module(cfg)
 

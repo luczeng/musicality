@@ -23,6 +23,14 @@ DATA_DIR = dataformats.DATA_DIR
 
 TARGET_CHANNELS = ("beat", "one", "last", "mask")
 
+# Slots in the ``beats`` tensor (see BeatDataset's ``return_beats``). A fixed
+# size keeps PyTorch's default collate; 128 beats in a 16 s clip is 480 BPM.
+MAX_BEATS = 128
+
+# A padded slot's time. Negative so it is recognised by ``time < 0``, finite so
+# masked arithmetic cannot spread a NaN into the gradient.
+PAD_TIME = -1.0
+
 
 def position_target_channels(group_size: int) -> tuple[str, ...]:
     """Channel names for the ``target_layout="positions"`` target.
@@ -174,6 +182,11 @@ class BeatDataset(Dataset):
           Every position gets its own supervised channel, which makes
           "is this a 1 or a 3?" a question the model is actually asked. See
           docs/beat_phase_improvement_review.md section 3.
+    :param return_beats: If ``True``, items are ``(wav, target, beats)``, with
+        ``beats`` a float32 tensor of shape ``(2, MAX_BEATS)``:
+
+        - ``beats[0]`` — beat times in frames from the clip start; ``-1`` is padding.
+        - ``beats[1]`` — bar positions ``1..group_size``; ``0`` is padding or unknown.
     """
 
     def __init__(
@@ -190,6 +203,7 @@ class BeatDataset(Dataset):
         binary_only: bool = False,
         random_crop: bool = False,
         target_layout: str = "one_last",
+        return_beats: bool = False,
     ):
         if target_layout not in ("one_last", "positions"):
             raise ValueError(
@@ -211,6 +225,7 @@ class BeatDataset(Dataset):
         self.group_size = group_size
         self.random_crop = random_crop
         self.target_layout = target_layout
+        self.return_beats = return_beats
 
         self.samples = []
         self.refs = []
@@ -305,6 +320,35 @@ class BeatDataset(Dataset):
 
         return spike
 
+    def _beats_tensor(
+        self, times: np.ndarray, positions: np.ndarray | None
+    ) -> torch.Tensor:
+        """The clip's beats as a ``(2, MAX_BEATS)`` tensor of frame times and
+        bar positions.
+
+        Keeps the beats :meth:`_times_to_spike` writes — rounded frame in
+        ``[0, n_frames)`` — so the list and the beat channel agree. A beat less
+        than half a frame before the clip start rounds into frame 0; its time
+        is clamped to 0 so that ``time < 0`` still means padding.
+        """
+
+        frames = times * self.sample_rate / self.hop_length
+        rounded = np.round(frames)
+        keep = (rounded >= 0) & (rounded < self.n_frames)
+
+        n = int(keep.sum())
+        if n > MAX_BEATS:
+            raise ValueError(f"Clip has {n} beats, more than MAX_BEATS={MAX_BEATS}")
+
+        beats = torch.zeros(2, MAX_BEATS)
+        beats[0] = PAD_TIME
+        beats[0, :n] = torch.from_numpy(frames[keep].clip(min=0.0))
+
+        if positions is not None:
+            beats[1, :n] = torch.from_numpy(positions[keep])
+
+        return beats
+
     def __getitem__(self, idx: int):
 
         audio_path, beat_times, positions, has_positions = self.samples[idx]
@@ -359,7 +403,10 @@ class BeatDataset(Dataset):
 
         target = torch.from_numpy(np.stack(channels).astype(np.float32))
 
-        return wav, target  # (1, T), (4 | 2 + group_size, n_frames)
+        if not self.return_beats:
+            return wav, target  # (1, T), (4 | 2 + group_size, n_frames)
+
+        return wav, target, self._beats_tensor(beat_times, positions)
 
 
 def indices_for_split(

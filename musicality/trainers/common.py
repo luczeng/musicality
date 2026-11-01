@@ -162,7 +162,9 @@ def warn_if_tolerance_stacks_on_smearing(cfg: DictConfig) -> None:
     )
 
 
-def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int, int]:
+def build_beat_dataloaders(
+    cfg: DictConfig, return_beats: bool = False
+) -> tuple[DataLoader, DataLoader, int, int]:
     """Build train/val DataLoaders over a :class:`~musicality.loaders.beat_dataset.BeatDataset`.
 
     Shared by ``train_beat_phase.py`` and ``train_beat_only.py`` — both read
@@ -173,6 +175,8 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
     :param cfg: Hydra config with ``data.*``, ``hop_length``, ``sigma_frames``,
         ``batch_size``, and (optionally) ``group_size`` / ``binary_only`` /
         ``augmentations`` / ``train_subsample`` fields.
+    :param return_beats: Make both splits yield ``(wav, target, beats)`` (see
+        :class:`~musicality.loaders.beat_dataset.BeatDataset`).
     :returns: ``(train_loader, val_loader, n_train, n_val)``.
     """
 
@@ -188,6 +192,7 @@ def build_beat_dataloaders(cfg: DictConfig) -> tuple[DataLoader, DataLoader, int
         group_size=cfg.get("group_size", 4),
         target_layout=cfg.get("target_layout", "one_last"),
         binary_only=binary_only,
+        return_beats=return_beats,
     )
 
     train_refs, val_refs = resolve_beat_split_refs(cfg)
@@ -337,7 +342,7 @@ def fit_input_stats(model, loader, max_batches: int = 64):
     the seed. ``plans/08`` §2.1 item 4 has the measurement that motivates this.
 
     :param model: A :class:`~musicality.models.tcn.TCNTempoNet`.
-    :param loader: Training dataloader, yielding ``(wav, target)``.
+    :param loader: Training dataloader, yielding ``(wav, target, ...)``.
     :param max_batches: Batches to measure over. 64 at the shipped batch size is
         ~700k frames per band, far past what a mean and a variance need.
     :returns: The ``(mean, std)`` installed, or ``None`` if the model does not
@@ -350,7 +355,7 @@ def fit_input_stats(model, loader, max_batches: int = 64):
     total = 0.0
     sum_x = sum_x2 = 0.0
 
-    for wav, _ in islice(loader, max_batches):
+    for wav, *_ in islice(loader, max_batches):
         x = model.mel(wav).double().squeeze(1)  # (B, n_mels, T)
 
         sum_x = sum_x + x.sum(dim=(0, 2))
